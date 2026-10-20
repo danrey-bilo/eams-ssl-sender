@@ -97,23 +97,22 @@ internal sealed class CertificateMail : IMailTemplateProvider
         _ => "sent manually by an administrator",
     };
 
-    /// <summary>Строка с паролем ключа или пустая, если пароль не шлём.</summary>
-    public static string Passphrase(string? passphrase, string locale)
+    /// <summary>Имя вложения с паролем закрытого ключа.</summary>
+    public const string PassphraseFile = "passphrase.txt";
+
+    /// <summary>
+    /// Строка о пароле ключа или пустая, если пароль не шлём.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Самого пароля в теле нет: тело живёт в очереди до уборки, а вложения стираются сразу после
+    /// отправки.
+    /// </remarks>
+    public static string Passphrase(bool attached, string locale) => !attached ? string.Empty : locale switch
     {
-        if (string.IsNullOrEmpty(passphrase))
-        {
-            return string.Empty;
-        }
-
-        var подпись = locale switch
-        {
-            MailLocales.Ru => "Пароль закрытого ключа",
-            MailLocales.Uk => "Пароль закритого ключа",
-            _ => "Private key passphrase",
-        };
-
-        return $"{подпись}: {passphrase}\n";
-    }
+        MailLocales.Ru => $"Пароль закрытого ключа — во вложении {PassphraseFile}.\n",
+        MailLocales.Uk => $"Пароль закритого ключа — у вкладенні {PassphraseFile}.\n",
+        _ => $"The private key passphrase is in the attached {PassphraseFile}.\n",
+    };
 
     /// <summary>Неизвестный срок действия.</summary>
     public const string UnknownDate = "—";

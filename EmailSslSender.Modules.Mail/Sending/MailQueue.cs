@@ -47,15 +47,46 @@ internal sealed class MailQueue(
     public async Task<bool> CanSendAsync(CancellationToken cancellationToken = default) =>
         (await MailPolicy.ReadAsync(settings, cancellationToken)).Configured;
 
-    public Task<MailQueueResult> EnqueueAsync(
+    public async Task<MailQueueResult> EnqueueAsync(
         string toAddress,
         string kind,
         string locale,
         IReadOnlyDictionary<string, string> values,
         CancellationToken cancellationToken = default) =>
-        EnqueueAsync(toAddress, kind, locale, values, [], cancellationToken);
+        (await EnqueueAsync(toAddress, kind, locale, values, [], cancellationToken)).Result;
 
-    public async Task<MailQueueResult> EnqueueAsync(
+    public async Task<IReadOnlyDictionary<Guid, MailLetterStatus>> StatusAsync(
+        IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+
+        if (ids.Count == 0)
+        {
+            return new Dictionary<Guid, MailLetterStatus>();
+        }
+
+        var номера = ids.ToArray();
+        var предел = (await MailPolicy.ReadAsync(settings, cancellationToken)).MaxAttempts;
+
+        var письма = await db.Set<MailOutbox>()
+            .AsNoTracking()
+            .Where(письмо => номера.Contains(письмо.Id))
+            .Select(письмо => new { письмо.Id, письмо.ToAddress, письмо.SentAt, письмо.Attempts, письмо.NextAttemptAt, письмо.LastError })
+            .ToListAsync(cancellationToken);
+
+        // ⚠ Мёртвое — и исчерпавшее попытки, и стёртое «навсегда»: поднятый потом предел попыток
+        // такое письмо в работу не вернёт.
+        return письма.ToDictionary(
+            письмо => письмо.Id,
+            письмо => new MailLetterStatus(
+                письмо.SentAt is not null ? MailLetterState.Sent
+                    : письмо.Attempts >= предел || письмо.NextAttemptAt >= MailAttachments.Никогда ? MailLetterState.Dead
+                    : MailLetterState.Pending,
+                письмо.ToAddress,
+                письмо.LastError));
+    }
+
+    public async Task<MailTicket> EnqueueAsync(
         string toAddress,
         string kind,
         string locale,
@@ -72,22 +103,23 @@ internal sealed class MailQueue(
         if (!политика.Configured)
         {
             log.LogInformation("mail_not_configured {Kind}", kind);
-            return MailQueueResult.NotConfigured;
+            return new MailTicket(MailQueueResult.NotConfigured, null);
         }
 
         if (templates.IsThrottled(kind)
             && await ЗаПределомAsync(toAddress, kind, политика.RatePerHour, cancellationToken))
         {
             log.LogWarning("mail_rate_limited {Kind} {Limit}", kind, политика.RatePerHour);
-            return MailQueueResult.RateLimited;
+            return new MailTicket(MailQueueResult.RateLimited, null);
         }
 
         var (тема, тело) = templates.Render(kind, locale, values);
         var ключ = envelope.CreateDataKey();
+        var номер = Guid.CreateVersion7();
 
         db.Set<MailOutbox>().Add(new MailOutbox
         {
-            Id = Guid.CreateVersion7(),
+            Id = номер,
             ToAddress = toAddress,
             Subject = тема,
             SealedBody = envelope.SealText(ключ, тело, Контекст).Bytes,
@@ -110,7 +142,7 @@ internal sealed class MailQueue(
         // и повторяет захват через две секунды (`MailDeliveryService.Следующий`).
         wakeup.Signal();
 
-        return MailQueueResult.Queued;
+        return new MailTicket(MailQueueResult.Queued, номер);
     }
 
     /// <summary>

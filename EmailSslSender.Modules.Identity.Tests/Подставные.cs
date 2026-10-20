@@ -47,14 +47,23 @@ public sealed class БезПочты : IMailQueue
     }
 
     /// <summary>Модуль личностей вложений не шлёт; перегрузка — ради полноты контракта.</summary>
-    public Task<MailQueueResult> EnqueueAsync(
+    public async Task<MailTicket> EnqueueAsync(
         string toAddress,
         string kind,
         string locale,
         IReadOnlyDictionary<string, string> values,
         IReadOnlyList<MailAttachment> attachments,
-        CancellationToken cancellationToken = default) =>
-        EnqueueAsync(toAddress, kind, locale, values, cancellationToken);
+        CancellationToken cancellationToken = default)
+    {
+        var итог = await EnqueueAsync(toAddress, kind, locale, values, cancellationToken);
+
+        return new MailTicket(итог, итог == MailQueueResult.Queued ? Guid.CreateVersion7() : null);
+    }
+
+    /// <summary>Судьбу писем модуль личностей не спрашивает.</summary>
+    public Task<IReadOnlyDictionary<Guid, MailLetterStatus>> StatusAsync(
+        IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken = default) =>
+        Task.FromResult<IReadOnlyDictionary<Guid, MailLetterStatus>>(new Dictionary<Guid, MailLetterStatus>());
 
     /// <summary>Последнее письмо на этот адрес. <c>null</c> — не слали.</summary>
     public Письмо? Последнее(string адрес) =>

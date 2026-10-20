@@ -192,6 +192,41 @@ public sealed class ClientTests
     }
 
     [Fact]
+    public async Task Страница_ошибки_с_кодом_200_не_принимается_за_файл()
+    {
+        // HTML прокси или «Session expired» текстом ушли бы получателю под именем site.key.
+        var заглушка = new Заглушка(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent("<html><body>Session expired. Please log in.</body></html>", Encoding.UTF8, "text/html"),
+        });
+
+        var ошибка = await Should.ThrowAsync<KeyManagerException>(
+            () => Клиент(заглушка).DownloadAsync("site.example.com", "01", CertificateFormats.Key, Ct));
+
+        ошибка.Message.ShouldContain("не файл сертификата");
+        ошибка.Message.ShouldNotContain("Session expired", Case.Insensitive);
+    }
+
+    [Theory]
+    [InlineData(new byte[] { 0xEF, 0xBB, 0xBF, (byte)'-', (byte)'-', (byte)'-', (byte)'-', (byte)'-', (byte)'B', (byte)'E', (byte)'G', (byte)'I', (byte)'N' })]
+    [InlineData(new byte[] { 0x30, 0x82, 0x0a })]
+    [InlineData(new byte[] { 0xFE, 0xED, 0xFE, 0xED, 0x00 })]
+    [InlineData(new byte[] { (byte)'P', (byte)'K', 3, 4, 0 })]
+    public void Известные_виды_файлов_принимаются(byte[] начало)
+    {
+        KeyManagerClient.ПохожНаСертификат(начало).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Пароль_ключа_и_в_ответе_массивом()
+    {
+        var заглушка = new Заглушка(_ => Json(
+            """{"result":{"status":"Success"},"details":[{"Passphrase":"ИзМассива"}]}"""));
+
+        (await Клиент(заглушка).PassphraseAsync("mycert", "01", Ct)).ShouldBe("ИзМассива");
+    }
+
+    [Fact]
     public async Task Пустой_файл_отказ()
     {
         var заглушка = new Заглушка(_ => Файл([]));

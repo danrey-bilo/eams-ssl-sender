@@ -241,6 +241,11 @@ internal sealed class MailDelivery(
                     set => set
                         .SetProperty(письмо => письмо.LastError, описание)
                         .SetProperty(
+                            письмо => письмо.NextAttemptAt,
+                            письмо => последняя && письмо.SealedAttachments != null
+                                ? MailAttachments.Никогда
+                                : письмо.NextAttemptAt)
+                        .SetProperty(
                             письмо => письмо.SealedAttachments,
                             письмо => последняя ? null : письмо.SealedAttachments),
                     cancellationToken);

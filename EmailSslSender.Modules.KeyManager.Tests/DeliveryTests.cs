@@ -109,18 +109,77 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
     }
 
     [Fact]
-    public void Из_двух_сертификатов_одного_имени_текущий_с_поздним_сроком()
+    public void Среди_замеченных_одновременно_текущий_с_поздним_сроком()
     {
-        IReadOnlyList<KmpCertificate> список =
+        var снимок = CertificateSnapshot.Of(
         [
             new("Site.Example.com", "новый", Год.AddYears(1)),
             new("site.example.com", "старый", Год),
             new("site.example.com", "без-даты", null),
             new("other.example.com", "чужой", Год.AddYears(5)),
-        ];
+        ], база.Часы.GetUtcNow());
 
-        CertificateDelivery.Current(список, "site.example.com")!.SerialNumber.ShouldBe("новый");
-        CertificateDelivery.Current(список, "нет.example.com").ShouldBeNull();
+        снимок.Current("site.example.com")!.SerialNumber.ShouldBe("новый");
+        снимок.Current("нет.example.com").ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Перевыпуск_с_тем_же_сроком_уходит_как_обновление()
+    {
+        // ⚠ ⚠ Перевыпуск у удостоверяющего центра сохраняет срок, а старый сертификат ещё лежит в
+        // Key Manager Plus. «Самый долгий» здесь не различает их — текущий тот, что замечен позже.
+        База("site.example.com", "aa01", Год);
+        await Подписка("site.example.com", ["a@example.com"]);
+        await Опросить();
+        база.Почта.Сброс();
+
+        база.Часы.Вперёд(TimeSpan.FromHours(1));
+        База("site.example.com", "bb02", Год);
+
+        (await Опросить()).Sent.ShouldBe(1);
+        база.Почта.Письма.Single().Values["serial_number"].ShouldBe("bb02");
+    }
+
+    [Fact]
+    public async Task Новый_сертификат_с_меньшим_сроком_тоже_текущий()
+    {
+        // Новые сертификаты живут короче старых: срок не должен перевешивать «замечен позже».
+        База("site.example.com", "aa01", Год.AddYears(1));
+        await Подписка("site.example.com", ["a@example.com"]);
+        await Опросить();
+        база.Почта.Сброс();
+
+        база.Часы.Вперёд(TimeSpan.FromHours(1));
+        База("site.example.com", "bb02", Год);
+
+        (await Опросить()).Sent.ShouldBe(1);
+        база.Почта.Письма.Single().Values["serial_number"].ShouldBe("bb02");
+    }
+
+    [Fact]
+    public async Task Снимок_старше_последней_отправки_не_шлёт_прежний_сертификат()
+    {
+        // Проход взял список с aa01; пока он шёл, ручная отправка разослала уже bb02. Прийти к
+        // подписке со старым списком и разослать aa01 «как обновление» — ровно то, чего быть не должно.
+        База("site.example.com", "aa01", Год);
+        var id = await Подписка("site.example.com", ["a@example.com"]);
+        var устаревший = CertificateSnapshot.Of([.. база.Kmp.Сертификаты], база.Часы.GetUtcNow());
+
+        база.Часы.Вперёд(TimeSpan.FromMinutes(1));
+        база.Kmp.Сертификаты.Clear();
+        База("site.example.com", "bb02", Год.AddYears(1));
+        (await Вручную(id)).Outcome.ShouldBe(DeliveryOutcome.Sent);
+        база.Почта.Сброс();
+
+        await using (var scope = база.Scope())
+        {
+            var итог = await scope.ServiceProvider.GetRequiredService<CertificateDelivery>()
+                .DeliverAsync(id, база.Kmp, устаревший, manual: false, new DownloadCache(), Ct);
+            итог.Outcome.ShouldBe(DeliveryOutcome.NotDue);
+        }
+
+        база.Почта.Письма.ShouldBeEmpty();
+        (await Прочитать(id)).LastSentSerial.ShouldBe("bb02");
     }
 
     [Fact]
@@ -215,6 +274,61 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         var подписка = await Прочитать(id);
         подписка.LastSentSerial.ShouldBeNull("письма не легли — отправки не было");
         подписка.LastError.ShouldNotBeNull().ShouldContain("Почта не настроена");
+        база.Kmp.Выгрузок.ShouldBe(0, "закрытый ключ не выгружается, если письмо всё равно некуда класть");
+    }
+
+    [Fact]
+    public async Task Ушедшие_письма_сверяются_и_забываются()
+    {
+        База("site.example.com", "aa01", Год);
+        var id = await Подписка("site.example.com", ["a@example.com", "b@example.com"]);
+        await Опросить();
+
+        (await Прочитать(id)).PendingMailIds.ShouldNotBeNull().Length.ShouldBe(2);
+
+        foreach (var номер in база.Почта.Номера)
+        {
+            база.Почта.Судьбы[номер] = new MailLetterStatus(MailLetterState.Sent, "x", null);
+        }
+
+        await Опросить();
+
+        var подписка = await Прочитать(id);
+        подписка.PendingMailIds.ShouldBeNull();
+        подписка.LastError.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Умершее_письмо_становится_ошибкой_подписки_и_не_шлётся_само()
+    {
+        // ⚠ Повтор сам по себе слал бы второму получателю дубли раз в час, если первый ящик не существует.
+        База("site.example.com", "aa01", Год);
+        var id = await Подписка("site.example.com", ["a@example.com", "b@example.com"]);
+        await Опросить();
+
+        база.Почта.Судьбы[база.Почта.Номера[0]] =
+            new MailLetterStatus(MailLetterState.Dead, "a@example.com", "5.1.1 User unknown");
+        база.Почта.Судьбы[база.Почта.Номера[1]] = new MailLetterStatus(MailLetterState.Sent, "b@example.com", null);
+        var поставлено = база.Почта.Письма.Count;
+
+        (await Опросить()).Sent.ShouldBe(0);
+
+        var подписка = await Прочитать(id);
+        подписка.PendingMailIds.ShouldBeNull();
+        подписка.LastError.ShouldNotBeNull().ShouldContain("a@example.com — 5.1.1 User unknown");
+        подписка.LastSentSerial.ShouldBe("aa01", "серийный прежний — сам по себе опрос не шлёт");
+        база.Почта.Письма.Count.ShouldBe(поставлено);
+    }
+
+    [Fact]
+    public async Task Письма_в_пути_не_сверяются_раньше_времени()
+    {
+        База("site.example.com", "aa01", Год);
+        var id = await Подписка("site.example.com", ["a@example.com"]);
+        await Опросить();
+        await Опросить();
+
+        (await Прочитать(id)).PendingMailIds.ShouldNotBeNull("письмо ещё ждёт отправки");
     }
 
     [Fact]
@@ -259,8 +373,16 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
 
         await Опросить();
 
-        база.Почта.Письма.Single(п => п.To == "a@example.com").Values["passphrase"].ShouldContain("пароль-a");
-        база.Почта.Письма.Single(п => п.To == "b@example.com").Values["passphrase"].ShouldBeEmpty();
+        // ⚠ Пароль — вложением: тело письма живёт в очереди до уборки, вложения стираются сразу.
+        var a = база.Почта.Письма.Single(п => п.To == "a@example.com");
+        a.Values["passphrase"].ShouldContain(CertificateMail.PassphraseFile);
+        a.Values["passphrase"].ShouldNotContain("пароль-a");
+        Encoding.UTF8.GetString(a.Attachments.Single(ф => ф.FileName == CertificateMail.PassphraseFile).Content)
+            .Trim().ShouldBe("пароль-a");
+
+        var b = база.Почта.Письма.Single(п => п.To == "b@example.com");
+        b.Values["passphrase"].ShouldBeEmpty();
+        b.Attachments.ShouldNotContain(ф => ф.FileName == CertificateMail.PassphraseFile);
     }
 
     [Fact]
@@ -419,9 +541,10 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
     private async Task<DeliveryResult> Вручную(Guid id)
     {
         await using var scope = база.Scope();
+        var снимок = await scope.ServiceProvider.GetRequiredService<CertificateSnapshots>().TakeAsync(база.Kmp, Ct);
 
         return await scope.ServiceProvider.GetRequiredService<CertificateDelivery>().DeliverAsync(
-            id, база.Kmp, await база.Kmp.ListAsync(Ct), manual: true, new DownloadCache(), Ct);
+            id, база.Kmp, снимок, manual: true, new DownloadCache(), Ct);
     }
 
     private async Task<CertificateSubscription> Прочитать(Guid id)

@@ -136,6 +136,14 @@ internal sealed class KeyManagerClient(HttpClient http, string apiKey) : IKeyMan
                 $"Key Manager Plus вернул пустой файл {тип} для сертификата {commonName}.");
         }
 
+        if (!ПохожНаСертификат(байты))
+        {
+            // ⚠ Без содержимого в тексте: что бы там ни лежало, оно уходит в лог и в last_error.
+            throw new KeyManagerException(
+                $"Key Manager Plus вернул не файл сертификата для {тип} {commonName} "
+                + $"({ответ.Content.Headers.ContentType?.MediaType ?? "тип не указан"}, {байты.Length} байт).");
+        }
+
         return new KmpFile(
             ИмяФайла(ответ.Content.Headers.ContentDisposition) ?? ИмяПоУмолчанию(commonName, тип),
             CertificateFormats.ContentType(тип),
@@ -153,7 +161,8 @@ internal sealed class KeyManagerClient(HttpClient http, string apiKey) : IKeyMan
         var корень = await JsonAsync(ответ, cancellationToken);
         Проверить(корень, $"пароль ключа сертификата {commonName}");
 
-        var детали = корень["details"] as JsonObject;
+        // ⚠ details — то объект, то массив (разбор у класса): берём первый элемент любого вида.
+        var детали = Элементы(корень["details"]).FirstOrDefault();
         var пароль = детали is null ? null : Строка(детали, "Passphrase") ?? Строка(детали, "passphrase");
 
         return string.IsNullOrEmpty(пароль) ? null : пароль;
@@ -348,6 +357,33 @@ internal sealed class KeyManagerClient(HttpClient http, string apiKey) : IKeyMan
         }
 
         return false;
+    }
+
+    /// <summary>
+    /// Похож ли ответ на файл сертификата или ключа хоть в одном из известных видов.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ ⚠ Страница ошибки с кодом 200 — HTML прокси или текст «Session expired» — иначе ушла бы
+    /// получателю под именем <c>site.key</c>, а подписка отметилась бы отправленной. Принимаются:
+    /// PEM (<c>-----BEGIN</c>), DER, PKCS#7 и PKCS#12 (ASN.1 SEQUENCE, байт <c>0x30</c>), JKS
+    /// (<c>0xFEEDFEED</c>) и ZIP (<c>PK\x03\x04</c>) — если Key Manager Plus упакует несколько файлов.
+    /// </remarks>
+    internal static bool ПохожНаСертификат(byte[] байты)
+    {
+        ReadOnlySpan<byte> бом = [0xEF, 0xBB, 0xBF];
+        var начало = байты.AsSpan();
+
+        if (начало.StartsWith(бом))
+        {
+            начало = начало[бом.Length..];
+        }
+
+        начало = начало.TrimStart(" \t\r\n"u8);
+
+        return начало.StartsWith("-----BEGIN"u8)
+            || начало.StartsWith([(byte)0x30])
+            || начало.StartsWith([(byte)0xFE, (byte)0xED, (byte)0xFE, (byte)0xED])
+            || начало.StartsWith("PK\x03\x04"u8);
     }
 
     /// <summary>Отказ, пришедший JSON-ом вместо файла.</summary>

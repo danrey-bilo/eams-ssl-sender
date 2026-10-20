@@ -108,6 +108,71 @@ public sealed class AttachmentTests(MailDatabase база) : IAsyncLifetime
         письмо.SentAt.ShouldBeNull();
         письмо.LastError.ShouldNotBeNullOrWhiteSpace();
         письмо.SealedAttachments.ShouldBeNull("мёртвое письмо живёт вечно, ключу в нём не место");
+
+        // Поднятый предел не возвращает письмо в работу: без файлов оно уйти не должно.
+        база.Настройки.Значения[MailSettings.MaxAttempts.Name] = 10;
+        база.Часы.Вперёд(TimeSpan.FromDays(1));
+        await Разобрать();
+
+        (await Письмо(адрес)).Attempts.ShouldBe(2);
+        база.Отправитель.Ушедшие.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Уборка_стирает_вложения_мёртвых_писем_которые_насос_не_стёр()
+    {
+        // Процесс упал посреди отправки или предел опустили: письмо мёртвое, а ключ в нём остался.
+        var адрес = await Поставить(new MailAttachment("site.key", "application/x-pem-file", Ключ));
+
+        await using (var scope = база.Scope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+            await db.Set<MailOutbox>().Where(п => п.ToAddress == адрес)
+                .ExecuteUpdateAsync(set => set.SetProperty(п => п.Attempts, 5), Ct);
+
+            (await SentMailCleanup.ForgetDeadAttachmentsAsync(db, maxAttempts: 5, Ct)).ShouldBe(1);
+        }
+
+        var письмо = await Письмо(адрес);
+        письмо.SealedAttachments.ShouldBeNull();
+        письмо.NextAttemptAt.ShouldBe(MailAttachments.Никогда);
+    }
+
+    [Fact]
+    public async Task Состояние_писем_по_номерам()
+    {
+        база.Настройки.Значения[MailSettings.MaxAttempts.Name] = 1;
+
+        Guid ушло, умерло, ждёт;
+        await using (var scope = база.Scope())
+        {
+            var очередь = scope.ServiceProvider.GetRequiredService<IMailQueue>();
+            var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+
+            ушло = (await очередь.EnqueueAsync("ok@example.com", ПисьмаБезПредела.Вид, MailLocales.Ru, Пусто, [], Ct)).Id!.Value;
+            умерло = (await очередь.EnqueueAsync("bad@example.com", ПисьмаБезПредела.Вид, MailLocales.Ru, Пусто, [], Ct)).Id!.Value;
+            await db.SaveChangesAsync(Ct);
+        }
+
+        база.Отправитель.ПадатьНа = "bad@example.com";
+        await Разобрать();
+
+        await using (var scope = база.Scope())
+        {
+            var очередь = scope.ServiceProvider.GetRequiredService<IMailQueue>();
+            var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+            ждёт = (await очередь.EnqueueAsync("later@example.com", ПисьмаБезПредела.Вид, MailLocales.Ru, Пусто, [], Ct)).Id!.Value;
+            await db.SaveChangesAsync(Ct);
+
+            var состояние = await очередь.StatusAsync([ушло, умерло, ждёт, Guid.NewGuid()], Ct);
+
+            состояние.Count.ShouldBe(3, "неизвестный номер — удалённое уборкой, его в ответе нет");
+            состояние[ушло].State.ShouldBe(MailLetterState.Sent);
+            состояние[умерло].State.ShouldBe(MailLetterState.Dead);
+            состояние[умерло].ToAddress.ShouldBe("bad@example.com");
+            состояние[умерло].LastError.ShouldNotBeNullOrWhiteSpace();
+            состояние[ждёт].State.ShouldBe(MailLetterState.Pending);
+        }
     }
 
     [Fact]
@@ -136,7 +201,7 @@ public sealed class AttachmentTests(MailDatabase база) : IAsyncLifetime
         for (var раз = 0; раз < 3; раз++)
         {
             (await очередь.EnqueueAsync(адрес, ПисьмаБезПредела.Вид, MailLocales.Ru, Пусто, [], Ct))
-                .ShouldBe(MailQueueResult.Queued);
+                .Result.ShouldBe(MailQueueResult.Queued);
             await db.SaveChangesAsync(Ct);
         }
 
@@ -210,7 +275,7 @@ public sealed class AttachmentTests(MailDatabase база) : IAsyncLifetime
         var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
 
         (await очередь.EnqueueAsync(адрес, ПисьмаБезПредела.Вид, MailLocales.Ru, Пусто, вложения, Ct))
-            .ShouldBe(MailQueueResult.Queued);
+            .Result.ShouldBe(MailQueueResult.Queued);
 
         await db.SaveChangesAsync(Ct);
 

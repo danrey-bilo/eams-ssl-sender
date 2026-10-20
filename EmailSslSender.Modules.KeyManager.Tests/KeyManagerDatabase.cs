@@ -77,6 +77,7 @@ public sealed class KeyManagerDatabase : IAsyncLifetime
 
         services.AddScoped<ApiKeyStore>();
         services.AddScoped<ApiKeyRewrap>();
+        services.AddScoped<CertificateSnapshots>();
         services.AddScoped<CertificateDelivery>();
         services.AddScoped<CertificatePolling>();
 
@@ -211,36 +212,63 @@ public sealed class ПодставнаяОчередь : IMailQueue
 {
     public List<ПринятоеПисьмо> Письма { get; } = [];
 
+    /// <summary>Номера поставленных писем — в порядке постановки.</summary>
+    public List<Guid> Номера { get; } = [];
+
+    /// <summary>Судьба писем по номеру; чего нет — «ждёт».</summary>
+    public Dictionary<Guid, MailLetterStatus> Судьбы { get; } = [];
+
     /// <summary>Чем отвечать на постановку.</summary>
     public MailQueueResult Ответ { get; set; } = MailQueueResult.Queued;
 
     public void Сброс()
     {
         Письма.Clear();
+        Номера.Clear();
+        Судьбы.Clear();
         Ответ = MailQueueResult.Queued;
     }
 
     public Task<bool> CanSendAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(Ответ != MailQueueResult.NotConfigured);
 
-    public Task<MailQueueResult> EnqueueAsync(
+    public async Task<MailQueueResult> EnqueueAsync(
         string toAddress, string kind, string locale, IReadOnlyDictionary<string, string> values,
         CancellationToken cancellationToken = default) =>
-        EnqueueAsync(toAddress, kind, locale, values, [], cancellationToken);
+        (await EnqueueAsync(toAddress, kind, locale, values, [], cancellationToken)).Result;
 
-    public Task<MailQueueResult> EnqueueAsync(
+    public Task<MailTicket> EnqueueAsync(
         string toAddress, string kind, string locale, IReadOnlyDictionary<string, string> values,
         IReadOnlyList<MailAttachment> attachments, CancellationToken cancellationToken = default)
     {
-        if (Ответ == MailQueueResult.Queued)
+        if (Ответ != MailQueueResult.Queued)
         {
-            lock (Письма)
-            {
-                Письма.Add(new ПринятоеПисьмо(toAddress, kind, locale, values, attachments));
-            }
+            return Task.FromResult(new MailTicket(Ответ, null));
         }
 
-        return Task.FromResult(Ответ);
+        var номер = Guid.CreateVersion7();
+
+        lock (Письма)
+        {
+            Письма.Add(new ПринятоеПисьмо(toAddress, kind, locale, values, attachments));
+            Номера.Add(номер);
+        }
+
+        return Task.FromResult(new MailTicket(MailQueueResult.Queued, номер));
+    }
+
+    public Task<IReadOnlyDictionary<Guid, MailLetterStatus>> StatusAsync(
+        IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken = default)
+    {
+        lock (Письма)
+        {
+            return Task.FromResult<IReadOnlyDictionary<Guid, MailLetterStatus>>(ids
+                .Where(Номера.Contains)
+                .ToDictionary(
+                    номер => номер,
+                    номер => Судьбы.GetValueOrDefault(номер)
+                        ?? new MailLetterStatus(MailLetterState.Pending, Письма[Номера.IndexOf(номер)].To, null)));
+        }
     }
 }
 

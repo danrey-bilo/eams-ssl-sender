@@ -98,6 +98,7 @@ internal sealed class KeyManagerTables : IEntityConfigurationProvider
             строка.Property(п => п.LastSentAt).HasColumnName("last_sent_at").HasColumnType("timestamptz");
             строка.Property(п => п.LastAttemptAt).HasColumnName("last_attempt_at").HasColumnType("timestamptz");
             строка.Property(п => п.LastError).HasColumnName("last_error").HasColumnType("text");
+            строка.Property(п => п.PendingMailIds).HasColumnName("pending_mail_ids").HasColumnType("uuid[]");
 
             // Опрос ищет подписки по Common Name сертификата.
             строка.HasIndex(п => п.CommonName).HasDatabaseName($"ix_{SubscriptionsTable}_common_name");

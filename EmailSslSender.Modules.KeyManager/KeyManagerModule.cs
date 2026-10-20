@@ -55,6 +55,7 @@ public static class KeyManagerModule
         services.AddScoped<IRewrapTarget, ApiKeyRewrap>();
 
         services.AddScoped<IKeyManagerConnector, KeyManagerConnector>();
+        services.AddScoped<CertificateSnapshots>();
         services.AddScoped<CertificateDelivery>();
         services.AddScoped<CertificatePolling>();
 

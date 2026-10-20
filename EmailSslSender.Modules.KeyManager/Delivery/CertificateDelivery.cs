@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text;
 using EmailSslSender.Modules.KeyManager.Client;
 using EmailSslSender.Modules.KeyManager.Contracts;
 using EmailSslSender.Modules.KeyManager.Domain;
@@ -85,20 +86,6 @@ internal sealed class CertificateDelivery(
     ILogger<CertificateDelivery> log)
 {
     /// <summary>
-    /// Текущий сертификат Common Name: из списка Key Manager Plus — с самым поздним сроком.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ После продления Key Manager Plus может держать и старый сертификат, и новый. Новый —
-    /// тот, что действует дольше; без даты он проигрывает любому с датой.
-    /// </remarks>
-    internal static KmpCertificate? Current(IReadOnlyList<KmpCertificate> certificates, string commonName) =>
-        certificates
-            .Where(с => string.Equals(с.CommonName, commonName, StringComparison.OrdinalIgnoreCase))
-            .OrderByDescending(с => с.ExpiresOn ?? DateOnly.MinValue)
-            .ThenByDescending(с => с.SerialNumber, StringComparer.Ordinal)
-            .FirstOrDefault();
-
-    /// <summary>
     /// Пора ли слать и почему. <c>null</c> — не пора.
     /// </summary>
     /// <remarks>
@@ -129,14 +116,14 @@ internal sealed class CertificateDelivery(
     /// </summary>
     /// <param name="id">Подписка.</param>
     /// <param name="client">Открытый клиент Key Manager Plus.</param>
-    /// <param name="certificates">Список сертификатов этого прохода.</param>
+    /// <param name="snapshot">Снимок сертификатов этого прохода.</param>
     /// <param name="manual">Ручная отправка: без проверки срока и признака «включена».</param>
     /// <param name="cache">Выгруженное в этом проходе.</param>
     /// <param name="cancellationToken">Отмена.</param>
     public async Task<DeliveryResult> DeliverAsync(
         Guid id,
         IKeyManagerClient client,
-        IReadOnlyList<KmpCertificate> certificates,
+        CertificateSnapshot snapshot,
         bool manual,
         DownloadCache cache,
         CancellationToken cancellationToken = default)
@@ -144,7 +131,7 @@ internal sealed class CertificateDelivery(
         try
         {
             return await db.InTransactionAsync(
-                token => ОтправитьAsync(id, client, certificates, manual, cache, token), cancellationToken);
+                token => ОтправитьAsync(id, client, snapshot, manual, cache, token), cancellationToken);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -176,7 +163,7 @@ internal sealed class CertificateDelivery(
     private async Task<DeliveryResult> ОтправитьAsync(
         Guid id,
         IKeyManagerClient client,
-        IReadOnlyList<KmpCertificate> certificates,
+        CertificateSnapshot snapshot,
         bool manual,
         DownloadCache cache,
         CancellationToken token)
@@ -199,8 +186,16 @@ internal sealed class CertificateDelivery(
             return new DeliveryResult(DeliveryOutcome.Disabled);
         }
 
+        // ⚠ ⚠ Снимок старше последней отправки — устарел: её сделал другой процесс или ручная
+        // отправка по более свежему списку. Слать по старому значило бы разослать прежний
+        // сертификат под видом обновления и откатить отметку на него.
+        if (!manual && подписка.LastSentAt > snapshot.FetchedAt)
+        {
+            return new DeliveryResult(DeliveryOutcome.NotDue);
+        }
+
         var сейчас = clock.GetUtcNow();
-        var текущий = Current(certificates, подписка.CommonName);
+        var текущий = snapshot.Current(подписка.CommonName);
 
         if (текущий is null)
         {
@@ -220,11 +215,28 @@ internal sealed class CertificateDelivery(
             return new DeliveryResult(DeliveryOutcome.NotDue);
         }
 
+        // ⚠ Почта проверяется ДО выгрузки: иначе при ненастроенной почте каждый опрос выгружал бы
+        // закрытые ключи из Key Manager Plus только затем, чтобы выбросить их.
+        if (!await mail.CanSendAsync(token))
+        {
+            throw new ОтказПочты(MailQueueResult.NotConfigured);
+        }
+
         var вложения = await ВыгрузитьAsync(client, текущий, подписка.Formats, cache, token);
 
         var пароль = подписка.IncludePassphrase
             ? await ПарольAsync(client, текущий, cache, token)
             : null;
+
+        // ⚠ Пароль ключа — отдельным вложением, а не строкой в теле: тело письма живёт в очереди
+        // до уборки, а вложения стираются, как только письмо ушло.
+        if (пароль is not null)
+        {
+            вложения.Add(new MailAttachment(
+                CertificateMail.PassphraseFile, "text/plain; charset=utf-8", Encoding.UTF8.GetBytes(пароль + Environment.NewLine)));
+        }
+
+        var номера = new List<Guid>(подписка.Recipients.Length);
 
         foreach (var адрес in подписка.Recipients)
         {
@@ -236,22 +248,25 @@ internal sealed class CertificateDelivery(
                     ?? CertificateMail.UnknownDate,
                 ["reason"] = CertificateMail.Reason(причина.Value, подписка.Locale),
                 ["files"] = string.Join(", ", вложения.Select(ф => ф.FileName)),
-                ["passphrase"] = CertificateMail.Passphrase(пароль, подписка.Locale),
+                ["passphrase"] = CertificateMail.Passphrase(пароль is not null, подписка.Locale),
             };
 
             var итог = await mail.EnqueueAsync(
                 адрес, CertificateMail.Kind, подписка.Locale, значения, вложения, token);
 
-            if (итог != MailQueueResult.Queued)
+            if (итог.Result != MailQueueResult.Queued || итог.Id is not { } номер)
             {
-                throw new ОтказПочты(итог);
+                throw new ОтказПочты(итог.Result);
             }
+
+            номера.Add(номер);
         }
 
         подписка.LastSentSerial = текущий.SerialNumber;
         подписка.LastSentAt = сейчас;
         подписка.LastAttemptAt = сейчас;
         подписка.LastError = null;
+        подписка.PendingMailIds = [.. номера];
 
         // ⚠ В журнал — подписка и причина, без адресов и без содержимого: адрес получателя —
         // сведение о человеке, а строка уходит в общий лог (правило 14).

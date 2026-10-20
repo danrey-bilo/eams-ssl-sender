@@ -70,6 +70,30 @@ internal sealed class SentMailCleanup(
             .ExecuteDeleteAsync(cancellationToken);
     }
 
+    /// <summary>
+    /// Стереть вложения мёртвых писем, которые насос не успел стереть сам.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ ⚠ <b>Страховка, а не основной путь.</b> Насос стирает вложения на последней неудачной
+    /// попытке; но процесс, упавший посреди отправки, сбой самой отметки или опущенный
+    /// <c>mail.max_attempts</c> оставляют мёртвое письмо с запечатанным закрытым ключом — а
+    /// мёртвые письма уборка не удаляет никогда. Стёртому письму срок ставится «никогда»: без
+    /// файлов оно уходить не должно.
+    /// </remarks>
+    public static Task<int> ForgetDeadAttachmentsAsync(
+        SenderDbContext db, int maxAttempts, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+
+        return db.Set<MailOutbox>()
+            .Where(письмо => письмо.SentAt == null && письмо.Attempts >= maxAttempts && письмо.SealedAttachments != null)
+            .ExecuteUpdateAsync(
+                set => set
+                    .SetProperty(письмо => письмо.SealedAttachments, (byte[]?)null)
+                    .SetProperty(письмо => письмо.NextAttemptAt, MailAttachments.Никогда),
+                cancellationToken);
+    }
+
     private async Task УбратьAsync(CancellationToken cancellationToken)
     {
         try
@@ -79,11 +103,15 @@ internal sealed class SentMailCleanup(
 
             var снесено = await RunAsync(db, clock, cancellationToken);
 
+            var политика = await MailPolicy.ReadAsync(
+                scope.ServiceProvider.GetRequiredService<Shared.Contracts.Settings.ISettingsReader>(), cancellationToken);
+            var стёрто = await ForgetDeadAttachmentsAsync(db, политика.MaxAttempts, cancellationToken);
+
             // ⚠ Пустой проход молчит: суточное расписание, пишущее «снесено 0», за год даёт
             // триста шестьдесят пять строк ни о чём.
-            if (снесено > 0)
+            if (снесено > 0 || стёрто > 0)
             {
-                log.LogInformation("mail_cleanup {Removed}", снесено);
+                log.LogInformation("mail_cleanup {Removed} {AttachmentsForgotten}", снесено, стёрто);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

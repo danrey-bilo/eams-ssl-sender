@@ -1,5 +1,6 @@
 using EmailSslSender.Modules.KeyManager.Client;
 using EmailSslSender.Modules.KeyManager.Domain;
+using EmailSslSender.Shared.Contracts.Mail;
 using EmailSslSender.Shared.Data;
 using EmailSslSender.Shared.Errors;
 using Microsoft.EntityFrameworkCore;
@@ -14,7 +15,7 @@ namespace EmailSslSender.Modules.KeyManager.Delivery;
 internal readonly record struct PollRun(bool Polled, int Certificates, int Sent);
 
 /// <summary>
-/// Один проход: спросить Key Manager Plus, обновить снимок, отправить подписки, которым пора.
+/// Один проход: сверить прежние письма, спросить Key Manager Plus, отправить подписки, которым пора.
 /// </summary>
 /// <remarks>
 /// ⚠ ⚠ <b>«Сертификат обновился» замечается только так.</b> Вебхуков, истории и отметки
@@ -31,7 +32,9 @@ internal readonly record struct PollRun(bool Polled, int Certificates, int Sent)
 internal sealed class CertificatePolling(
     SenderDbContext db,
     IKeyManagerConnector connector,
+    CertificateSnapshots snapshots,
     CertificateDelivery delivery,
+    IMailQueue mail,
     TimeProvider clock,
     ILogger<CertificatePolling> log)
 {
@@ -44,7 +47,9 @@ internal sealed class CertificatePolling(
             return default;
         }
 
-        IReadOnlyList<KmpCertificate> список;
+        await СверитьПисьмаAsync(cancellationToken);
+
+        CertificateSnapshot снимок;
         IKeyManagerClient клиент;
 
         try
@@ -62,7 +67,7 @@ internal sealed class CertificatePolling(
         {
             try
             {
-                список = await клиент.ListAsync(cancellationToken);
+                снимок = await snapshots.TakeAsync(клиент, cancellationToken);
             }
             catch (KeyManagerException ошибка)
             {
@@ -71,8 +76,7 @@ internal sealed class CertificatePolling(
                 return default;
             }
 
-            await ЗапомнитьAsync(список, cancellationToken);
-            await ЗаписатьОпросAsync(список.Count, null);
+            await ЗаписатьОпросAsync(снимок.Certificates.Count, null);
 
             var подписки = await db.Set<CertificateSubscription>()
                 .AsNoTracking()
@@ -86,7 +90,7 @@ internal sealed class CertificatePolling(
 
             foreach (var id in подписки)
             {
-                var итог = await delivery.DeliverAsync(id, клиент, список, manual: false, кэш, cancellationToken);
+                var итог = await delivery.DeliverAsync(id, клиент, снимок, manual: false, кэш, cancellationToken);
 
                 if (итог.Outcome == DeliveryOutcome.Sent)
                 {
@@ -97,42 +101,86 @@ internal sealed class CertificatePolling(
             // ⚠ Проход без отправок молчит — по той же причине, что и ненастроенный.
             if (отправлено > 0)
             {
-                log.LogInformation("keymanager_poll_delivered {Sent} {Certificates}", отправлено, список.Count);
+                log.LogInformation("keymanager_poll_delivered {Sent} {Certificates}", отправлено, снимок.Certificates.Count);
             }
 
-            return new PollRun(true, список.Count, отправлено);
+            return new PollRun(true, снимок.Certificates.Count, отправлено);
         }
     }
 
     /// <summary>
-    /// Обновить снимок: новые пары «Common Name + серийный» добавить, виденные — отметить.
+    /// Сверить письма прежних отправок с очередью: ушедшие забыть, умершие — в <c>last_error</c>.
     /// </summary>
     /// <remarks>
-    /// ⚠ <c>ON CONFLICT</c>, а не «прочитать и добавить недостающие»: два процесса, опросившие
-    /// одновременно, иначе споткнулись бы о первичный ключ друг друга.
+    /// ⚠ ⚠ <b>Умершее письмо НЕ отправляется заново само.</b> Причина смерти бывает у одного
+    /// адреса (ящика нет) — повтор раз в час слал бы остальным получателям подписки дубли без
+    /// конца. Ошибка видна в подписке, а отправить повторно — кнопка, когда причина устранена.
+    ///
+    /// ⚠ Условное обновление по прежним номерам: если подписку тем временем отправили снова, её
+    /// новые номера не затираются вердиктом о старых.
     /// </remarks>
-    private async Task ЗапомнитьAsync(IReadOnlyList<KmpCertificate> список, CancellationToken cancellationToken)
+    private async Task СверитьПисьмаAsync(CancellationToken cancellationToken)
     {
-        var сейчас = clock.GetUtcNow();
+        try
+        {
+            var ждут = await db.Set<CertificateSubscription>()
+                .AsNoTracking()
+                .Where(п => п.PendingMailIds != null)
+                .Select(п => new { п.Id, Номера = п.PendingMailIds! })
+                .ToListAsync(cancellationToken);
 
-        await db.InTransactionAsync(
-            async token =>
+            if (ждут.Count == 0)
             {
-                foreach (var с in список.DistinctBy(с => (с.CommonName, с.SerialNumber)))
+                return;
+            }
+
+            var судьбы = await mail.StatusAsync([.. ждут.SelectMany(п => п.Номера)], cancellationToken);
+
+            foreach (var подписка in ждут)
+            {
+                var письма = подписка.Номера
+                    .Select(номер => судьбы.GetValueOrDefault(номер))
+                    .ToList();
+
+                // Нет в очереди — значит, удалено уборкой, а уборка удаляет только ушедшие.
+                if (письма.Any(п => п is { State: MailLetterState.Pending }))
                 {
-                    await db.Database.ExecuteSqlAsync(
-                        $"""
-                        INSERT INTO keymanager_certificates
-                            (common_name, serial_number, expires_on, first_seen_at, last_seen_at)
-                        VALUES ({с.CommonName}, {с.SerialNumber}, {с.ExpiresOn}, {сейчас}, {сейчас})
-                        ON CONFLICT (common_name, serial_number) DO UPDATE
-                        SET expires_on = EXCLUDED.expires_on, last_seen_at = EXCLUDED.last_seen_at
-                        """,
-                        token);
+                    continue;
                 }
-            },
-            cancellationToken);
+
+                var умершие = письма.Where(п => п is { State: MailLetterState.Dead }).Select(п => п!).ToList();
+                var было = подписка.Номера;
+                string? ошибка = умершие.Count == 0 ? null : Undelivered(умершие);
+
+                await db.Set<CertificateSubscription>()
+                    .Where(п => п.Id == подписка.Id && п.PendingMailIds == было)
+                    .ExecuteUpdateAsync(
+                        set => set
+                            .SetProperty(п => п.PendingMailIds, (Guid[]?)null)
+                            .SetProperty(п => п.LastError, п => ошибка ?? п.LastError),
+                        cancellationToken);
+
+                if (ошибка is not null)
+                {
+                    log.LogWarning("keymanager_delivery_undelivered {Subscription} {Count}", подписка.Id, умершие.Count);
+                }
+            }
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ошибка)
+        {
+            log.LogError("keymanager_reconcile_failed {Error}", SafeError.Describe(ошибка));
+        }
     }
+
+    /// <summary>Текст для подписки: на какие адреса письмо не дошло и почему.</summary>
+    internal static string Undelivered(IReadOnlyList<MailLetterStatus> умершие) =>
+        "Письмо не доставлено: "
+        + string.Join("; ", умершие.Select(п => п.LastError is null ? п.ToAddress : $"{п.ToAddress} — {п.LastError}"))
+        + ". Отправьте повторно, когда причина устранена.";
 
     /// <summary>Итог опроса в строку состояния; сбой записи — в лог, не наверх.</summary>
     private async Task ЗаписатьОпросAsync(int? сколько, string? ошибка)

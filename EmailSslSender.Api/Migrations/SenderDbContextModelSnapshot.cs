@@ -273,6 +273,10 @@ namespace EmailSslSender.Api.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("on_change");
 
+                    b.PrimitiveCollection<Guid[]>("PendingMailIds")
+                        .HasColumnType("uuid[]")
+                        .HasColumnName("pending_mail_ids");
+
                     b.PrimitiveCollection<string[]>("Recipients")
                         .IsRequired()
                         .HasColumnType("text[]")

@@ -82,14 +82,43 @@ public interface IMailQueue
     /// <param name="values">Что подставить в шаблон.</param>
     /// <param name="attachments">Файлы письма. Пустой список — обычное письмо.</param>
     /// <param name="cancellationToken">Отмена.</param>
-    Task<MailQueueResult> EnqueueAsync(
+    /// <returns>Итог и номер письма в очереди — по нему потом спрашивают <see cref="StatusAsync"/>.</returns>
+    Task<MailTicket> EnqueueAsync(
         string toAddress,
         string kind,
         string locale,
         IReadOnlyDictionary<string, string> values,
         IReadOnlyList<MailAttachment> attachments,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Что стало с письмами: ждут, ушли или умерли.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Номера, которых в ответе нет, удалены уборкой — а уборка удаляет только ушедшие.
+    /// </remarks>
+    Task<IReadOnlyDictionary<Guid, MailLetterStatus>> StatusAsync(
+        IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken = default);
 }
+
+/// <summary>Итог постановки письма: результат и номер в очереди, если письмо легло.</summary>
+public readonly record struct MailTicket(MailQueueResult Result, Guid? Id);
+
+/// <summary>Состояние письма в очереди.</summary>
+public enum MailLetterState
+{
+    /// <summary>Ещё пробуем.</summary>
+    Pending,
+
+    /// <summary>Сервер принял письмо.</summary>
+    Sent,
+
+    /// <summary>Попытки исчерпаны — письмо не уйдёт.</summary>
+    Dead,
+}
+
+/// <summary>Письмо в очереди: состояние, адрес и причина последней неудачи.</summary>
+public sealed record MailLetterStatus(MailLetterState State, string ToAddress, string? LastError);
 
 /// <summary>Один файл письма.</summary>
 /// <param name="FileName">Имя файла у получателя. Путь отбрасывается.</param>

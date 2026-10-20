@@ -133,12 +133,13 @@ internal sealed class KeyManagerController(
         return Accepted();
     }
 
-    /// <summary>Сертификаты, которые видел опрос: по Common Name, свежие первыми.</summary>
+    /// <summary>Сертификаты, которые видел опрос: по Common Name, замеченные позже — первыми.</summary>
     [HttpGet("certificates")]
     public async Task<IReadOnlyList<KnownCertificateOut>> Certificates(CancellationToken cancellationToken) =>
         await db.Set<KnownCertificate>()
             .AsNoTracking()
             .OrderBy(с => с.CommonName)
+            .ThenByDescending(с => с.FirstSeenAt)
             .ThenByDescending(с => с.ExpiresOn)
             .Select(с => new KnownCertificateOut(
                 с.CommonName, с.SerialNumber, с.ExpiresOn, с.FirstSeenAt, с.LastSeenAt))

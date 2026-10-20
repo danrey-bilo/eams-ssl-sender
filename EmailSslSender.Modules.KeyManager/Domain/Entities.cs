@@ -111,4 +111,14 @@ internal sealed class CertificateSubscription
 
     /// <summary>Почему не удалась последняя попытка. <c>null</c> — удалась.</summary>
     public string? LastError { get; set; }
+
+    /// <summary>
+    /// Номера писем последней отправки, судьба которых ещё не сверена. <c>null</c> — сверять нечего.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Отправка отмечается, когда письма легли в очередь, — а дойдут ли они, решится позже. Опрос
+    /// сверяет эти номера с очередью: умершее письмо становится <see cref="LastError"/>, а не
+    /// молчаливым «отправлено».
+    /// </remarks>
+    public Guid[]? PendingMailIds { get; set; }
 }

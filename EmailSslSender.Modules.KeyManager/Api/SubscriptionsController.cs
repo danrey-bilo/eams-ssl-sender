@@ -61,12 +61,46 @@ internal sealed record SubscriptionOut(
     [property: JsonPropertyName("last_sent_serial")] string? LastSentSerial,
     [property: JsonPropertyName("last_sent_at")] DateTimeOffset? LastSentAt,
     [property: JsonPropertyName("last_attempt_at")] DateTimeOffset? LastAttemptAt,
-    [property: JsonPropertyName("last_error")] string? LastError)
+    [property: JsonPropertyName("last_error")] string? LastError,
+    [property: JsonPropertyName("delivery")] string Delivery)
 {
-    public static SubscriptionOut From(CertificateSubscription п) => new(
-        п.Id, п.CommonName, п.Recipients, п.Formats, п.IncludePassphrase, п.OnChange, п.IntervalDays,
-        п.Locale, п.Enabled, п.CreatedAt, п.UpdatedAt, п.LastSentSerial, п.LastSentAt, п.LastAttemptAt,
-        п.LastError);
+    /// <summary>
+    /// Подписка с состоянием доставки последней отправки.
+    /// </summary>
+    /// <remarks>
+    /// <c>delivery</c>: <c>none</c> — ещё не отправлялась, <c>queued</c> — письма в очереди,
+    /// <c>sent</c> — ушли, <c>failed</c> — не ушли (причина в <c>last_error</c>). Состояние писем
+    /// берётся из очереди на чтении — опрос сверяет его позже и не чаще своего срока.
+    /// </remarks>
+    public static SubscriptionOut From(CertificateSubscription п, IReadOnlyDictionary<Guid, MailLetterStatus>? letters = null)
+    {
+        var (доставка, ошибка) = (п.LastError, п.LastSentAt) switch
+        {
+            _ when п.PendingMailIds is { Length: > 0 } номера && letters is not null => Состояние(номера, letters, п.LastError),
+            (not null, _) => ("failed", п.LastError),
+            (null, not null) => ("sent", null),
+            _ => ("none", null),
+        };
+
+        return new(
+            п.Id, п.CommonName, п.Recipients, п.Formats, п.IncludePassphrase, п.OnChange, п.IntervalDays,
+            п.Locale, п.Enabled, п.CreatedAt, п.UpdatedAt, п.LastSentSerial, п.LastSentAt, п.LastAttemptAt,
+            ошибка, доставка);
+    }
+
+    private static (string, string?) Состояние(
+        Guid[] номера, IReadOnlyDictionary<Guid, MailLetterStatus> letters, string? lastError)
+    {
+        var письма = номера.Select(номер => letters.GetValueOrDefault(номер)).ToList();
+        var умершие = письма.Where(п => п is { State: MailLetterState.Dead }).Select(п => п!).ToList();
+
+        if (умершие.Count > 0)
+        {
+            return ("failed", CertificatePolling.Undelivered(умершие));
+        }
+
+        return письма.Any(п => п is { State: MailLetterState.Pending }) ? ("queued", lastError) : ("sent", lastError);
+    }
 }
 
 /// <summary>
@@ -82,7 +116,9 @@ internal sealed record SubscriptionOut(
 internal sealed class SubscriptionsController(
     SenderDbContext db,
     IKeyManagerConnector connector,
+    CertificateSnapshots snapshots,
     CertificateDelivery delivery,
+    IMailQueue mail,
     PollWakeup wakeup,
     ICurrentUser me,
     IAuditWriter audit,
@@ -96,18 +132,24 @@ internal sealed class SubscriptionsController(
 
     /// <summary>Все подписки по Common Name.</summary>
     [HttpGet]
-    public async Task<IReadOnlyList<SubscriptionOut>> List(CancellationToken cancellationToken) =>
-        [.. (await db.Set<CertificateSubscription>()
-                .AsNoTracking()
-                .OrderBy(п => п.CommonName)
-                .ThenBy(п => п.Id)
-                .ToListAsync(cancellationToken))
-            .Select(SubscriptionOut.From)];
+    public async Task<IReadOnlyList<SubscriptionOut>> List(CancellationToken cancellationToken)
+    {
+        var подписки = await db.Set<CertificateSubscription>()
+            .AsNoTracking()
+            .OrderBy(п => п.CommonName)
+            .ThenBy(п => п.Id)
+            .ToListAsync(cancellationToken);
+
+        var письма = await mail.StatusAsync(
+            [.. подписки.SelectMany(п => п.PendingMailIds ?? [])], cancellationToken);
+
+        return [.. подписки.Select(п => SubscriptionOut.From(п, письма))];
+    }
 
     /// <summary>Одна подписка.</summary>
     [HttpGet("{id:guid}")]
     public async Task<SubscriptionOut> Get(Guid id, CancellationToken cancellationToken) =>
-        SubscriptionOut.From(await НайтиAsync(id, tracked: false, cancellationToken));
+        await ВыдатьAsync(await НайтиAsync(id, tracked: false, cancellationToken), cancellationToken);
 
     /// <summary>
     /// Завести подписку.
@@ -188,6 +230,7 @@ internal sealed class SubscriptionsController(
                         строка.LastSentSerial = null;
                         строка.LastSentAt = null;
                         строка.LastError = null;
+                        строка.PendingMailIds = null;
                     }
                 }
 
@@ -274,9 +317,9 @@ internal sealed class SubscriptionsController(
         try
         {
             using var клиент = await connector.OpenAsync(cancellationToken);
-            var список = await клиент.ListAsync(cancellationToken);
+            var снимок = await snapshots.TakeAsync(клиент, cancellationToken);
 
-            итог = await delivery.DeliverAsync(id, клиент, список, manual: true, new DownloadCache(), cancellationToken);
+            итог = await delivery.DeliverAsync(id, клиент, снимок, manual: true, new DownloadCache(), cancellationToken);
         }
         catch (KeyManagerException ошибка)
         {
@@ -285,7 +328,7 @@ internal sealed class SubscriptionsController(
 
         return итог.Outcome switch
         {
-            DeliveryOutcome.Sent => SubscriptionOut.From(await НайтиAsync(id, tracked: false, cancellationToken)),
+            DeliveryOutcome.Sent => await ВыдатьAsync(await НайтиAsync(id, tracked: false, cancellationToken), cancellationToken),
             DeliveryOutcome.Gone => throw AppException.NotFound("Подписка не найдена."),
             DeliveryOutcome.Busy => throw new AppException(
                 ErrorCodes.DeliveryInProgress,
@@ -301,6 +344,9 @@ internal sealed class SubscriptionsController(
                 ErrorCodes.Internal, итог.Error ?? "Отправка не удалась.", HttpStatusCode.InternalServerError),
         };
     }
+
+    private async Task<SubscriptionOut> ВыдатьAsync(CertificateSubscription подписка, CancellationToken cancellationToken) =>
+        SubscriptionOut.From(подписка, await mail.StatusAsync(подписка.PendingMailIds ?? [], cancellationToken));
 
     private async Task<CertificateSubscription> НайтиAsync(Guid id, bool tracked, CancellationToken cancellationToken)
     {

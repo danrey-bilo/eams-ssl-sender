@@ -25,6 +25,15 @@ internal static class MailAttachments
     /// <summary>Тип, если присланный не разбирается.</summary>
     internal const string ЗапасныйТип = "application/octet-stream";
 
+    /// <summary>
+    /// Срок следующей попытки у письма, чьи вложения стёрты, — «никогда».
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Без него поднятый потом <c>mail.max_attempts</c> вернул бы мёртвое письмо в работу, и оно
+    /// ушло бы <b>без файлов</b> — сертификат, который нельзя установить, под видом доставленного.
+    /// </remarks>
+    internal static readonly DateTimeOffset Никогда = new(9999, 1, 1, 0, 0, 0, TimeSpan.Zero);
+
     /// <summary>Запечатать вложения. Пустой список — <c>null</c>: колонки нет, нечего открывать.</summary>
     public static byte[]? Seal(
         ISecretEnvelope envelope, WrappedDataKey key, IReadOnlyList<MailAttachment> attachments)
