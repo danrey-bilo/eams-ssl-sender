@@ -24,10 +24,9 @@ namespace EmailSslSender.Modules.Identity.TwoFactor;
 /// владелец токенов, — через <see cref="IStepUpMarker"/>; своей таблицы «когда этот человек
 /// подтверждался» здесь нет и заводить её нельзя.
 ///
-/// ⚠ <b>Сколько отметка считается свежей, решает НЕ этот модуль.</b> Окно держит фильтр входа
-/// (<c>AuthenticationFilter.StepUpWindow</c>, пять минут) для действий с
-/// <c>[RequireRecentSecondFactor]</c>: «сколько живёт подтверждение» — вопрос про
-/// защищаемое, а не про способ подтверждения.
+/// ⚠ ⚠ <b>Действия после входа свежей отметки не требуют</b> (решение владельца, 2026-10-20):
+/// второй фактор спрашивается только при входе. Отметка нужна, чтобы отличать полноценную
+/// сессию от сессии настройки; этим сервисом её ставят, когда сессию настройки завершают кодом.
 ///
 /// ⚠ <b>Код расходуется в любом случае.</b> Принятый шаг записывается
 /// <see cref="TwoFactorService.VerifyAsync"/> до всего прочего, и это верно: код одноразов
@@ -174,17 +173,6 @@ internal sealed class StepUpService(
             SignInService.EnsureMail(await codes.IssueAsync(user, token, session.ToString("N"), Purposes.StepUpCode));
             await db.SaveChangesAsync(token);
         }, cancellationToken);
-    }
-
-    /// <summary>Изменять защиту можно после недавнего кода; первичная ограниченная настройка остаётся доступной.</summary>
-    public void RequireRecent(bool allowInitialEnrollment = true)
-    {
-        if ((!allowInitialEnrollment || !current.MustEnrollTwoFactor)
-            && (current.StepUpAt is null || current.StepUpAt < clock.GetUtcNow().AddMinutes(-5)))
-        {
-            throw new AppException(ErrorCodes.SecondFactorRequired,
-                "Подтвердите личность кодом второго фактора.", HttpStatusCode.Forbidden);
-        }
     }
 
     private async Task ОтказатьAsync(Guid кто, Guid токен, string причина, CancellationToken cancellationToken)

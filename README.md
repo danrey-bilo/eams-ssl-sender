@@ -67,16 +67,9 @@ Manager Plus** по подпискам. Код учётных записей, т
     `403 TWO_FACTOR_ENROLLMENT_REQUIRED`.
   - Коды письмом — **запасной способ**. Они работают только когда почта настроена и только
     у того, кто уже хотя бы раз подтвердил аутентификатор.
-- **Опасные действия требуют свежего второго фактора.** Код должен быть подтверждён
-  в **этой** сессии за последние **5 минут**, иначе ответ `403 SECOND_FACTOR_REQUIRED`.
-  Свежий фактор нужен для:
-  - изменения настроек;
-  - пароля SMTP и проверочного письма;
-  - создания, изменения, отключения, включения и удаления учётных записей;
-  - снятия блокировки, сброса чужого второго фактора, закрытия чужих сессий;
-  - выдачи ссылки сброса пароля и повторного приглашения.
-
-  Свежесть даёт вход с кодом или `POST /api/me/step-up`.
+- **Код — только при входе.** После входа действия второго фактора не спрашивают:
+  вошедший может всё, пока жива сессия. Закрыть сессию можно выходом или из профиля, а чужие —
+  из «Пользователей».
 - **Последнюю активную учётную запись нельзя отключить или удалить** (`409 LAST_SUPERADMIN`):
   иначе в систему некому будет войти.
 - **Пароль администратор не задаёт.** Новую учётную запись заводят приглашением, и пароль
@@ -171,8 +164,7 @@ http://127.0.0.1:8001. Всё, что описано ниже через `curl`,
 
 - **Первый вход:** почта и пароль, затем QR-код для приложения-аутентификатора. Дальше вход идёт
   с шестизначным кодом.
-- **Подтверждение кодом.** Опасные действия, если с последнего кода прошло больше пяти минут,
-  попросят код ещё раз. Действие повторится само.
+- **Код — только при входе.** После входа панель кода больше не спрашивает.
 - **Сессия.** Перезагрузка страницы сессию не теряет. Токен доступа живёт в памяти вкладки, токен
   обновления — в куке `HttpOnly`.
 - **Без внешних ресурсов.** Панель работает во внутренней сети без выхода в интернет. Страницы
@@ -208,8 +200,7 @@ TOKEN='значение access_token из ответа'
 curl -s -X POST $API/api/me/two-factor/totp/setup -H "Authorization: Bearer $TOKEN"
 ```
 
-**3. Подтвердить кодом из приложения.** Ответ `204`. С этого момента сессия полноценная,
-и фактор в ней свежий.
+**3. Подтвердить кодом из приложения.** Ответ `204`. С этого момента сессия полноценная.
 
 ```bash
 curl -s -X POST $API/api/me/two-factor/totp/confirm -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"code":"123456"}'
@@ -239,17 +230,11 @@ curl -s -X POST $API/api/auth/two-factor/email -H 'Content-Type: application/jso
 curl -s -X POST $API/api/auth/refresh -H 'Content-Type: application/json' -d '{"refresh_token":"ТОКЕН_ОБНОВЛЕНИЯ","use_cookie":false}'
 ```
 
-**Переподтверждение** перед опасным действием, когда прошло больше 5 минут:
-
-```bash
-curl -s -X POST $API/api/me/step-up -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"code":"123456"}'
-```
-
 ---
 
 ## Настройка почты по SSL
 
-Почта выключена, пока её не настроят. Все шаги требуют свежего второго фактора.
+Почта выключена, пока её не настроят.
 
 **1. Сервер и отправитель.** `mail.smtp_security` задаётся явно и по порту не угадывается:
 
@@ -328,8 +313,8 @@ build 7110) и рассылает файлы SSL-сертификатов по *
 
 > ⚠ **Письмо несёт закрытый ключ** (тип `KEY`, а также `PKCS` и `JKS`). Любой, кто прочтёт ящик
 > получателя или пересланное письмо, получит ключ. В очереди вложения лежат запечатанными и
-> стираются, как только письмо ушло или исчерпало попытки. Подписки правятся только со свежим
-> вторым фактором. Шлите ключ только тем, кому он действительно нужен.
+> стираются, как только письмо ушло или исчерпало попытки. Шлите ключ только тем, кому он
+> действительно нужен.
 
 **1. Ключ API.** В Key Manager Plus откройте **Settings → General Settings → API Key** и нажмите
 **Generate**. Ключ привязан к хосту, на котором его создали. У нас он хранится запечатанным
@@ -411,8 +396,6 @@ curl -s -X POST $API/api/certificate-subscriptions -H "Authorization: Bearer $TO
 
 ## Учётные записи
 
-Все действия ниже требуют свежего второго фактора.
-
 **Пригласить.** Если почта настроена, приглашение уходит письмом и `invitation_token` в
 ответе пуст. Если нет — ссылка возвращается в ответе один раз, и её передают человеку
 самостоятельно: `https://sender.example.com/activate#token=ЗНАЧЕНИЕ`. Ссылка живёт
@@ -455,8 +438,8 @@ curl -s "$API/api/users?limit=50" -H "Authorization: Bearer $TOKEN"
 ## Справочник API
 
 Все тела — JSON. Токен передаётся заголовком `Authorization: Bearer ...`.
-Пометки: **П** — публичный, **Н** — открыт и в сессии настройки, **Ф** — нужен свежий второй
-фактор.
+Пометки: **П** — публичный, **Н** — открыт и в сессии настройки. Второй фактор спрашивается
+только при входе; действия после входа его не требуют.
 
 | Метод | Путь | | Назначение |
 |---|---|---|---|
@@ -473,42 +456,42 @@ curl -s "$API/api/users?limit=50" -H "Authorization: Bearer $TOKEN"
 | PUT | `/api/me/two-factor` | | Предпочитаемый способ: `{"method": "totp" \| "email"}` |
 | POST | `/api/me/two-factor/totp/setup` | Н | Завести секрет TOTP |
 | POST | `/api/me/two-factor/totp/confirm` | Н | Подтвердить секрет кодом |
-| POST | `/api/me/two-factor/totp/disable` | Ф | Отключить приложение (только если работают коды письмом): `password` |
-| POST | `/api/me/step-up` | Н | Переподтвердить личность кодом: `code` |
-| POST | `/api/me/step-up/email` | Н | Прислать код переподтверждения письмом |
+| POST | `/api/me/two-factor/totp/disable` | | Отключить приложение (только если работают коды письмом): `password` |
+| POST | `/api/me/step-up` | Н | Подтвердить фактор на этой сессии кодом (завершает сессию настройки): `code` |
+| POST | `/api/me/step-up/email` | Н | Прислать такой код письмом |
 | GET | `/api/me/sessions` | | Мои сессии |
 | DELETE | `/api/me/sessions/{id}` | | Закрыть свою сессию |
 | GET | `/api/users` | | Список учётных записей |
 | GET | `/api/users/{id}` | | Одна учётная запись |
-| POST | `/api/users` | Ф | Пригласить: `email`, `display_name` |
-| PATCH | `/api/users/{id}` | Ф | `display_name`, `must_change_password` |
-| POST | `/api/users/{id}/disable`, `/enable` | Ф | Отключить / включить |
-| DELETE | `/api/users/{id}` | Ф | Удалить |
-| POST | `/api/users/{id}/unlock` | Ф | Снять блокировку входа |
-| DELETE | `/api/users/{id}/two-factor` | Ф | Снять второй фактор |
-| DELETE | `/api/users/{id}/sessions` | Ф | Закрыть все сессии человека |
-| POST | `/api/users/{id}/reset-password` | Ф | Выдать ссылку сброса |
-| POST | `/api/users/{id}/invite` | Ф | Повторить приглашение |
+| POST | `/api/users` | | Пригласить: `email`, `display_name` |
+| PATCH | `/api/users/{id}` | | `display_name`, `must_change_password` |
+| POST | `/api/users/{id}/disable`, `/enable` | | Отключить / включить |
+| DELETE | `/api/users/{id}` | | Удалить |
+| POST | `/api/users/{id}/unlock` | | Снять блокировку входа |
+| DELETE | `/api/users/{id}/two-factor` | | Снять второй фактор |
+| DELETE | `/api/users/{id}/sessions` | | Закрыть все сессии человека |
+| POST | `/api/users/{id}/reset-password` | | Выдать ссылку сброса |
+| POST | `/api/users/{id}/invite` | | Повторить приглашение |
 | GET | `/api/activation?token=` | П | Чья ссылка и требования к паролю |
 | POST | `/api/activation` | П | Задать пароль по приглашению: `token`, `password` |
 | POST | `/api/password-reset/request` | П | «Забыл пароль»: `email` |
 | POST | `/api/password-reset/info` | П | Проверить ссылку сброса: `token` |
 | POST | `/api/password-reset` | П | Задать новый пароль: `token`, `password` |
 | GET | `/api/settings/system` | | Все настройки с текущими значениями |
-| PATCH | `/api/settings/system` | Ф | `{"values": {...}, "reset": ["ключ", ...]}` |
+| PATCH | `/api/settings/system` | | `{"values": {...}, "reset": ["ключ", ...]}` |
 | GET | `/api/mail` | | Состояние почты и очереди |
-| PUT | `/api/mail/password` | Ф | Пароль SMTP: `password` |
-| POST | `/api/mail/test` | Ф | Проверочное письмо: `to`, `locale` (`ru`, `uk`, `en`) |
+| PUT | `/api/mail/password` | | Пароль SMTP: `password` |
+| POST | `/api/mail/test` | | Проверочное письмо: `to`, `locale` (`ru`, `uk`, `en`) |
 | GET | `/api/keymanager` | | Состояние Key Manager Plus: включено, ключ задан, последний опрос |
-| PUT | `/api/keymanager/api-key` | Ф | Ключ API Key Manager Plus: `api_key` |
-| POST | `/api/keymanager/test` | Ф | Проверить связь: число сертификатов или `409` с причиной |
+| PUT | `/api/keymanager/api-key` | | Ключ API Key Manager Plus: `api_key` |
+| POST | `/api/keymanager/test` | | Проверить связь: число сертификатов или `409` с причиной |
 | POST | `/api/keymanager/poll` | | Опросить сейчас |
 | GET | `/api/keymanager/certificates` | | Сертификаты, которые видел опрос |
 | GET | `/api/certificate-subscriptions`, `/{id}` | | Подписки на сертификаты |
-| POST | `/api/certificate-subscriptions` | Ф | Завести: `common_name`, `recipients`, `formats`, `on_change`, `interval_days`, `include_passphrase`, `locale`, `enabled` |
-| PATCH | `/api/certificate-subscriptions/{id}` | Ф | Изменить те же поля |
-| DELETE | `/api/certificate-subscriptions/{id}` | Ф | Удалить |
-| POST | `/api/certificate-subscriptions/{id}/send` | Ф | Отправить текущий сертификат сейчас |
+| POST | `/api/certificate-subscriptions` | | Завести: `common_name`, `recipients`, `formats`, `on_change`, `interval_days`, `include_passphrase`, `locale`, `enabled` |
+| PATCH | `/api/certificate-subscriptions/{id}` | | Изменить те же поля |
+| DELETE | `/api/certificate-subscriptions/{id}` | | Удалить |
+| POST | `/api/certificate-subscriptions/{id}/send` | | Отправить текущий сертификат сейчас |
 | GET | `/api/health`, `/api/ready` | П | Жив ли процесс / готова ли база |
 
 В режиме разработки документ OpenAPI доступен по `/openapi/v1.json`. В бою этого маршрута
@@ -533,7 +516,6 @@ curl -s "$API/api/users?limit=50" -H "Authorization: Bearer $TOKEN"
 | `TWO_FACTOR_INVALID` | 401 | Код не подошёл |
 | `TWO_FACTOR_ENROLLMENT_REQUIRED` | 403 | Сессия настройки: сначала подключите аутентификатор |
 | `PASSWORD_CHANGE_REQUIRED` | 403 | Сначала смените пароль |
-| `SECOND_FACTOR_REQUIRED` | 403 | Нужен свежий второй фактор: `POST /api/me/step-up` |
 | `LAST_SUPERADMIN` | 409 | Это последняя активная учётная запись |
 | `PASSWORD_POLICY_VIOLATION` | 400 | Пароль не по правилам, подробности в `details` |
 | `MAIL_NOT_CONFIGURED` | 409 | Почта не настроена |
@@ -663,7 +645,6 @@ public sealed class ReportsController(ICurrentUser me, IAuditWriter audit) : Con
     public object List() => new { owner = me.Id };
 
     [HttpDelete("{id:guid}")]
-    [RequireRecentSecondFactor]          // опасное: нужен код за последние 5 минут
     public IActionResult Delete(Guid id)
     {
         audit.Write(new AuditEntry(new AuditAction("report.delete", "Удалён отчёт"),
@@ -816,9 +797,9 @@ docker compose logs api | grep '"audit '
   [SignInService.cs:151](EmailSslSender.Modules.Identity/Users/SignInService.cs:151): там
   сессия без подтверждённого аутентификатора превращается в сессию настройки. Защита при
   этом ослабнет: почтовый ящик станет вторым паролем.
-- **Окно свежего фактора** (5 минут) задано в
-  [AuthenticationFilter.cs](EmailSslSender.Api/Infrastructure/AuthenticationFilter.cs),
-  `StepUpWindow`.
+- **Второй фактор — только при входе.** Действия после входа кода не спрашивают; так решено
+  владельцем. Сессия поэтому равна полному доступу: закрывайте её выходом, а утерянные — из
+  профиля или списка пользователей.
 - **Комментарии в коде** ссылаются на этапы, решения и правила EAMS: «решение 0061»,
   «правило 14», «вскрытие 43». Документы EAMS сюда не перенесены. Ссылки оставлены как
   история причин, и смысл каждого комментария понятен без них.

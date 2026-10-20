@@ -42,9 +42,9 @@ internal sealed record KnownCertificateOut(
 /// Связь с Key Manager Plus: состояние, ключ API, проверка, опрос, снимок сертификатов.
 /// </summary>
 /// <remarks>
-/// ⚠ ⚠ <b>Ключ API и проверка требуют свежего второго фактора.</b> Ключ API отдаёт любые
-/// сертификаты вместе с закрытыми ключами. Проверка к тому же ходит на адрес из настроек и
-/// показывает ответ — то есть является зондом наружу из-под сервера.
+/// ⚠ Ключ API отдаёт любые сертификаты вместе с закрытыми ключами и наружу не возвращается
+/// никогда. Проверка ходит на адрес из настроек и показывает ответ — то есть является зондом
+/// наружу из-под сервера; доступна, как и всё, только вошедшему.
 /// </remarks>
 [ApiController]
 [Route("api/keymanager")]
@@ -77,7 +77,6 @@ internal sealed class KeyManagerController(
     /// <summary>Задать или снять ключ API (Settings → General Settings → API Key в Key Manager Plus).</summary>
     /// <remarks>⚠ В журнал идёт факт, а не значение.</remarks>
     [HttpPut("api-key")]
-    [RequireRecentSecondFactor]
     public async Task<IActionResult> SetApiKey([FromBody] ApiKeyIn body, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(body);
@@ -109,7 +108,6 @@ internal sealed class KeyManagerController(
     /// Отказ — <c>409 KEYMANAGER_UNAVAILABLE</c> с текстом в <c>details.reason</c>.
     /// </remarks>
     [HttpPost("test")]
-    [RequireRecentSecondFactor]
     public async Task<KeyManagerTestOut> Test(CancellationToken cancellationToken)
     {
         try

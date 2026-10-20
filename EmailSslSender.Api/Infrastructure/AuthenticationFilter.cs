@@ -7,11 +7,11 @@ using Microsoft.AspNetCore.Mvc.Filters;
 namespace EmailSslSender.Api.Infrastructure;
 
 /// <summary>
-/// Единственная дверь к каждому действию: вошёл ли, не ограничен ли, свеж ли второй фактор.
+/// Единственная дверь к каждому действию: вошёл ли и не ограничен ли.
 /// </summary>
 /// <remarks>
 /// ⚠ ⚠ <b>Перенесён из EAMS (<c>PermissionFilter</c>) без проверки прав</b> — ролей и прав в
-/// этой установке нет, каждая учётная запись — администратор. Остались три вопроса, и порядок
+/// этой установке нет, каждая учётная запись — администратор. Остались два вопроса, и порядок
 /// их несущий:
 ///
 /// <list type="number">
@@ -20,20 +20,17 @@ namespace EmailSslSender.Api.Infrastructure;
 /// <item><b>Ограничения личности</b> — смена пароля и подключение второго фактора. Пока они
 /// действуют, открыто только помеченное <see cref="AllowWhilePasswordChangeRequiredAttribute"/>
 /// и <see cref="AllowWhileTwoFactorEnrollmentRequiredAttribute"/>.</item>
-/// <item><b>Свежий второй фактор</b> на действиях с <see cref="RequireRecentSecondFactorAttribute"/>:
-/// код, подтверждённый в ЭТОЙ сессии за последние пять минут.</item>
 /// </list>
+///
+/// ⚠ <b>Свежего второго фактора действия не требуют</b> (решение владельца, 2026-10-20): код
+/// спрашивается только при входе, дальше сессия сама по себе даёт всё.
 /// </remarks>
-internal sealed class AuthenticationFilter(ICurrentUser user, TimeProvider clock) : IAsyncAuthorizationFilter
+internal sealed class AuthenticationFilter(ICurrentUser user) : IAsyncAuthorizationFilter
 {
-    /// <summary>Сколько живёт подтверждение второго фактора для опасных действий.</summary>
-    internal static readonly TimeSpan StepUpWindow = TimeSpan.FromMinutes(5);
-
     private sealed record Объявление(
         bool Открыт,
         bool ПриСменеПароля,
-        bool ПриВключенииФактора,
-        bool СвежийФактор);
+        bool ПриВключенииФактора);
 
     /// <summary>
     /// Разобранные пометки действий.
@@ -49,7 +46,6 @@ internal sealed class AuthenticationFilter(ICurrentUser user, TimeProvider clock
         var открыт = false;
         var приСменеПароля = false;
         var приВключенииФактора = false;
-        var свежийФактор = false;
 
         foreach (var пометка in descriptor.EndpointMetadata)
         {
@@ -64,15 +60,12 @@ internal sealed class AuthenticationFilter(ICurrentUser user, TimeProvider clock
                 case AllowWhileTwoFactorEnrollmentRequiredAttribute:
                     приВключенииФактора = true;
                     break;
-                case RequireRecentSecondFactorAttribute:
-                    свежийФактор = true;
-                    break;
                 default:
                     break;
             }
         }
 
-        return new Объявление(открыт, приСменеПароля, приВключенииФактора, свежийФактор);
+        return new Объявление(открыт, приСменеПароля, приВключенииФактора);
     }
 
     public Task OnAuthorizationAsync(AuthorizationFilterContext context)
@@ -113,17 +106,6 @@ internal sealed class AuthenticationFilter(ICurrentUser user, TimeProvider clock
             throw new AppException(
                 ErrorCodes.TwoFactorEnrollmentRequired,
                 "Сначала подключите приложение-аутентификатор",
-                System.Net.HttpStatusCode.Forbidden);
-        }
-
-        // ⚠ Отметка берётся с ТОКЕНА этой сессии, а не с человека: переподтверждение в одной
-        // вкладке не открывает опасное в остальных.
-        if (объявлено.СвежийФактор
-            && (user.StepUpAt is null || user.StepUpAt < clock.GetUtcNow() - StepUpWindow))
-        {
-            throw new AppException(
-                ErrorCodes.SecondFactorRequired,
-                "Подтвердите личность кодом второго фактора.",
                 System.Net.HttpStatusCode.Forbidden);
         }
 

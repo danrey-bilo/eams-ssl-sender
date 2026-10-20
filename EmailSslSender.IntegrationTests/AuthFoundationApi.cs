@@ -49,16 +49,22 @@ public sealed class AuthFoundationApi(SenderHost host) : IDisposable
         afterEnrollment.StatusCode.ShouldBe(HttpStatusCode.OK);
     }
 
+    /// <summary>
+    /// Второй фактор — только при входе: давний код не мешает управлять доступом.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Решение владельца 2026-10-20: повторного кода на действиях после входа нет. Прежде здесь
+    /// проверялся отказ <c>SECOND_FACTOR_REQUIRED</c> — теперь проверяется, что его нет.
+    /// </remarks>
     [Theory]
     [InlineData(0)]
     [InlineData(10)]
-    public async Task Управление_доступом_требует_свежего_кода(int ageMinutes)
+    public async Task Управление_доступом_не_требует_повторного_кода(int ageMinutes)
     {
         Admin("user.create");
         host.User.StepUpAt = ageMinutes == 0 ? null : DateTimeOffset.UtcNow.AddMinutes(-ageMinutes);
         var response = await host.CreateClient().PostAsJsonAsync("/api/users", new { email = $"guard-{Guid.NewGuid():N}@example.com" }, Ct);
-        response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
-        (await response.Content.ReadFromJsonAsync<JsonObject>(Ct))!["code"]!.GetValue<string>().ShouldBe("SECOND_FACTOR_REQUIRED");
+        response.StatusCode.ShouldBe(HttpStatusCode.Created);
     }
 
     [Theory]
@@ -68,7 +74,7 @@ public sealed class AuthFoundationApi(SenderHost host) : IDisposable
     [InlineData("PUT", "/api/mail/password", 10)]
     [InlineData("POST", "/api/mail/test", 0)]
     [InlineData("POST", "/api/mail/test", 10)]
-    public async Task Настройки_и_SMTP_требуют_свежего_кода(string method, string path, int ageMinutes)
+    public async Task Настройки_и_SMTP_не_требуют_повторного_кода(string method, string path, int ageMinutes)
     {
         Admin("settings.manage", "settings.security.manage");
         host.User.StepUpAt = ageMinutes == 0 ? null : DateTimeOffset.UtcNow.AddMinutes(-ageMinutes);
@@ -77,8 +83,11 @@ public sealed class AuthFoundationApi(SenderHost host) : IDisposable
             Content = JsonContent.Create(new { }),
         };
         var response = await host.CreateClient().SendAsync(request, Ct);
-        response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
-        (await response.Content.ReadFromJsonAsync<JsonObject>(Ct))!["code"]!.GetValue<string>().ShouldBe("SECOND_FACTOR_REQUIRED");
+
+        // Пустое тело даёт свой ответ (сохранено, «не указано куда», «почта не настроена»), но
+        // не отказ в доступе: второй фактор спрашивается только при входе.
+        response.StatusCode.ShouldNotBe(HttpStatusCode.Forbidden);
+        response.StatusCode.ShouldNotBe(HttpStatusCode.Unauthorized);
     }
 
     private async Task<HttpResponseMessage> Request(HttpMethod method, string path, string access)
@@ -89,7 +98,7 @@ public sealed class AuthFoundationApi(SenderHost host) : IDisposable
     }
 
     [Fact]
-    public async Task Смена_обязательного_пароля_по_давнему_доверию_позволяет_подтвердить_фактор()
+    public async Task Смена_обязательного_пароля_не_требует_повторного_кода()
     {
         Admin("user.create");
         var email = $"password-guard-{Guid.NewGuid():N}@example.com";
@@ -115,8 +124,6 @@ public sealed class AuthFoundationApi(SenderHost host) : IDisposable
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", access);
         var response = await host.CreateClient().SendAsync(request, Ct);
-        response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
-        (await response.Content.ReadFromJsonAsync<JsonObject>(Ct))!["code"]!.GetValue<string>().ShouldBe("SECOND_FACTOR_REQUIRED");
-        (await Request(HttpMethod.Get, "/api/me/two-factor", access)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        response.StatusCode.ShouldBe(HttpStatusCode.NoContent, "код подтверждён при входе десять минут назад, и этого достаточно");
     }
 }

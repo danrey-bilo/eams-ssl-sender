@@ -107,9 +107,9 @@ internal sealed record SubscriptionOut(
 /// Подписки на сертификаты Key Manager Plus: кому, какие файлы и когда.
 /// </summary>
 /// <remarks>
-/// ⚠ ⚠ <b>Заведение, правка, удаление и ручная отправка требуют свежего второго фактора.</b>
-/// Подписка рассылает файлы сертификата <b>вместе с закрытым ключом</b> на адреса, которые в ней
-/// записаны: тот, кто дописал свой адрес, получает ключ следующим опросом.
+/// ⚠ ⚠ Подписка рассылает файлы сертификата <b>вместе с закрытым ключом</b> на адреса, которые в
+/// ней записаны: тот, кто дописал свой адрес, получает ключ следующим опросом. Защищает её вход
+/// со вторым фактором; повторного кода на действиях нет (решение владельца, 2026-10-20).
 /// </remarks>
 [ApiController]
 [Route("api/certificate-subscriptions")]
@@ -158,7 +158,6 @@ internal sealed class SubscriptionsController(
     /// С <c>on_change</c> текущий сертификат уходит на ближайшем опросе — опрос будится сразу.
     /// </remarks>
     [HttpPost]
-    [RequireRecentSecondFactor]
     public async Task<IActionResult> Create([FromBody] SubscriptionIn body, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(body);
@@ -209,7 +208,6 @@ internal sealed class SubscriptionsController(
     /// значит ничего, и с <c>on_change</c> новый уйдёт на ближайшем опросе.
     /// </remarks>
     [HttpPatch("{id:guid}")]
-    [RequireRecentSecondFactor]
     public async Task<SubscriptionOut> Update(
         Guid id, [FromBody] SubscriptionIn body, CancellationToken cancellationToken)
     {
@@ -279,7 +277,6 @@ internal sealed class SubscriptionsController(
 
     /// <summary>Удалить подписку.</summary>
     [HttpDelete("{id:guid}")]
-    [RequireRecentSecondFactor]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
         await db.InTransactionAsync(
@@ -307,7 +304,6 @@ internal sealed class SubscriptionsController(
     /// Письма при этом ложатся в очередь, как и при опросе.
     /// </remarks>
     [HttpPost("{id:guid}/send")]
-    [RequireRecentSecondFactor]
     public async Task<SubscriptionOut> Send(Guid id, CancellationToken cancellationToken)
     {
         await НайтиAsync(id, tracked: false, cancellationToken);

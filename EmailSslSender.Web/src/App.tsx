@@ -11,8 +11,7 @@ import { ProfilePage } from './pages/Profile';
 import { UsersPage } from './pages/Users';
 import { Spinner } from './ui/bits';
 import { Brand, Icon } from './ui/Icon';
-import { OverlayProvider, useOverlay } from './ui/Overlay';
-import { StepUpDialog } from './ui/StepUp';
+import { OverlayProvider } from './ui/Overlay';
 
 type Screen =
   | { kind: 'loading' }
@@ -41,7 +40,6 @@ export function App() {
 
 function Panel() {
   const [screen, setScreen] = useState<Screen>({ kind: 'loading' });
-  const { show } = useOverlay();
 
   /** Куда пускать вошедшего: настройка фактора и смена пароля — раньше всего остального. */
   const enter = useCallback(async () => {
@@ -63,12 +61,9 @@ function Panel() {
   }, []);
 
   useEffect(() => {
-    connect({
-      confirmIdentity: () => show(close => <StepUpDialog onClose={close} />),
-      signedOut: message => setScreen({ kind: 'login', message }),
-    });
+    connect({ signedOut: message => setScreen({ kind: 'login', message }) });
     void refresh().then(ok => (ok ? enter() : setScreen({ kind: 'login' })));
-  }, [enter, show]);
+  }, [enter]);
 
   switch (screen.kind) {
     case 'loading':

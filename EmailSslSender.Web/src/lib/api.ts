@@ -1,4 +1,4 @@
-// Обращения к API: токен доступа в памяти, обновление кукой, повтор после подтверждения кодом.
+// Обращения к API: токен доступа в памяти, обновление пары кукой.
 //
 // ⚠ Токен доступа живёт только в памяти страницы; токен обновления — в куке HttpOnly
 // `__Host-sender-refresh`, до которой сценарий не дотягивается. Перезагрузка страницы
@@ -19,7 +19,7 @@ export class ApiError extends Error {
   }
 }
 
-/** Действие отменил человек (закрыл окно кода) или сессия кончилась — показывать нечего. */
+/** Сессия кончилась и показан вход — сообщать об ошибке нечего. */
 export class Cancelled extends Error {}
 
 interface Envelope {
@@ -31,14 +31,15 @@ interface Envelope {
 let token: string | null = null;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let refreshing: Promise<boolean> | null = null;
-let stepping: Promise<boolean> | null = null;
 
-let confirmIdentity: () => Promise<boolean> = async () => false;
 let onSignedOut: (message?: string) => void = () => {};
 
-/** Кто спрашивает код при `SECOND_FACTOR_REQUIRED` и кто показывает вход, когда сессия кончилась. */
-export function connect(handlers: { confirmIdentity: () => Promise<boolean>; signedOut: (message?: string) => void }) {
-  confirmIdentity = handlers.confirmIdentity;
+/**
+ * Кто показывает вход, когда сессия кончилась.
+ *
+ * ⚠ Второй фактор спрашивается только при входе: действия после входа кода не требуют.
+ */
+export function connect(handlers: { signedOut: (message?: string) => void }) {
   onSignedOut = handlers.signedOut;
 }
 
@@ -92,7 +93,7 @@ export async function publicPost<T>(path: string, body: unknown): Promise<{ ok: 
 
 const SESSION_GONE = ['TOKEN_EXPIRED', 'UNAUTHENTICATED', 'SESSION_REVOKED', 'SESSION_EXPIRED'];
 
-async function request<T>(method: string, path: string, body?: unknown, retry = true, stepUp = true): Promise<T> {
+async function request<T>(method: string, path: string, body?: unknown, retry = true): Promise<T> {
   const headers: Record<string, string> = {};
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (token) headers.Authorization = 'Bearer ' + token;
@@ -113,20 +114,12 @@ async function request<T>(method: string, path: string, body?: unknown, retry = 
   const code = data?.code;
 
   if (r.status === 401 && retry && token && (code === 'TOKEN_EXPIRED' || code === 'UNAUTHENTICATED')) {
-    if (await refresh()) return request<T>(method, path, body, false, stepUp);
+    if (await refresh()) return request<T>(method, path, body, false);
   }
 
   if (r.status === 401 && token && code && SESSION_GONE.includes(code)) {
     forget();
     onSignedOut('Сессия закончилась. Войдите снова.');
-    throw new Cancelled();
-  }
-
-  // ⚠ Опасное действие без свежего кода: спросить код и повторить то же самое. Окно одно на всех —
-  // два запроса, упёршихся одновременно, не откроют два окна.
-  if (r.status === 403 && code === 'SECOND_FACTOR_REQUIRED' && stepUp) {
-    stepping ??= confirmIdentity().finally(() => { stepping = null; });
-    if (await stepping) return request<T>(method, path, body, retry, false);
     throw new Cancelled();
   }
 
@@ -139,8 +132,6 @@ export const api = {
   put: <T = null>(path: string, body?: unknown) => request<T>('PUT', path, body ?? {}),
   patch: <T = null>(path: string, body?: unknown) => request<T>('PATCH', path, body ?? {}),
   del: <T = null>(path: string) => request<T>('DELETE', path),
-  /** Подтверждение кодом — без повторного окна, если код не подошёл. */
-  stepUp: (code: string) => request<null>('POST', '/api/me/step-up', { code }, true, false),
 };
 
 export const errorText = (err: unknown): string => (err instanceof ApiError ? err.message : 'Что-то пошло не так.');

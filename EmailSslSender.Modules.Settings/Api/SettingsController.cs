@@ -52,8 +52,8 @@ internal sealed record SettingsPatchIn(
 /// существуют только в коде, и показать их экрану нечем: администратор увидел бы пустой список
 /// и решил, что настроек нет.
 ///
-/// ⚠ Читать может любой вошедший — каждая учётная запись здесь администратор; править —
-/// только со свежим вторым фактором (<see cref="RequireRecentSecondFactorAttribute"/>).
+/// ⚠ Читать и править может любой вошедший — каждая учётная запись здесь администратор, а второй
+/// фактор спрашивается только при входе.
 /// </remarks>
 [ApiController]
 [Route("api/settings/system")]
@@ -71,7 +71,6 @@ internal sealed class SettingsController(SettingsService settings) : ControllerB
     /// стоил бы дороже, чем эти поля.
     /// </remarks>
     [HttpPatch]
-    [RequireRecentSecondFactor]
     public Task<IReadOnlyList<SettingOut>> Update(
         [FromBody] SettingsPatchIn body, CancellationToken cancellationToken)
     {

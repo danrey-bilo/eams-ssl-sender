@@ -218,8 +218,6 @@ internal sealed class MeController(
     {
         ArgumentNullException.ThrowIfNull(body);
 
-        var owner = await users.FindAsync(actor.Id!.Value, cancellationToken);
-        stepUp.RequireRecent(allowInitialEnrollment: owner?.TwoFactorConfiguredAt is null);
         await people.ChooseSecondFactorAsync(body.Method, cancellationToken);
 
         return await TwoFactorStatus(cancellationToken);
@@ -236,8 +234,6 @@ internal sealed class MeController(
     [AllowWhileTwoFactorEnrollmentRequired("ради этого действия ограничение и заведено")]
     public async Task<TwoFactorSetupOut> SetupTwoFactor(CancellationToken cancellationToken)
     {
-        var owner = await users.FindAsync(actor.Id!.Value, cancellationToken);
-        stepUp.RequireRecent(allowInitialEnrollment: owner?.TwoFactorConfiguredAt is null);
         var setup = await factors.SetupAsync(cancellationToken);
 
         return new TwoFactorSetupOut(setup.Secret, setup.Uri);
@@ -261,8 +257,6 @@ internal sealed class MeController(
         [FromBody] TwoFactorConfirmIn body, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(body);
-        var owner = await users.FindAsync(actor.Id!.Value, cancellationToken);
-        stepUp.RequireRecent(allowInitialEnrollment: owner?.TwoFactorConfiguredAt is null);
 
         await factors.ConfirmAsync(body.Code, cancellationToken);
 
@@ -274,7 +268,6 @@ internal sealed class MeController(
     public async Task<IActionResult> DisableTwoFactor(
         [FromBody] PasswordIn body, CancellationToken cancellationToken)
     {
-        stepUp.RequireRecent();
         var status = await TwoFactorStatus(cancellationToken);
         if (status.AvailableMethods?.Contains(SecondFactorMethods.Email) != true)
             throw new AppException(ErrorCodes.TwoFactorNotEnrolled,
@@ -286,15 +279,15 @@ internal sealed class MeController(
     }
 
     /// <summary>
-    /// Переподтвердить личность на этой сессии.
+    /// Подтвердить второй фактор на этой сессии.
     /// </summary>
     /// <remarks>
-    /// ⚠ <b>Пароля не требует, а требует кода.</b> Пароль здесь бесполезен: тот, кто увёл
-    /// живую вкладку, чаще всего знает и его — а вот телефона у него нет. Ровно поэтому
-    /// действие называется переподтверждением <b>фактора</b>, а не входом заново.
+    /// ⚠ <b>Действия после входа кода не требуют</b> (решение владельца, 2026-10-20): второй
+    /// фактор спрашивается только при входе. Этот адрес остался ради одного случая — завершить
+    /// кодом сессию настройки; отметку фактора на сессии он ставит так же, как вход с кодом.
     /// </remarks>
     [HttpPost("step-up")]
-    [AllowWhilePasswordChangeRequired("свежий фактор требуется перед обязательной сменой пароля")]
+    [AllowWhilePasswordChangeRequired("подтверждение фактора не мешает обязательной смене пароля")]
     [AllowWhileTwoFactorEnrollmentRequired("код завершает обязательную настройку этой сессии")]
     public async Task<StepUpOut> StepUp(
         [FromBody] StepUpIn body, CancellationToken cancellationToken) =>
@@ -302,7 +295,7 @@ internal sealed class MeController(
 
     /// <summary>Прислать письмом код подтверждения личности для текущей сессии.</summary>
     [HttpPost("step-up/email")]
-    [AllowWhilePasswordChangeRequired("письмо позволяет подтвердить обязательную смену пароля")]
+    [AllowWhilePasswordChangeRequired("код письмом не мешает обязательной смене пароля")]
     [AllowWhileTwoFactorEnrollmentRequired("код завершает обязательную настройку этой сессии")]
     public async Task<IActionResult> SendStepUpEmail(CancellationToken cancellationToken)
     {
@@ -327,8 +320,6 @@ internal sealed class MeController(
     public async Task<IActionResult> ChangePassword(
         [FromBody] ChangePasswordIn body, CancellationToken cancellationToken)
     {
-        var owner = await users.FindAsync(actor.Id!.Value, cancellationToken);
-        stepUp.RequireRecent(allowInitialEnrollment: owner?.TwoFactorConfiguredAt is null);
         await people.ChangePasswordAsync(body.CurrentPassword, body.NewPassword, cancellationToken);
 
         return NoContent();
