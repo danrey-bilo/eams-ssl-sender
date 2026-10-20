@@ -105,6 +105,97 @@ public sealed class SettingsApi(SenderHost host)
         (await Строк()).ShouldBe(2);
     }
 
+    /// <summary>
+    /// Ключ защиты без свежего кода — отказ целиком: ни ключа защиты, ни соседнего обычного.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ ⚠ Решение владельца 2026-10-20: адрес SMTP или Key Manager Plus, сменённый с угнанной
+    /// вкладки, увёл бы коды входа или ключ API. Половина правки, применённая до отказа, — та же
+    /// беда, что и в «отказе целиком» выше.
+    /// </remarks>
+    [Fact]
+    public async Task Ключ_защиты_без_свежего_фактора_отвергается_целиком()
+    {
+        await using var _ = await SystemSettingsFixture.НачатьAsync(host);
+        Войти("settings.read", "settings.manage", "settings.security.manage");
+        host.User.StepUpAt = DateTimeOffset.UtcNow.AddMinutes(-11);
+
+        try
+        {
+            var ответ = await Править(new
+            {
+                values = new Dictionary<string, object?> { [Обычный] = 9, [Защитный] = 99 },
+            });
+
+            ответ.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+            var конверт = JsonNode.Parse(await ответ.Content.ReadAsStringAsync(Ct))!;
+            конверт["code"]!.GetValue<string>().ShouldBe("SECOND_FACTOR_REQUIRED");
+            конверт["details"]!["window_minutes"]!.GetValue<int>().ShouldBe(10);
+            (await Строк()).ShouldBe(0, "правка применилась наполовину, хотя отказали");
+
+            // Сброс ключа защиты — такая же правка защиты.
+            (await Править(new { reset = new[] { Защитный } })).StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+        }
+        finally
+        {
+            host.User.StepUpAt = DateTimeOffset.UtcNow;
+        }
+    }
+
+    [Fact]
+    public async Task Обычный_ключ_правится_и_с_давним_кодом()
+    {
+        await using var _ = await SystemSettingsFixture.НачатьAsync(host);
+        Войти("settings.read", "settings.manage");
+        host.User.StepUpAt = DateTimeOffset.UtcNow.AddHours(-3);
+
+        try
+        {
+            (await Править(new { values = new Dictionary<string, object?> { [Обычный] = 7 } }))
+                .StatusCode.ShouldBe(HttpStatusCode.OK);
+            (await Править(new { reset = new[] { Обычный } })).StatusCode.ShouldBe(HttpStatusCode.OK);
+        }
+        finally
+        {
+            host.User.StepUpAt = DateTimeOffset.UtcNow;
+        }
+    }
+
+    /// <summary>
+    /// Окно свежести — настройка защиты: её правка сама требует свежего кода и действует сразу.
+    /// </summary>
+    [Fact]
+    public async Task Окно_свежести_задаётся_настройкой_и_действует_сразу()
+    {
+        await using var _ = await SystemSettingsFixture.НачатьAsync(host);
+        Войти("settings.read", "settings.manage", "settings.security.manage");
+
+        var окно = (await Прочитать()).First(строка => Ключ(строка) == "auth.step_up_minutes");
+        окно["is_security"]!.GetValue<bool>().ShouldBeTrue();
+        окно["default"]!.GetValue<int>().ShouldBe(10);
+        окно["minimum"]!.GetValue<double>().ShouldBe(1);
+        окно["maximum"]!.GetValue<double>().ShouldBe(120);
+
+        (await Править(new { values = new Dictionary<string, object?> { ["auth.step_up_minutes"] = 60 } }))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        // Полчаса назад — давно для десяти минут и свежо для часа.
+        host.User.StepUpAt = DateTimeOffset.UtcNow.AddMinutes(-30);
+
+        try
+        {
+            (await Править(new { values = new Dictionary<string, object?> { [Защитный] = 50 } }))
+                .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+            (await Править(new { values = new Dictionary<string, object?> { ["auth.step_up_minutes"] = 121 } }))
+                .StatusCode.ShouldBe(HttpStatusCode.UnprocessableContent, "окно больше двух часов — уже не «свежее»");
+        }
+        finally
+        {
+            host.User.StepUpAt = DateTimeOffset.UtcNow;
+        }
+    }
+
     [Fact]
     public async Task Негодное_значение_отвергает_тело_целиком()
     {

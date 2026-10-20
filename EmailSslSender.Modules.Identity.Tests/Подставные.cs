@@ -89,6 +89,22 @@ public sealed class ЯзыкПоУмолчанию : IUserLocale
         Task.FromResult(Язык);
 }
 
+/// <summary>Часы, которые двигает тест.</summary>
+/// <remarks>
+/// Обвязка модуля живёт на системных часах; эти — для проверок, где важна граница окна, а не
+/// база: свежесть второго фактора считается от отметки и «сейчас», и угадать «сейчас» живых часов
+/// с точностью до тика нельзя.
+/// </remarks>
+public sealed class ПодвижныеЧасы(DateTimeOffset start) : TimeProvider
+{
+    private DateTimeOffset _теперь = start;
+
+    public override DateTimeOffset GetUtcNow() => _теперь;
+
+    /// <summary>Сдвинуть время вперёд.</summary>
+    public void Вперёд(TimeSpan сколько) => _теперь = _теперь.Add(сколько);
+}
+
 /// <summary>Внешний адрес установки — задаёт тест.</summary>
 /// <remarks>
 /// ⚠ `null` по умолчанию: это состояние установки, где адрес не задан, и письма со ссылками в

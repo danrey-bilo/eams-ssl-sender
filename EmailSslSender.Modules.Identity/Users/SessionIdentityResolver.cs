@@ -108,8 +108,8 @@ internal sealed class SessionIdentityResolver(
             found.MustChangePassword,
             enroll,
 
-            // ⚠ Отметка приезжает С ТОКЕНОМ и не пересчитывается здесь: наше дело — донести
-            // факт и время.
+            // ⚠ Отметка приезжает С ТОКЕНОМ и не пересчитывается здесь. Свежесть её проверяет
+            // `StepUpFreshness` своим окном; наше дело — донести факт и время.
             token.StepUpAt);
     }
 }

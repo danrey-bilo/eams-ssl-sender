@@ -27,6 +27,17 @@ internal static class Bootstrap
     public const string ResetSuperadminTwoFactor = "reset-superadmin-2fa";
 
     /// <summary>
+    /// Имя команды полного восстановления доступа: новый пароль, снятый второй фактор, снятая
+    /// блокировка, закрытые сессии — разом.
+    /// </summary>
+    /// <remarks>
+    /// Вызывается так: <c>docker compose run --rm api reset-access --email admin@example.com</c>
+    /// или обёрткой <c>./scripts/reset-access.sh admin@example.com</c>. Пароль — скрытым вводом
+    /// дважды или <c>--password-file</c>, как у <see cref="SetSuperadminPassword"/>.
+    /// </remarks>
+    public const string ResetAccess = "reset-access";
+
+    /// <summary>
     /// Имя команды перекладывания обёрток под действующую версию мастер-ключа.
     /// </summary>
     /// <remarks>
@@ -165,7 +176,7 @@ internal static class Bootstrap
     /// <summary>Есть ли в аргументах команда, а не запуск сервера.</summary>
     public static bool IsCommand(string[] args) =>
         args.Length > 0
-        && args[0] is CreateSuperadmin or SetSuperadminPassword or ResetSuperadminTwoFactor
+        && args[0] is CreateSuperadmin or SetSuperadminPassword or ResetSuperadminTwoFactor or ResetAccess
             or RewrapKeys or ExportOpenApi or Migrate;
 
     /// <summary>
@@ -181,6 +192,11 @@ internal static class Bootstrap
 
 
     /// <summary>Проверить параметры команд суперпользователя до чтения пароля.</summary>
+    /// <remarks>
+    /// Допустимы <c>--email</c> (обязателен), <c>--password-file</c> — всем, кроме
+    /// <see cref="ResetSuperadminTwoFactor"/>, которому пароль не нужен, и <c>--display-name</c> —
+    /// только <see cref="CreateSuperadmin"/>. Каждый не больше раза и со значением.
+    /// </remarks>
     public static void ValidateSuperuserArguments(string[] args)
     {
         var names = new HashSet<string>(StringComparer.Ordinal);
@@ -223,7 +239,9 @@ internal static class Bootstrap
     /// Ввод с клавиатуры не отображается: пароль, набранный на общем экране, — тот же
     /// пароль, записанный на бумаге.
     /// </remarks>
-    public static string ReadPassword(string? file)
+    /// <param name="file">Файл с паролем; <c>null</c> — спросить скрытым вводом дважды.</param>
+    /// <param name="label">Что спросить при скрытом вводе.</param>
+    public static string ReadPassword(string? file, string label = "Пароль администратора: ")
     {
         if (file is { Length: > 0 })
         {
@@ -260,13 +278,47 @@ internal static class Bootstrap
                 System.Net.HttpStatusCode.BadRequest);
         }
 
-        var first = Prompt("Пароль администратора: ");
+        var first = Prompt(label);
         var second = Prompt("Повторите пароль: ");
 
         return first == second
             ? first
             : throw new AppException(
                 "PASSWORD_MISMATCH", "Пароли не совпадают", System.Net.HttpStatusCode.BadRequest);
+    }
+
+    /// <summary>
+    /// Итог <see cref="ResetAccess"/> для человека у консоли.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ ⚠ <b>Отключённая учётная запись называется прямо.</b> Команда её не включает (включение —
+    /// решение администратора со своей строкой журнала), и «доступ восстановлен» без этой строки
+    /// было бы неправдой: человек ввёл бы новый пароль и упёрся в «неверный адрес или пароль».
+    ///
+    /// Отдельным методом, а не строкой в <c>Program</c>: текст проверяется тестом.
+    /// </remarks>
+    public static string ResetAccessSummary(AccessResetResult result)
+    {
+        ArgumentNullException.ThrowIfNull(result);
+
+        var строки = new List<string>
+        {
+            $"{ResetAccess}: учётная запись {result.Email} ({result.UserId})",
+            "  - пароль заменён новым;",
+            result.HadTwoFactor
+                ? "  - второй фактор снят: приложение-аутентификатор подключается заново при следующем входе;"
+                : "  - второго фактора не было: приложение-аутентификатор подключается при следующем входе;",
+            "  - блокировка входа снята, счётчик неудачных попыток обнулён;",
+            $"  - закрыто сессий: {result.SessionsRevoked}; ссылки приглашения и сброса, коды входа погашены.",
+        };
+
+        строки.Add(result.IsActive
+            ? "Можно входить: адрес и новый пароль (если почта настроена — ещё код из письма), "
+              + "затем подключение приложения-аутентификатора."
+            : "ВНИМАНИЕ: учётная запись ОТКЛЮЧЕНА, и команда её не включает. Войти нельзя, пока её "
+              + "не включит другой администратор (панель: «Пользователи» → «Включить»).");
+
+        return string.Join(Environment.NewLine, строки);
     }
 
     /// <summary>Значение именованного аргумента или <c>null</c>.</summary>

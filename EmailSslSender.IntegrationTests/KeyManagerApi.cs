@@ -1,15 +1,20 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
+using EmailSslSender.Shared.Data;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace EmailSslSender.IntegrationTests;
 
 /// <summary>
-/// Key Manager Plus через API: ключ API, проверка связи, подписки.
+/// Key Manager Plus через API: ключ API, проверка связи, подписки, выгрузка сертификата и ключа.
 /// </summary>
 /// <remarks>
-/// ⚠ Подписка рассылает закрытые ключи на записанные в ней адреса, ключ API отдаёт их все разом.
-/// Защищает их вход со вторым фактором; повторного кода на действиях нет.
+/// ⚠ ⚠ <b>Подписки, ключ API и выгрузка требуют свежего второго фактора, и это проверяется
+/// отдельно</b> (решение владельца 2026-10-20). Подписка рассылает закрытые ключи на записанные в
+/// ней адреса: дописавший свой адрес получает ключ следующим опросом. Ключ API отдаёт их все
+/// разом, выгрузка — прямо в руки.
 /// </remarks>
 [Collection(SenderHost.Collection)]
 public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
@@ -18,8 +23,13 @@ public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
     private const string КлючApi = "/api/keymanager/api-key";
     private const string Проверка = "/api/keymanager/test";
     private const string Подписки = "/api/certificate-subscriptions";
+    private const string Выгрузка = "/api/keymanager/certificates/download";
+    private const string ЗакрытыйКлюч = "/api/keymanager/certificates/private-key";
 
     private const string Ключ = "A36ECFEF-1234-4C5D-8E9F-0A1B2C3D4E5F";
+
+    /// <summary>Common Name снимка этого файла — свой, чтобы не задеть соседей по коллекции.</summary>
+    private const string Имя = "keymanager-api.example.test";
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -45,6 +55,12 @@ public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
             await клиент.DeleteAsync($"{Подписки}/{подписка!["id"]!.GetValue<Guid>()}", CancellationToken.None);
         }
 
+        await using (var scope = host.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<SenderDbContext>().Database.ExecuteSqlInterpolatedAsync(
+                $"DELETE FROM keymanager_certificates WHERE common_name = {Имя}", CancellationToken.None);
+        }
+
         host.User.SignOut();
     }
 
@@ -68,16 +84,100 @@ public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
             .GetValue<bool>().ShouldBeFalse();
     }
 
+    /// <summary>
+    /// Без свежего кода не проходит ничего, что отдаёт ключи или решает, кому они уйдут.
+    /// </summary>
+    /// <remarks>
+    /// Отказ — до разбора ресурса: подписки с таким номером нет, а ответ всё равно 403, а не 404.
+    /// Чтение и проверка связи кода не спрашивают.
+    /// </remarks>
     [Fact]
-    public async Task Ключ_и_подписки_не_требуют_повторного_кода()
+    public async Task Ключ_и_подписки_без_свежего_фактора_отвергаются()
     {
-        // Второй фактор — только при входе: код десятиминутной давности ничему не мешает.
-        host.User.StepUpAt = DateTimeOffset.UtcNow.AddMinutes(-10);
+        host.User.StepUpAt = DateTimeOffset.UtcNow.AddMinutes(-11);
+        var клиент = host.CreateClient();
+        var чужая = $"{Подписки}/{Guid.NewGuid()}";
+
+        await ОтказФактора(await клиент.PutAsJsonAsync(КлючApi, new { api_key = Ключ }, Ct));
+        await ОтказФактора(await клиент.PostAsJsonAsync(Подписки, Черновик(), Ct));
+        await ОтказФактора(await клиент.PatchAsJsonAsync(чужая, new { interval_days = 7 }, Ct));
+        await ОтказФактора(await клиент.DeleteAsync(чужая, Ct));
+        await ОтказФактора(await клиент.PostAsync($"{чужая}/send", null, Ct));
+        await ОтказФактора(await клиент.PostAsJsonAsync(
+            Выгрузка, new { common_name = Имя, serial_number = "01", format = "PEM" }, Ct));
+        await ОтказФактора(await клиент.PostAsJsonAsync(
+            ЗакрытыйКлюч, new { common_name = Имя, serial_number = "01" }, Ct));
+
+        // Чтение свежего фактора не требует, проверка связи — тоже.
+        (await клиент.GetAsync(Подписки, Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await клиент.GetAsync(Состояние, Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await клиент.GetAsync("/api/keymanager/certificates", Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await Код(await клиент.PostAsync(Проверка, null, Ct))).ShouldBe("KEYMANAGER_NOT_CONFIGURED");
+    }
+
+    [Fact]
+    public async Task Свежий_код_пропускает_ключ_и_подписки()
+    {
+        host.User.StepUpAt = DateTimeOffset.UtcNow.AddMinutes(-9);
         var клиент = host.CreateClient();
 
         (await клиент.PutAsJsonAsync(КлючApi, new { api_key = Ключ }, Ct)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
         (await клиент.PostAsJsonAsync(Подписки, Черновик(), Ct)).StatusCode.ShouldBe(HttpStatusCode.Created);
-        (await клиент.GetAsync(Подписки, Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
+    }
+
+    /// <summary>
+    /// Выгрузка и показ ключа — только для пары, которую видел опрос; прочее — 404 без запроса наружу.
+    /// </summary>
+    [Fact]
+    public async Task Выгрузка_пары_не_из_снимка_отвечает_404()
+    {
+        await СнимокAsync("0a1b2c");
+
+        var клиент = host.CreateClient();
+
+        var чужойСерийный = await клиент.PostAsJsonAsync(
+            Выгрузка, new { common_name = Имя, serial_number = "ffff", format = "PEM" }, Ct);
+        чужойСерийный.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+        (await Код(чужойСерийный)).ShouldBe("KEYMANAGER_CERTIFICATE_NOT_FOUND");
+
+        var чужоеИмя = await клиент.PostAsJsonAsync(
+            ЗакрытыйКлюч, new { common_name = "нет.example.test", serial_number = "0a1b2c" }, Ct);
+        чужоеИмя.StatusCode.ShouldBe(HttpStatusCode.NotFound);
+        (await Код(чужоеИмя)).ShouldBe("KEYMANAGER_CERTIFICATE_NOT_FOUND");
+    }
+
+    [Fact]
+    public async Task Выгрузка_без_адреса_и_ключа_отвечает_409_не_настроено()
+    {
+        await СнимокAsync("0a1b2c");
+
+        var клиент = host.CreateClient();
+
+        var файл = await клиент.PostAsJsonAsync(
+            Выгрузка, new { common_name = Имя, serial_number = "0a1b2c", format = "PEM" }, Ct);
+        файл.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await Код(файл)).ShouldBe("KEYMANAGER_NOT_CONFIGURED");
+
+        var ключ = await клиент.PostAsJsonAsync(
+            ЗакрытыйКлюч, new { common_name = Имя, serial_number = "0a1b2c" }, Ct);
+        ключ.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await Код(ключ)).ShouldBe("KEYMANAGER_NOT_CONFIGURED");
+    }
+
+    [Theory]
+    [InlineData("""{"serial_number":"0a1b2c","format":"PEM"}""", "common_name")]
+    [InlineData("""{"common_name":"keymanager-api.example.test","format":"PEM"}""", "serial_number")]
+    [InlineData("""{"common_name":"keymanager-api.example.test","serial_number":"0a1b2c","format":"PFX"}""", "format")]
+    public async Task Неверная_выгрузка_отвергается_с_именем_поля(string тело, string поле)
+    {
+        var ответ = await host.CreateClient().PostAsync(
+            Выгрузка, new StringContent(тело, System.Text.Encoding.UTF8, "application/json"), Ct);
+
+        ответ.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+
+        var конверт = (await ответ.Content.ReadFromJsonAsync<JsonObject>(Ct))!;
+        конверт["code"]!.GetValue<string>().ShouldBe("VALIDATION_ERROR");
+        конверт["details"]!["field"]!.GetValue<string>().ShouldBe(поле);
     }
 
     [Fact]
@@ -204,6 +304,29 @@ public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
 
     private static List<string> Строки(JsonNode? массив) =>
         [.. массив!.AsArray().Select(з => з!.GetValue<string>())];
+
+    private static async Task ОтказФактора(HttpResponseMessage ответ)
+    {
+        ответ.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+
+        var конверт = JsonNode.Parse(await ответ.Content.ReadAsStringAsync(Ct))!;
+        конверт["code"]!.GetValue<string>().ShouldBe("SECOND_FACTOR_REQUIRED");
+        конверт["details"]!["window_minutes"]!.GetValue<int>().ShouldBe(10);
+    }
+
+    /// <summary>Пара «Common Name + серийный» в снимке опроса — как после настоящего опроса.</summary>
+    private async Task СнимокAsync(string серийный)
+    {
+        await using var scope = host.Services.CreateAsyncScope();
+
+        await scope.ServiceProvider.GetRequiredService<SenderDbContext>().Database.ExecuteSqlInterpolatedAsync(
+            $"""
+            INSERT INTO keymanager_certificates (common_name, serial_number, expires_on, first_seen_at, last_seen_at)
+            VALUES ({Имя}, {серийный}, {new DateOnly(2027, 10, 2)}, now(), now())
+            ON CONFLICT (common_name, serial_number) DO NOTHING
+            """,
+            Ct);
+    }
 
     private static async Task<string> Код(HttpResponseMessage ответ) =>
         JsonNode.Parse(await ответ.Content.ReadAsStringAsync(Ct))!["code"]!.GetValue<string>();

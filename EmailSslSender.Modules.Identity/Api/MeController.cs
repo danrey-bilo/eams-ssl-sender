@@ -82,21 +82,25 @@ internal sealed record ChangePasswordIn
 /// <summary>Код для переподтверждения личности.</summary>
 internal sealed record StepUpIn
 {
-    /// <summary>Код из приложения или код восстановления.</summary>
+    /// <summary>Код из приложения-аутентификатора. Код письмом не принимается.</summary>
     [Required]
     [StringLength(64, MinimumLength = 4)]
     public string Code { get; init; } = string.Empty;
 }
 
-/// <summary>Когда личность подтвердили.</summary>
+/// <summary>Когда личность подтвердили и до какого момента это открывает опасные действия.</summary>
+/// <param name="ConfirmedAt">Когда отметка легла на токен этой сессии.</param>
+/// <param name="StepUpUntil">
+/// До какого момента действия с <c>[RequireRecentSecondFactor]</c> проходят без нового кода.
+/// </param>
 /// <remarks>
-/// ⚠ <b>Времени жизни отметки здесь нет намеренно.</b> Оно принадлежит защищаемому ресурсу,
-/// а не подтверждению: окно называет тот, кто отказывает, — в подробностях отказа
-/// <c>SECOND_FACTOR_REQUIRED</c>. Назови его здесь — и появилось бы второе место, где
-/// написано, сколько живёт подтверждение.
+/// ⚠ <b>Срок не вычисляется здесь, а берётся у <see cref="StepUpFreshness"/></b> — того же, кто
+/// отказывает <c>SECOND_FACTOR_REQUIRED</c>. Второе место, где написано, сколько живёт
+/// подтверждение, разошлось бы с первым молча: экран обещал бы минуты, которых у сервера нет.
 /// </remarks>
 internal sealed record StepUpOut(
-    [property: JsonPropertyName("confirmed_at")] DateTimeOffset ConfirmedAt);
+    [property: JsonPropertyName("confirmed_at")] DateTimeOffset ConfirmedAt,
+    [property: JsonPropertyName("step_up_until")] DateTimeOffset? StepUpUntil);
 
 /// <summary>Что человек меняет себе сам.</summary>
 internal sealed record ProfileIn
@@ -108,13 +112,26 @@ internal sealed record ProfileIn
 }
 
 /// <summary>Кто я.</summary>
+/// <param name="Id">Идентификатор учётной записи.</param>
+/// <param name="Email">Адрес, он же логин.</param>
+/// <param name="DisplayName">Отображаемое имя.</param>
+/// <param name="MustChangePassword">Система требует сменить пароль.</param>
+/// <param name="SessionId">Сессия, которой пришли.</param>
+/// <param name="MustEnrollTwoFactor">Сессия настройки: сначала подключить аутентификатор.</param>
+/// <param name="StepUpUntil">
+/// До какого момента код из приложения, подтверждённый на ЭТОЙ сессии, открывает опасные действия
+/// (<c>[RequireRecentSecondFactor]</c>). <c>null</c> — подтверждения нет или окно уже прошло: такое
+/// действие ответит <c>403 SECOND_FACTOR_REQUIRED</c>, и код спросит <c>POST /api/me/step-up</c>.
+/// </param>
 internal sealed record MeOut(
     [property: JsonPropertyName("id")] Guid Id,
     [property: JsonPropertyName("email")] string Email,
     [property: JsonPropertyName("display_name")] string? DisplayName,
     [property: JsonPropertyName("must_change_password")] bool MustChangePassword,
     [property: JsonPropertyName("session_id")] Guid? SessionId,
-    [property: JsonPropertyName("must_enroll_two_factor")] bool MustEnrollTwoFactor = false);
+    [property: JsonPropertyName("must_enroll_two_factor")] bool MustEnrollTwoFactor = false,
+    [property: JsonPropertyName("step_up_until")] DateTimeOffset? StepUpUntil = null);
+
 /// <summary>
 /// Всё своё: профиль, права, пароль, второй фактор, сессии.
 /// </summary>
@@ -148,10 +165,11 @@ internal sealed class MeController(
     TwoFactorService factors,
     UserRepository users,
     StepUpService stepUp,
+    StepUpFreshness freshness,
     SecondFactorPolicy methods,
     ICurrentUser actor) : ControllerBase
 {
-    /// <summary>Кто я.</summary>
+    /// <summary>Кто я — и до какого момента на этой сессии открыты опасные действия.</summary>
     [HttpGet]
     [AllowWhilePasswordChangeRequired("экрану смены пароля надо знать, кто на нём стоит")]
     [AllowWhileTwoFactorEnrollmentRequired("экрану включения фактора — тоже")]
@@ -163,7 +181,8 @@ internal sealed class MeController(
             ?? throw AppException.NotFound("Пользователь не найден");
 
         return new MeOut(
-            user.Id, user.Email, user.DisplayName, user.MustChangePassword, actor.SessionId, actor.MustEnrollTwoFactor);
+            user.Id, user.Email, user.DisplayName, user.MustChangePassword, actor.SessionId, actor.MustEnrollTwoFactor,
+            await freshness.UntilAsync(actor.StepUpAt, cancellationToken));
     }
 
     /// <summary>Изменить своё имя.</summary>
@@ -179,7 +198,8 @@ internal sealed class MeController(
         var user = await people.UpdateOwnProfileAsync(body.DisplayName, cancellationToken);
 
         return new MeOut(
-            user.Id, user.Email, user.DisplayName, user.MustChangePassword, actor.SessionId, actor.MustEnrollTwoFactor);
+            user.Id, user.Email, user.DisplayName, user.MustChangePassword, actor.SessionId, actor.MustEnrollTwoFactor,
+            await freshness.UntilAsync(actor.StepUpAt, cancellationToken));
     }
 
     /// <summary>Состояние второго фактора.</summary>
@@ -279,19 +299,31 @@ internal sealed class MeController(
     }
 
     /// <summary>
-    /// Подтвердить второй фактор на этой сессии.
+    /// Подтвердить второй фактор на этой сессии кодом из приложения.
     /// </summary>
     /// <remarks>
-    /// ⚠ <b>Действия после входа кода не требуют</b> (решение владельца, 2026-10-20): второй
-    /// фактор спрашивается только при входе. Этот адрес остался ради одного случая — завершить
-    /// кодом сессию настройки; отметку фактора на сессии он ставит так же, как вход с кодом.
+    /// ⚠ ⚠ <b>Ответ на <c>403 SECOND_FACTOR_REQUIRED</c></b> (решение владельца 2026-10-20):
+    /// опасные действия (<c>[RequireRecentSecondFactor]</c>, правка настроек защиты) требуют кода,
+    /// подтверждённого в ЭТОЙ сессии за последние <c>auth.step_up_minutes</c> минут. Код ставит
+    /// отметку на токен этой сессии — и только на него; <c>step_up_until</c> в ответе говорит, до
+    /// какого момента действия пройдут без нового кода.
+    ///
+    /// ⚠ <b>Пароля не требует, а требует кода.</b> Пароль здесь бесполезен: тот, кто увёл живую
+    /// вкладку, чаще всего знает и его — а телефона у него нет.
+    ///
+    /// ⚠ <b>Только код аутентификатора</b>: код письмом сессию не подтверждает (разбор у
+    /// <see cref="StepUpService"/>). Этим же адресом завершают кодом сессию настройки.
     /// </remarks>
     [HttpPost("step-up")]
     [AllowWhilePasswordChangeRequired("подтверждение фактора не мешает обязательной смене пароля")]
     [AllowWhileTwoFactorEnrollmentRequired("код завершает обязательную настройку этой сессии")]
     public async Task<StepUpOut> StepUp(
-        [FromBody] StepUpIn body, CancellationToken cancellationToken) =>
-        new(await stepUp.ConfirmAsync(body.Code, cancellationToken));
+        [FromBody] StepUpIn body, CancellationToken cancellationToken)
+    {
+        var когда = await stepUp.ConfirmAsync(body.Code, cancellationToken);
+
+        return new StepUpOut(когда, await freshness.UntilAsync(когда, cancellationToken));
+    }
 
     /// <summary>
     /// Сменить себе пароль.

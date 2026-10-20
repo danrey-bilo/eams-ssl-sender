@@ -120,6 +120,32 @@ internal static class IdentitySettings
         Minimum: 1, Maximum: 60);
 
     /// <summary>
+    /// Сколько минут после кода из приложения на этой сессии открыты опасные действия.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ ⚠ <b>Решение владельца 2026-10-20</b>, заменившее «второй фактор — только при входе»:
+    /// выгрузка сертификатов и ключей, ключ API Key Manager Plus, подписки, пароль SMTP,
+    /// управление людьми и правка настроек защиты требуют кода, подтверждённого в ЭТОЙ сессии не
+    /// раньше окна (<c>StepUpFreshness</c>, <c>[RequireRecentSecondFactor]</c>). Вход с кодом
+    /// считается подтверждением.
+    ///
+    /// Десять минут: хватает на одну работу подряд — завести подписку, выгрузить ключ, поправить
+    /// получателей, — и мало, чтобы вкладка, оставленная открытой на обед, раздавала ключи.
+    /// Потолок — два часа: дольше окно перестаёт быть «свежим» и становится вторым входом.
+    /// </remarks>
+    public static readonly SettingKey<int> StepUpMinutes = new("auth.step_up_minutes",
+        Default: 10,
+        "Fresh second factor window, minutes",
+        "How long a code from the authenticator app, confirmed in a session, keeps sensitive "
+        + "actions open in that session: certificate and private key export, the Key Manager Plus "
+        + "API key, subscriptions, the SMTP password, user management and security settings. "
+        + "Signing in with a code counts as a confirmation; after the window the action asks for "
+        + "a new code.",
+        "auth",
+        IsSecurity: true,
+        Minimum: 1, Maximum: 120);
+
+    /// <summary>
     /// Сколько держать погашенные ссылки и коды.
     /// </summary>
     /// <remarks>

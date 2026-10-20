@@ -1,6 +1,7 @@
 using System.Text;
 using EmailSslSender.Modules.KeyManager.Client;
 using EmailSslSender.Modules.KeyManager.Delivery;
+using EmailSslSender.Modules.KeyManager.Export;
 using EmailSslSender.Modules.KeyManager.Secrets;
 using EmailSslSender.Modules.KeyManager.Storage;
 using EmailSslSender.Shared.Contracts.Audit;
@@ -80,6 +81,7 @@ public sealed class KeyManagerDatabase : IAsyncLifetime
         services.AddScoped<CertificateSnapshots>();
         services.AddScoped<CertificateDelivery>();
         services.AddScoped<CertificatePolling>();
+        services.AddScoped<CertificateExport>();
 
         _services = services.BuildServiceProvider();
 
@@ -319,6 +321,15 @@ internal sealed class ПодставнойKmp : IKeyManagerConnector, IKeyManage
     /// <summary>Отказывать ли в списке.</summary>
     public bool СписокПадает { get; set; }
 
+    /// <summary>
+    /// Содержимое файла по типу вместо обычного «ТИП:серийный» — ключ в PEM, DER, мусор.
+    /// </summary>
+    /// <remarks>Отдаётся копией: получатель вправе затереть свой массив, и затирать он будет свой.</remarks>
+    public Dictionary<string, byte[]> Файлы { get; } = new(StringComparer.Ordinal);
+
+    /// <summary>Отказывать ли в пароле ключа.</summary>
+    public bool ПарольПадает { get; set; }
+
     public int Выгрузок => _выгрузок;
 
     public int Списков => _списков;
@@ -342,9 +353,11 @@ internal sealed class ПодставнойKmp : IKeyManagerConnector, IKeyManage
     {
         Сертификаты.Clear();
         Пароли.Clear();
+        Файлы.Clear();
         Настройки = Готово;
         ПадатьНаФормате = null;
         СписокПадает = false;
+        ПарольПадает = false;
         _выгрузок = 0;
         _списков = 0;
         Отпустить();
@@ -355,8 +368,14 @@ internal sealed class ПодставнойKmp : IKeyManagerConnector, IKeyManage
     public Task<KeyManagerConfiguration> ReadAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(Настройки);
 
+    /// <summary>Как настоящий соединитель: без адреса или ключа — «не настроено».</summary>
     public Task<IKeyManagerClient> OpenAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult<IKeyManagerClient>(this);
+        Настройки.Ready
+            ? Task.FromResult<IKeyManagerClient>(this)
+            : throw new EmailSslSender.Shared.Errors.AppException(
+                EmailSslSender.Shared.Errors.ErrorCodes.KeyManagerNotConfigured,
+                "Key Manager Plus не настроен (подставной).",
+                System.Net.HttpStatusCode.Conflict);
 
     public Task<IReadOnlyList<KmpCertificate>> ListAsync(CancellationToken cancellationToken = default)
     {
@@ -386,12 +405,14 @@ internal sealed class ПодставнойKmp : IKeyManagerConnector, IKeyManage
         return new KmpFile(
             KeyManagerClient.ИмяПоУмолчанию(commonName, format),
             CertificateFormats.ContentType(format),
-            Encoding.ASCII.GetBytes($"{format}:{serialNumber}"));
+            Файлы.TryGetValue(format, out var своё) ? [.. своё] : Encoding.ASCII.GetBytes($"{format}:{serialNumber}"));
     }
 
     public Task<string?> PassphraseAsync(
         string commonName, string serialNumber, CancellationToken cancellationToken = default) =>
-        Task.FromResult(Пароли.GetValueOrDefault(serialNumber));
+        ПарольПадает
+            ? throw new KeyManagerException($"Key Manager Plus отказал (пароль ключа сертификата {commonName}): подставной отказ.")
+            : Task.FromResult(Пароли.GetValueOrDefault(serialNumber));
 
     public void Dispose()
     {

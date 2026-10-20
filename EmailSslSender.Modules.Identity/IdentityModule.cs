@@ -78,6 +78,15 @@ public static class IdentityModule
         // Переподтверждение личности: код проверяем мы, отметку хранит модуль токенов.
         services.AddScoped<StepUpService>();
 
+        // ⚠ Свежесть второго фактора спрашивают фильтр хоста и модуль настроек — через контракт;
+        // окно `auth.step_up_minutes` наше, поэтому и ответ наш. Один экземпляр на запрос под
+        // двумя именами: свой экран (`/api/me`) берёт из него же `step_up_until`.
+        services.AddScoped<StepUpFreshness>();
+        services.AddScoped<IStepUpFreshness>(sp => sp.GetRequiredService<StepUpFreshness>());
+
+        // Восстановление доступа из консоли (`reset-access`): пароль, фактор, сессии — разом.
+        services.AddScoped<AccessRecovery>();
+
         // ⚠ Перекладывание обёрток при смене мастер-ключа. Найти запечатанное умеет только
         // владелец таблицы — общая крипта знает, КАК переложить, но не знает, ГДЕ лежит.
         services.AddScoped<IRewrapTarget, TwoFactorRewrap>();
@@ -152,7 +161,40 @@ public static class IdentityModule
             .ResetSuperuserForConsoleAsync(user.Id, cancellationToken);
         return user.Id;
     }
+
+    /// <summary>
+    /// Вернуть доступ из консоли (<c>reset-access</c>): новый пароль, снятый второй фактор, снятая
+    /// блокировка, закрытые сессии, погашенные ссылки и коды — одной транзакцией.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Отключённую учётную запись команда не включает — признак приходит в итоге, и хост
+    /// обязан сказать об этом человеку у консоли.
+    /// </remarks>
+    public static async Task<AccessResetResult> ResetAccessAsync(
+        IServiceProvider services, string email, string password, CancellationToken cancellationToken = default)
+    {
+        await using var scope = services.CreateAsyncScope();
+
+        return await scope.ServiceProvider.GetRequiredService<AccessRecovery>()
+            .ResetAsync(email, password, cancellationToken);
+    }
 }
+
+/// <summary>Что сделала консольная команда <c>reset-access</c>.</summary>
+/// <param name="UserId">Чья учётная запись.</param>
+/// <param name="Email">Её адрес — как он записан в базе.</param>
+/// <param name="IsActive">
+/// Включена ли. ⚠ Команда отключённую не включает: войти с новым паролем нельзя, пока её не
+/// включит другой администратор.
+/// </param>
+/// <param name="HadTwoFactor">Был ли второй фактор (заведён или подтверждался) до снятия.</param>
+/// <param name="SessionsRevoked">Сколько живых сессий закрыто.</param>
+public sealed record AccessResetResult(
+    Guid UserId,
+    string Email,
+    bool IsActive,
+    bool HadTwoFactor,
+    int SessionsRevoked);
 
 /// <summary>Настройки подключения модуля, которые задаёт хост.</summary>
 public sealed class IdentityModuleOptions

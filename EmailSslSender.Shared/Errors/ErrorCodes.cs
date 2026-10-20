@@ -145,6 +145,20 @@ public static class ErrorCodes
     /// </remarks>
     public const string TokenExpired = "TOKEN_EXPIRED";
 
+    // --- переподтверждение -------------------------------------------------------------
+
+    /// <summary>
+    /// Действие требует свежего кода из приложения на этой сессии — 403, в подробностях
+    /// <c>window_minutes</c>.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ <b>Отдельный код, а не <see cref="TwoFactorRequired"/>.</b> Тот означает «войди со
+    /// вторым фактором» и приходит на входе; этот — «ты уже вошёл, но с прошлого подтверждения
+    /// прошло больше окна». Клиент по ним делает разное: первый ведёт на экран входа, второй
+    /// спрашивает код поверх текущей работы (<c>POST /api/me/step-up</c>) и повторяет действие.
+    /// </remarks>
+    public const string SecondFactorRequired = "SECOND_FACTOR_REQUIRED";
+
     // --- настройки ---------------------------------------------------------------------
 
     /// <summary>Настройки с таким именем не объявлял ни один модуль.</summary>
@@ -197,6 +211,11 @@ public static class ErrorCodes
     public const string KeyManagerUnavailable = "KEYMANAGER_UNAVAILABLE";
 
     /// <summary>Сертификата с таким Common Name в Key Manager Plus нет.</summary>
+    /// <remarks>
+    /// Ручная отправка подписки отвечает им <c>409</c> (сертификата нет в Key Manager Plus), а
+    /// выгрузка сертификата и показ ключа — <c>404</c>: пары «Common Name + серийный номер» нет в
+    /// снимке опроса (<c>keymanager_certificates</c>).
+    /// </remarks>
     public const string KeyManagerCertificateNotFound = "KEYMANAGER_CERTIFICATE_NOT_FOUND";
 
     /// <summary>Эту подписку прямо сейчас отправляет другой запрос или фоновый опрос.</summary>

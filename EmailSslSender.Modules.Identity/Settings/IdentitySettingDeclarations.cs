@@ -18,5 +18,6 @@ internal sealed class IdentitySettingDeclarations : ISettingDeclarationProvider
         IdentitySettings.LockoutMinutes,
         IdentitySettings.LinkRetentionDays,
         IdentitySettings.TwoFactorChallengeMinutes,
+        IdentitySettings.StepUpMinutes,
     ];
 }

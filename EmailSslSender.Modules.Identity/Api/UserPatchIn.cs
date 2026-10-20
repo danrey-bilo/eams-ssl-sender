@@ -12,7 +12,7 @@ internal sealed record UserPatchIn
     public string? DisplayName { get; init; }
 
     // ⚠ Поля is_active здесь нет: включение и отключение — отдельные действия со своими строками
-    // журнала, а не побочный эффект правки профиля.
+    // журнала и со свежим вторым фактором, а правка профиля его не требует и обошла бы его.
 
     [JsonPropertyName("must_change_password")]
     public bool? MustChangePassword { get; init; }

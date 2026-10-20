@@ -107,9 +107,10 @@ internal sealed record SubscriptionOut(
 /// Подписки на сертификаты Key Manager Plus: кому, какие файлы и когда.
 /// </summary>
 /// <remarks>
-/// ⚠ ⚠ Подписка рассылает файлы сертификата <b>вместе с закрытым ключом</b> на адреса, которые в
-/// ней записаны: тот, кто дописал свой адрес, получает ключ следующим опросом. Защищает её вход
-/// со вторым фактором; повторного кода на действиях нет (решение владельца, 2026-10-20).
+/// ⚠ ⚠ <b>Заведение, правка, удаление и ручная отправка требуют свежего второго фактора</b>
+/// (<c>[RequireRecentSecondFactor]</c>, решение владельца 2026-10-20). Подписка рассылает файлы
+/// сертификата <b>вместе с закрытым ключом</b> на адреса, которые в ней записаны: тот, кто дописал
+/// свой адрес, получает ключ следующим опросом. Чтение кода не спрашивает.
 ///
 /// ⚠ ⚠ <b>Право получателя кончается вместе с подпиской, а не с отправкой письма.</b> Удаление
 /// подписки, смена Common Name и убранный из списка адрес отменяют письма, ещё стоящие в очереди
@@ -167,6 +168,7 @@ internal sealed class SubscriptionsController(
     /// С <c>on_change</c> текущий сертификат уходит на ближайшем опросе — опрос будится сразу.
     /// </remarks>
     [HttpPost]
+    [RequireRecentSecondFactor]
     public async Task<IActionResult> Create([FromBody] SubscriptionIn body, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(body);
@@ -228,6 +230,7 @@ internal sealed class SubscriptionsController(
     /// значит ничего, и с <c>on_change</c> новый уйдёт на ближайшем опросе.
     /// </remarks>
     [HttpPatch("{id:guid}")]
+    [RequireRecentSecondFactor]
     public async Task<SubscriptionOut> Update(
         Guid id, [FromBody] SubscriptionIn body, CancellationToken cancellationToken)
     {
@@ -359,6 +362,7 @@ internal sealed class SubscriptionsController(
     /// по подписке, которой больше нет.
     /// </remarks>
     [HttpDelete("{id:guid}")]
+    [RequireRecentSecondFactor]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
         await db.InTransactionAsync(
@@ -430,6 +434,7 @@ internal sealed class SubscriptionsController(
     /// Письма при этом ложатся в очередь, как и при опросе.
     /// </remarks>
     [HttpPost("{id:guid}/send")]
+    [RequireRecentSecondFactor]
     public async Task<SubscriptionOut> Send(Guid id, CancellationToken cancellationToken)
     {
         await НайтиAsync(id, tracked: false, cancellationToken);
