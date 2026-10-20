@@ -30,16 +30,22 @@ internal sealed class ActivationController(UserService users, Users.PasswordPoli
     /// Ссылка НЕ гасится: экран показывает адрес до того, как человек что-то ввёл, и
     /// случайно закрытая вкладка не должна требовать нового приглашения.
     ///
-    /// Ссылка приходит параметром запроса, а не телом, потому что это чтение — и по той же
-    /// причине она осядет в логе прокси. Это осознанная плата: ссылка одноразовая и живёт
-    /// час, а альтернатива (POST на чтение) ломает переход по ссылке из письма.
+    /// ⚠ ⚠ <b>Ссылка приходит ТЕЛОМ, а не параметром адреса</b> (ревью безопасности 2026-10-20).
+    /// Прежде это был <c>GET /api/activation?token=…</c> — с доводом «это чтение, а POST ломает
+    /// переход по ссылке из письма». Довод устарел: письмо ведёт на страницу панели, токен там во
+    /// фрагменте адреса (на сервер он не уходит), а API зовёт уже сценарий страницы — ему всё
+    /// равно, каким методом. Адрес же запроса оседает в журналах Cloudflare и любого прокси по
+    /// пути, и действующая ссылка приглашения (пропуск к заданию пароля администратора) лежала
+    /// там открытым текстом весь свой срок. Устроено как <c>POST /api/password-reset/info</c>.
     /// </remarks>
-    [HttpGet]
+    [HttpPost("info")]
     [PublicEndpoint("активирующий ещё не может войти: пароля у него нет, пропуск — сама ссылка")]
     public async Task<ActionResult<ActivationInfoOut>> Info(
-        [FromQuery(Name = "token")] string token, CancellationToken cancellationToken)
+        [FromBody] ActivationLinkIn body, CancellationToken cancellationToken)
     {
-        var user = await users.PeekActivationAsync(token, cancellationToken);
+        ArgumentNullException.ThrowIfNull(body);
+
+        var user = await users.PeekActivationAsync(body.Token, cancellationToken);
 
         // Одинаковый отказ на всё: нет ссылки, просрочена, использована, учётка отключена.
         //

@@ -71,7 +71,8 @@ public sealed class UsersApi(SenderHost host)
 
         host.User.SignOut();
 
-        var info = await Client().GetFromJsonAsync<JsonObject>($"/api/activation?token={token}", Ct);
+        var info = await (await Client().PostAsJsonAsync("/api/activation/info", new { token }, Ct))
+            .Content.ReadFromJsonAsync<JsonObject>(Ct);
         info!["email"]!.GetValue<string>().ShouldNotBeNullOrWhiteSpace();
 
         var response = await Client().PostAsJsonAsync(
@@ -91,13 +92,45 @@ public sealed class UsersApi(SenderHost host)
 
         host.User.SignOut();
 
-        await Client().GetAsync($"/api/activation?token={token}", Ct);
-        await Client().GetAsync($"/api/activation?token={token}", Ct);
+        (await Client().PostAsJsonAsync("/api/activation/info", new { token }, Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await Client().PostAsJsonAsync("/api/activation/info", new { token }, Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
 
         var response = await Client().PostAsJsonAsync(
             "/api/activation", new { token, password = Strong }, Ct);
 
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
+    }
+
+    /// <summary>
+    /// Ссылка приглашения проверяется телом запроса; адресом — больше никак.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ ⚠ Ревью безопасности 2026-10-20. Прежде это был <c>GET /api/activation?token=…</c>: адрес
+    /// запроса оседает в журналах Cloudflare и любого прокси по пути, и действующая ссылка
+    /// приглашения лежала там открытым текстом весь свой срок. Старый путь не должен отвечать
+    /// сведениями — иначе забытый клиент продолжал бы класть ссылку в адрес.
+    /// </remarks>
+    [Fact]
+    public async Task Ссылку_приглашения_в_адресе_не_принимают()
+    {
+        SignIn("user.create");
+
+        var token = (await CreateAsync(Email()))["invitation_token"]!.GetValue<string>();
+
+        host.User.SignOut();
+
+        var поАдресу = await Client().GetAsync($"/api/activation?token={token}", Ct);
+
+        поАдресу.StatusCode.ShouldBe(HttpStatusCode.MethodNotAllowed, "ссылка приглашения снова принимается в адресе");
+        (await поАдресу.Content.ReadAsStringAsync(Ct)).ShouldNotContain("@", Case.Sensitive, "по ссылке в адресе выданы сведения");
+
+        var телом = await Client().PostAsJsonAsync("/api/activation/info", new { token }, Ct);
+
+        телом.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await телом.Content.ReadFromJsonAsync<JsonObject>(Ct))!["policy"].ShouldNotBeNull();
+
+        (await Client().PostAsJsonAsync("/api/activation/info", new { token = "ссылки-такой-нет-совсем" }, Ct))
+            .StatusCode.ShouldBe(HttpStatusCode.NotFound);
     }
 
     [Fact]

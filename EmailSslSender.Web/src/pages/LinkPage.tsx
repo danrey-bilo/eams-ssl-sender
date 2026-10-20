@@ -28,11 +28,11 @@ export function LinkPage({ kind }: { kind: Kind }) {
     if (!token) return;
     (async () => {
       if (kind === 'activate') {
-        const r = await fetch('/api/activation?token=' + encodeURIComponent(token), { cache: 'no-store' });
+        // ⚠ Токен — телом POST, не в адресе запроса: адрес оседает в журналах Cloudflare и прокси.
+        const r = await publicPost<{ email: string; policy: PasswordPolicy }>('/api/activation/info', { token });
         if (!r.ok) return setState('invalid');
-        const info = await r.json() as { email: string; policy: PasswordPolicy };
-        setWho(info.email);
-        setPolicy(info.policy);
+        setWho(r.data.email);
+        setPolicy(r.data.policy);
       } else {
         const r = await publicPost<PasswordPolicy>('/api/password-reset/info', { token });
         if (!r.ok) return setState('invalid');
