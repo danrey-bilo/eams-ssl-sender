@@ -153,11 +153,18 @@ internal sealed class SettingsService(
 
                 // ⚠ Ничего не изменилось — строки нет. Журнал не должен наполняться нажатиями
                 // «Сохранить»: тот же довод, по которому со стенда убрали `permission_check`.
+                //
+                // ⚠ ⚠ Ключи и значения «было → стало» уходят в строку лога (`LogChanges`): без
+                // них журнал не ответил бы, кто и куда переставил `mail.smtp_host` или
+                // `keymanager.base_url`. Поручиться можно: секретов в настройках нет по
+                // устройству — пароль SMTP и ключ API лежат запечатанными в своих таблицах, а
+                // системные настройки — параметры установки, а не сведения о людях.
                 if (изменения.Count > 0)
                 {
                     audit.Write(new AuditEntry(
                         SettingsActions.SystemUpdate,
-                        Changes: изменения));
+                        Changes: изменения,
+                        LogChanges: true));
                 }
 
                 await db.SaveChangesAsync(token);

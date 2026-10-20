@@ -52,6 +52,30 @@ public sealed class PinTests
     }
 
     [Fact]
+    public void Годный_по_цепочке_но_чужой_при_закреплённом_отпечатке_отвергается()
+    {
+        // ⚠ ⚠ Закрепление СУЖАЕТ: сертификат, выданный на имя сервера публичным центром (цепочка
+        // без ошибок), но не тот, что сверил администратор, — отказ. Прежде годный по цепочке
+        // принимался раньше сверки, и отпечаток не закреплял ничего.
+        ServerCertificatePin.Accept(Чужой, SslPolicyErrors.None, Отпечаток(Самоподписанный))
+            .ShouldBeFalse();
+    }
+
+    [Fact]
+    public void Закреплённый_принимается_и_когда_цепочка_годна()
+    {
+        ServerCertificatePin.Accept(Самоподписанный, SslPolicyErrors.None, Отпечаток(Самоподписанный))
+            .ShouldBeTrue();
+    }
+
+    [Fact]
+    public void Без_отпечатка_несовпадение_имени_отвергается()
+    {
+        ServerCertificatePin.Accept(Самоподписанный, SslPolicyErrors.RemoteCertificateNameMismatch, null)
+            .ShouldBeFalse();
+    }
+
+    [Fact]
     public void Нет_сертификата_отказ()
     {
         ServerCertificatePin.Accept(null, SslPolicyErrors.RemoteCertificateNotAvailable, Отпечаток(Самоподписанный))

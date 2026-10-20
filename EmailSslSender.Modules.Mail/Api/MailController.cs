@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Text.Json.Serialization;
 using EmailSslSender.Modules.Mail.Contracts;
 using EmailSslSender.Modules.Mail.Domain;
@@ -11,6 +12,8 @@ using EmailSslSender.Shared.Contracts.Mail;
 using EmailSslSender.Shared.Contracts.Settings;
 using EmailSslSender.Shared.Data;
 using EmailSslSender.Shared.Errors;
+using MailKit.Net.Smtp;
+using MailKit.Security;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -65,11 +68,17 @@ internal sealed class MailController(
     {
         var политика = await MailPolicy.ReadAsync(settings, cancellationToken);
 
+        // ⚠ Письмо со сроком «никогда» не ждёт, а умерло: отменённое, стёртое по сроку или
+        // исчерпавшее попытки — его попытки при этом могут быть и не исчерпаны.
         var ждут = await db.Set<MailOutbox>()
-            .CountAsync(п => п.SentAt == null && п.Attempts < политика.MaxAttempts, cancellationToken);
+            .CountAsync(
+                п => п.SentAt == null && п.Attempts < политика.MaxAttempts && п.NextAttemptAt < MailAttachments.Никогда,
+                cancellationToken);
 
         var сдались = await db.Set<MailOutbox>()
-            .CountAsync(п => п.SentAt == null && п.Attempts >= политика.MaxAttempts, cancellationToken);
+            .CountAsync(
+                п => п.SentAt == null && (п.Attempts >= политика.MaxAttempts || п.NextAttemptAt >= MailAttachments.Никогда),
+                cancellationToken);
 
         // ⚠ Последняя ошибка — самого свежего неотправленного. Именно она отвечает на вопрос
         // «почему не уходит», а не первая по времени: настройки могли починить, и старая
@@ -99,12 +108,18 @@ internal sealed class MailController(
     ///
     /// ⚠ <b>В журнал идёт факт, а не значение</b> — ни старое, ни новое. Журнал append-only:
     /// строку оттуда нельзя ни изменить, ни удалить, и ошибка здесь необратима.
+    ///
+    /// ⚠ ⚠ <b>Пароль привязывается к серверу, порту, защите и учётной записи, заданным на момент
+    /// ввода</b>: сначала настройки, потом пароль. Сменили любую из них — пароль вводится заново,
+    /// иначе отправка отказывает с понятным текстом.
     /// </remarks>
     [HttpPut("password")]
     public async Task<IActionResult> SetPassword(
         [FromBody] MailPasswordIn body, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(body);
+
+        var цель = SmtpSender.Цель(await MailPolicy.ReadAsync(settings, cancellationToken));
 
         await db.InTransactionAsync(
             async token =>
@@ -113,7 +128,7 @@ internal sealed class MailController(
 
                 if (задан)
                 {
-                    await secrets.PutAsync(SystemSecretNames.SmtpPassword, body.Password!, token);
+                    await secrets.PutAsync(SystemSecretNames.SmtpPassword, body.Password!, цель, token);
                 }
                 else
                 {
@@ -125,7 +140,8 @@ internal sealed class MailController(
                     Changes: new Dictionary<string, object?>(StringComparer.Ordinal)
                     {
                         ["set"] = задан,
-                    }));
+                    },
+                    LogChanges: true));
 
                 await db.SaveChangesAsync(token);
             },
@@ -192,19 +208,19 @@ internal sealed class MailController(
             // существует: «5.7.1 Authentication Required» говорит, что делать, а «не удалось
             // отправить» не говорит ничего.
             //
-            // ⚠ Сырой текст ошибки SMTP уходит в ОТВЕТ намеренно — админу нужен «5.7.1»,
-            // а не «не удалось», — и это закрыто входом со вторым фактором.
-            // Пароль SMTP в него не попадает: MailKit передаёт его в `AuthenticateAsync`
-            // отдельно, не строкой подключения. Отдельной строки в лог/журнал здесь нет —
-            // диагностика это сам ответ (комментарий приведён к коду, ревью 23.9: прежняя
-            // редакция обещала `SafeError` в лог, которого в этом catch не было).
+            // ⚠ ⚠ Но ТОЛЬКО текст SMTP, TLS и сети (`ТекстНаружу`). Внутри той же попытки
+            // открывается пароль из базы: отказ Npgsql, криптографии или чего угодно ещё уехал
+            // бы наружу своим сообщением — а там бывают строка подключения и устройство
+            // внутренней сети. Всё прочее — цепочкой типов (`SafeError`). Пароль SMTP в текст
+            // SMTP не попадает: MailKit передаёт его в `AuthenticateAsync` отдельно. Отдельной
+            // строки в лог/журнал здесь нет — диагностика это сам ответ.
             throw new AppException(
                 ErrorCodes.MailSendFailed,
                 "Письмо не отправлено: сервер отказал.",
                 HttpStatusCode.Conflict,
                 new Dictionary<string, object?>(StringComparer.Ordinal)
                 {
-                    ["reason"] = ошибка.Message,
+                    ["reason"] = ТекстНаружу(ошибка) ? ошибка.Message : SafeError.Describe(ошибка),
                 });
         }
 
@@ -218,4 +234,25 @@ internal sealed class MailController(
 
         return NoContent();
     }
+
+    /// <summary>
+    /// Можно ли отдать текст отказа администратору как есть.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ ⚠ <b>Закрытый список, а не «всё, кроме опасного»</b>: ответ сервера SMTP, рукопожатие
+    /// TLS, вход, сеть, разбор адреса получателя — и свои отказы модуля
+    /// (<see cref="MailConfigurationException"/>: имя сервера, защита, привязка пароля),
+    /// составленные без секретов. Новое исключение по умолчанию идёт цепочкой типов — молчать
+    /// безопаснее, чем рассказывать.
+    /// </remarks>
+    internal static bool ТекстНаружу(Exception ошибка) => ошибка is MailConfigurationException
+        or SmtpCommandException
+        or SmtpProtocolException
+        or AuthenticationException
+        or SaslException
+        or SslHandshakeException
+        or SocketException
+        or IOException
+        or TimeoutException
+        or MimeKit.ParseException;
 }

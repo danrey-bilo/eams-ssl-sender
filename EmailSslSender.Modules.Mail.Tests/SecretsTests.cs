@@ -1,6 +1,8 @@
 using System.Security.Cryptography;
 using EmailSslSender.Modules.Mail.Domain;
 using EmailSslSender.Modules.Mail.Secrets;
+using EmailSslSender.Modules.Mail.Sending;
+using EmailSslSender.Shared.Crypto;
 using EmailSslSender.Shared.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -23,6 +25,20 @@ namespace EmailSslSender.Modules.Mail.Tests;
 public sealed class SecretsTests(MailDatabase база) : IAsyncLifetime
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
+    /// <summary>Почта, для которой пароль вводят в этих тестах.</summary>
+    private static readonly MailPolicy Почта = new(
+        Enabled: true,
+        Host: "smtp.example.com",
+        Port: 587,
+        Security: "starttls",
+        Username: "robot",
+        FromName: "Email SSL Sender",
+        FromAddress: "vault@example.com",
+        RatePerHour: 5,
+        MaxAttempts: 5);
+
+    private static readonly string Цель = SmtpSender.Цель(Почта);
 
     public ValueTask InitializeAsync()
     {
@@ -122,9 +138,10 @@ public sealed class SecretsTests(MailDatabase база) : IAsyncLifetime
         var ключ = new EmailSslSender.Shared.Crypto.WrappedDataKey(строка.DataKey);
         var запечатано = new EmailSslSender.Shared.Crypto.SealedSecret(строка.Sealed);
 
-        // Полный контекст боевого кода — открывает.
-        база.Конверт.OpenText(ключ, запечатано, "sender:system-secret:" + SystemSecretNames.SmtpPassword)
-            .ShouldBe("пароль");
+        // Полный контекст боевого кода — открывает (внутри — пароль вместе с адресом).
+        BoundSecret.Unpack(
+                база.Конверт.OpenText(ключ, запечатано, "sender:system-secret:" + SystemSecretNames.SmtpPassword))
+            .ShouldNotBeNull().Secret.ShouldBe("пароль");
 
         // Он же без имени секрета — не открывает.
         Should.Throw<CryptographicException>(
@@ -142,9 +159,9 @@ public sealed class SecretsTests(MailDatabase база) : IAsyncLifetime
         var секреты = scope.ServiceProvider.GetRequiredService<SystemSecrets>();
 
         await Should.ThrowAsync<ArgumentOutOfRangeException>(
-            async () => await секреты.PutAsync("что-попало", "значение", Ct));
+            async () => await секреты.PutAsync("что-попало", "значение", Цель, Ct));
         await Should.ThrowAsync<ArgumentOutOfRangeException>(
-            async () => await секреты.GetAsync("что-попало", Ct));
+            async () => await секреты.GetForAsync("что-попало", Цель, Ct));
 
         (await Строк()).ShouldBe(0);
     }
@@ -184,6 +201,91 @@ public sealed class SecretsTests(MailDatabase база) : IAsyncLifetime
             var (секреты, _) = Слои(scope);
             (await секреты.DropAsync(SystemSecretNames.SmtpPassword, Ct)).ShouldBeFalse();
         }
+    }
+
+    // --- привязка к адресу ------------------------------------------------------------------
+
+    [Theory]
+    [InlineData("evil.example.com", 587, "starttls", "robot")]
+    [InlineData("smtp.example.com", 25, "starttls", "robot")]
+    [InlineData("smtp.example.com", 587, "none", "robot")]
+    [InlineData("smtp.example.com", 587, "tls", "robot")]
+    [InlineData("smtp.example.com", 587, "starttls", "admin")]
+    public async Task Пароль_не_открывается_для_другого_сервера_порта_защиты_или_учётки(
+        string сервер, int порт, string защита, string учётка)
+    {
+        // ⚠ Ровно сценарий перехваченной сессии: сервер переставлен на свой (или защита снята), и
+        // проверочное письмо понесло бы пароль туда — открытым текстом.
+        await Задать("пароль");
+
+        var чужая = SmtpSender.Цель(Почта with { Host = сервер, Port = порт, Security = защита, Username = учётка });
+
+        await using var scope = база.Scope();
+        var (секреты, _) = Слои(scope);
+
+        var ошибка = await Should.ThrowAsync<MailConfigurationException>(
+            () => секреты.GetForAsync(SystemSecretNames.SmtpPassword, чужая, Ct));
+        ошибка.Message.ShouldContain("Введите пароль SMTP заново");
+        ошибка.Message.ShouldNotContain("пароль-");
+
+        (await секреты.GetForAsync(SystemSecretNames.SmtpPassword, Цель, Ct)).ShouldBe("пароль");
+    }
+
+    [Fact]
+    public void Один_сервер_в_разной_записи_одна_цель()
+    {
+        SmtpSender.Цель(Почта with { Host = "https://SMTP.Example.com/" }).ShouldBe(Цель);
+        SmtpSender.Цель(Почта with { Username = "a@b" })
+            .ShouldNotBe(SmtpSender.Цель(Почта with { Username = "a", Host = "b@smtp.example.com" }));
+    }
+
+    [Fact]
+    public async Task Старый_пароль_без_привязки_привязывается_к_адресу_первого_использования()
+    {
+        // ⚠ Пароль, запечатанный до привязки, — голая строка. Он обязан продолжить работать у
+        // владельца (доверие с первого раза), но только для того адреса, с которым его впервые
+        // открыли.
+        await using (var scope = база.Scope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+            var ключ = база.Конверт.CreateDataKey();
+
+            db.Set<SystemSecret>().Add(new SystemSecret
+            {
+                Key = SystemSecretNames.SmtpPassword,
+                Sealed = база.Конверт.SealText(
+                    ключ, "старый-пароль", "sender:system-secret:" + SystemSecretNames.SmtpPassword).Bytes,
+                DataKey = ключ.Bytes,
+            });
+
+            await db.SaveChangesAsync(Ct);
+        }
+
+        база.Логи.Строки.Clear();
+
+        (await Прочитать()).ShouldBe("старый-пароль");
+
+        var строка = await Строка();
+        var привязка = BoundSecret.Unpack(база.Конверт.OpenText(
+                new WrappedDataKey(строка.DataKey),
+                new SealedSecret(строка.Sealed),
+                "sender:system-secret:" + SystemSecretNames.SmtpPassword))
+            .ShouldNotBeNull("старый пароль перепечатан с привязкой");
+        привязка.Target.ShouldBe(Цель);
+        привязка.Secret.ShouldBe("старый-пароль");
+
+        база.Логи.Строки.ShouldContain(с => с.Contains("system_secret_bound_on_first_use", StringComparison.Ordinal));
+        база.Логи.Строки.ShouldAllBe(с => !с.Contains("старый-пароль", StringComparison.Ordinal));
+
+        await using (var scope = база.Scope())
+        {
+            var (секреты, _) = Слои(scope);
+
+            await Should.ThrowAsync<MailConfigurationException>(() => секреты.GetForAsync(
+                SystemSecretNames.SmtpPassword, SmtpSender.Цель(Почта with { Host = "evil.example.com" }), Ct));
+        }
+
+        (await Прочитать()).ShouldBe("старый-пароль");
     }
 
     // --- ротация ----------------------------------------------------------------------------
@@ -311,7 +413,7 @@ public sealed class SecretsTests(MailDatabase база) : IAsyncLifetime
         await using var scope = база.Scope();
         var (секреты, db) = Слои(scope);
 
-        await секреты.PutAsync(SystemSecretNames.SmtpPassword, значение, Ct);
+        await секреты.PutAsync(SystemSecretNames.SmtpPassword, значение, Цель, Ct);
         await db.SaveChangesAsync(Ct);
     }
 
@@ -320,7 +422,7 @@ public sealed class SecretsTests(MailDatabase база) : IAsyncLifetime
         await using var scope = база.Scope();
         var (секреты, _) = Слои(scope);
 
-        return await секреты.GetAsync(SystemSecretNames.SmtpPassword, Ct);
+        return await секреты.GetForAsync(SystemSecretNames.SmtpPassword, Цель, Ct);
     }
 
     private async Task<EmailSslSender.Shared.Crypto.RewrapBatch> Переложить()

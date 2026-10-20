@@ -1,8 +1,10 @@
 using EmailSslSender.Modules.Mail.Domain;
+using EmailSslSender.Modules.Mail.Sending;
 using EmailSslSender.Shared.Contracts.Authz;
 using EmailSslSender.Shared.Crypto;
 using EmailSslSender.Shared.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace EmailSslSender.Modules.Mail.Secrets;
 
@@ -38,9 +40,19 @@ internal static class SystemSecretNames
 /// ⚠ <b>Контекст AEAD включает имя секрета.</b> Без него годная запечатка переставляется с
 /// одного секрета на другой: пароль SMTP, положенный на место будущего ключа подписи, открылся
 /// бы как он.
+///
+/// ⚠ ⚠ <b>Секрет привязан к адресу, для которого его ввели</b> (<see cref="BoundSecret"/>):
+/// пароль SMTP — к серверу, порту, защите и учётной записи. Открыть его можно только для того же
+/// адреса. Иначе перехваченная на время учётная запись переставила бы <c>mail.smtp_host</c> на
+/// свой сервер с защитой <c>none</c> и одним проверочным письмом получила бы пароль открытым
+/// текстом.
 /// </remarks>
 internal sealed class SystemSecrets(
-    SenderDbContext db, ISecretEnvelope envelope, ICurrentUser current, TimeProvider clock)
+    SenderDbContext db,
+    ISecretEnvelope envelope,
+    ICurrentUser current,
+    TimeProvider clock,
+    ILogger<SystemSecrets> log)
 {
     /// <summary>Приставка контекста AEAD. Полный контекст — приставка плюс имя секрета.</summary>
     /// <remarks>
@@ -49,38 +61,88 @@ internal sealed class SystemSecrets(
     /// </remarks>
     private const string Контекст = "sender:system-secret:";
 
-    /// <summary>Открыть секрет или <c>null</c>, если он не задан.</summary>
+    /// <summary>
+    /// Открыть секрет для адреса или <c>null</c>, если он не задан.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ ⚠ <b>Старый секрет без привязки привязывается к адресу первого использования</b> и
+    /// перепечатывается — доверие с первого раза: иначе обновление сломало бы работающую почту
+    /// владельца. Перепечатка — условным обновлением по прежнему запечатанному, тем же ключом
+    /// данных: пароль, заданный заново между чтением и записью, не затирается, а ротация,
+    /// переложившая обёртку, перепечатке не мешает.
+    /// </remarks>
+    /// <param name="key">Имя из закрытого набора.</param>
+    /// <param name="target">Адрес, для которого секрет нужен сейчас, в нормальном виде владельца.</param>
+    /// <param name="cancellationToken">Отмена.</param>
+    /// <exception cref="MailConfigurationException">Секрет вводили для другого адреса.</exception>
     /// <exception cref="System.Security.Cryptography.CryptographicException">
     /// Секрет есть, но не открывается: ключ не тот, контекст не тот или данные подменены.
     /// </exception>
-    public async Task<string?> GetAsync(string key, CancellationToken cancellationToken = default)
+    public async Task<string?> GetForAsync(string key, string target, CancellationToken cancellationToken = default)
     {
         Проверить(key);
+        ArgumentNullException.ThrowIfNull(target);
 
         var строка = await db.Set<SystemSecret>()
             .AsNoTracking()
             .FirstOrDefaultAsync(с => с.Key == key, cancellationToken);
 
         // Строки нет — секрет не задан. Это законное состояние, а не ошибка.
-        //
+        if (строка is null)
+        {
+            return null;
+        }
+
         // мутация 2026-08-29: обернул открытие в `catch` с `return null` → покраснел
         // SecretsTests.Испорченный_блоб_даёт_ОТКАЗ_а_не_молчание (правило 9).
-        return строка is null
-            ? null
-            : envelope.OpenText(new WrappedDataKey(строка.DataKey), new SealedSecret(строка.Sealed), Контекст + key);
+        var ключ = new WrappedDataKey(строка.DataKey);
+        var открыто = envelope.OpenText(ключ, new SealedSecret(строка.Sealed), Контекст + key);
+        var привязка = BoundSecret.Unpack(открыто);
+
+        if (привязка is null)
+        {
+            var было = строка.Sealed;
+            var перепечатано = envelope.SealText(ключ, new BoundSecret(target, открыто).Pack(), Контекст + key).Bytes;
+
+            await db.Set<SystemSecret>()
+                .Where(с => с.Key == key && с.Sealed == было)
+                .ExecuteUpdateAsync(set => set.SetProperty(с => с.Sealed, перепечатано), cancellationToken);
+
+            // ⚠ Имя секрета и факт — без адреса и тем более без значения.
+            log.LogWarning("system_secret_bound_on_first_use {Key}", key);
+
+            return открыто;
+        }
+
+        if (!привязка.IsFor(target))
+        {
+            // ⚠ Текст про SMTP: в закрытом наборе одно имя. Появится второе — текст по имени.
+            throw new MailConfigurationException(
+                "Пароль SMTP вводили для другого сервера, порта, защиты или учётной записи: "
+                + "настройки почты сменились после ввода пароля. Введите пароль SMTP заново — он "
+                + "уходит только туда, для чего его ввели.");
+        }
+
+        return привязка.Secret;
     }
 
-    /// <summary>Задать секрет. Повторная запись перекладывает значение, а не плодит строки.</summary>
+    /// <summary>Задать секрет для адреса. Повторная запись перекладывает значение, а не плодит строки.</summary>
     /// <remarks>
     /// ⚠ Не зовёт <c>SaveChangesAsync</c>: фиксацией распоряжается вызывающий — вместе со
     /// строкой журнала и в одной транзакции с ней (правило 15).
     /// </remarks>
-    public async Task PutAsync(string key, string value, CancellationToken cancellationToken = default)
+    /// <param name="key">Имя из закрытого набора.</param>
+    /// <param name="value">Значение.</param>
+    /// <param name="target">Адрес, для которого секрет вводят, — по настройкам на момент ввода.</param>
+    /// <param name="cancellationToken">Отмена.</param>
+    public async Task PutAsync(string key, string value, string target, CancellationToken cancellationToken = default)
     {
         Проверить(key);
+        ArgumentNullException.ThrowIfNull(value);
+        ArgumentNullException.ThrowIfNull(target);
 
         var ключ = envelope.CreateDataKey();
-        var запечатано = envelope.SealText(ключ, value, Контекст + key);
+        var запечатано = envelope.SealText(ключ, new BoundSecret(target, value).Pack(), Контекст + key);
 
         var строка = await db.Set<SystemSecret>()
             .FirstOrDefaultAsync(с => с.Key == key, cancellationToken);

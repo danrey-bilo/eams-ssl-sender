@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using EmailSslSender.Modules.Mail.Secrets;
 using EmailSslSender.Shared.Contracts.Mail;
@@ -78,6 +79,10 @@ internal interface IMailSession : IAsyncDisposable
 /// объекте дольше надобности, — это секрет, переживший свою надобность (правило 14, §3
 /// `SECURITY.md`). С этапа 60.2 «надобность» — это соединение, а не письмо: читается он раз на
 /// порцию вместо двадцати раз, и живёт не дольше вызова.
+///
+/// ⚠ ⚠ <b>Пароль уходит только туда, для чего его ввели</b> (<see cref="Цель"/>): сменились
+/// сервер, порт, защита или учётная запись — отказ до соединения и просьба ввести пароль заново.
+/// И <b>никогда открытым текстом</b>: вход по паролю при защите <c>none</c> запрещён.
 /// </remarks>
 internal sealed class SmtpSender(SystemSecrets secrets) : IMailSender
 {
@@ -111,6 +116,25 @@ internal sealed class SmtpSender(SystemSecrets secrets) : IMailSender
         var схема = имя.IndexOf("://", StringComparison.Ordinal);
 
         return (схема >= 0 ? имя[(схема + 3)..] : имя).TrimEnd('/');
+    }
+
+    /// <summary>
+    /// Куда уходит пароль SMTP: защита, учётная запись, имя сервера и порт одной строкой.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Имя сервера — как его увидит соединение (<see cref="ИмяСервера"/>) и строчными:
+    /// «https://Mail.Example.com/» и «mail.example.com» — один сервер, и переписанное по-другому
+    /// имя не должно требовать пароля заново. Учётная запись экранирована: «@» в ней не сольёт её
+    /// с именем сервера.
+    /// </remarks>
+    internal static string Цель(MailPolicy policy)
+    {
+        ArgumentNullException.ThrowIfNull(policy);
+
+        var имя = ИмяСервера(policy.Host ?? string.Empty).ToLowerInvariant();
+        var учётка = Uri.EscapeDataString(policy.Username?.Trim() ?? string.Empty);
+
+        return string.Create(CultureInfo.InvariantCulture, $"{policy.Security}://{учётка}@{имя}:{policy.Port}");
     }
 
     /// <summary>Кодировка тем и тел — одна на всё.</summary>
@@ -201,11 +225,20 @@ internal sealed class SmtpSession(MailPolicy policy, string host, SystemSecrets 
         // «host:465» MailKit искал бы в DNS целиком и отвечал бы невнятным «хост не найден».
         if (Uri.CheckHostName(host) == UriHostNameType.Unknown)
         {
-            throw new InvalidOperationException(
+            throw new MailConfigurationException(
                 $"Сервер SMTP — только имя, без схемы и порта (smtp.example.com), а задано «{host}».");
         }
 
-        await _клиент.ConnectAsync(host, policy.Port, Защита(policy.Security), cancellationToken);
+        // ⚠ ⚠ Пароль открывается ДО соединения и только для того адреса, для которого его ввели:
+        // сменивший сервер, порт, защиту или учётную запись получает отказ, и до чужого сервера
+        // дело не доходит вовсе — ни соединения, ни тем более пароля.
+        var пароль = string.IsNullOrWhiteSpace(policy.Username)
+            ? null
+            : await secrets.GetForAsync(SystemSecretNames.SmtpPassword, SmtpSender.Цель(policy), cancellationToken);
+
+        var защита = Защита(policy.Security);
+
+        await _клиент.ConnectAsync(host, policy.Port, защита, cancellationToken);
 
         // ⚠ Реле в той же сети авторизации не требует, и требовать её значило бы запретить
         // законную установку. Пустое имя — законное состояние, а не недоделка.
@@ -214,7 +247,20 @@ internal sealed class SmtpSession(MailPolicy policy, string host, SystemSecrets 
             return;
         }
 
-        var пароль = await secrets.GetAsync(SystemSecretNames.SmtpPassword, cancellationToken);
+        // ⚠ ⚠ Вход по паролю без защиты соединения — пароль открытым текстом на каждом узле
+        // пути; такого не бывает ни при каких настройках. Отказ — ровно на месте входа, после
+        // соединения: так любой отказ входа идёт одной дорогой — через разрыв в
+        // `ПодключитьсяAsync` (mail-3), и следующее письмо порции не пойдёт по соединению без входа.
+        //
+        // мутация 2026-10-20: убрал отказ → покраснел
+        // SmtpSessionTests.Вход_по_паролю_без_защиты_соединения_отвергается.
+        if (защита == SecureSocketOptions.None)
+        {
+            throw new MailConfigurationException(
+                "Вход в SMTP по паролю без защиты соединения запрещён: пароль ушёл бы открытым "
+                + "текстом. Выберите защиту tls или starttls (и введите пароль заново) либо уберите "
+                + "учётную запись, если это реле без входа.");
+        }
 
         await _клиент.AuthenticateAsync(policy.Username, пароль ?? string.Empty, cancellationToken);
     }
@@ -262,7 +308,7 @@ internal sealed class SmtpSession(MailPolicy policy, string host, SystemSecrets 
         // отправки дело не доходит. Проверка здесь — на случай, если кто-то позовёт сборку
         // мимо этого условия.
         var отправитель = policy.FromAddress
-            ?? throw new InvalidOperationException(
+            ?? throw new MailConfigurationException(
                 "Адрес отправителя не задан — MailPolicy.Configured обязан был это остановить");
 
         // ⚠ Отображаемое имя кодируется MimeKit само (RFC 2047) — вручную его собирать не надо,

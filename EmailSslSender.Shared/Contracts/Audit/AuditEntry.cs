@@ -35,9 +35,15 @@ public enum AuditResult
 /// <param name="ResourceId">Идентификатор ресурса.</param>
 /// <param name="Reason">Почему отказано. <b>Наружу не уходит</b> — только в журнал.</param>
 /// <param name="Changes">
-/// Что изменилось. ⚠ <b>В лог не пишется</b> (<c>LogAuditWriter</c>): здесь бывают адреса
-/// почты, а лог приложения общий. Поле оставлено затем, чтобы журнал с таблицей можно было
-/// подключить, не переписывая вызывающих.
+/// Что изменилось. ⚠ <b>В лог не пишется, пока вызывающий не поручился</b> флагом
+/// <paramref name="LogChanges"/> (<c>LogAuditWriter</c>): здесь бывают адреса почты, а лог
+/// приложения общий. Поле целиком нужно и журналу с таблицей, если его подключат, — без
+/// переписывания вызывающих.
+/// </param>
+/// <param name="LogChanges">
+/// ⚠ ⚠ <c>true</c> — вызывающий ручается, что в <paramref name="Changes"/> нет ни секретов, ни
+/// сведений о людях (адресов, имён), и они уходят в строку лога. Без поручительства — только
+/// событие: умолчание закрытое, потому что о чужих <c>Changes</c> журнал не знает ничего.
 /// </param>
 public sealed record AuditEntry(
     AuditAction Action,
@@ -47,7 +53,8 @@ public sealed record AuditEntry(
     string? ResourceType = null,
     Guid? ResourceId = null,
     string? Reason = null,
-    IReadOnlyDictionary<string, object?>? Changes = null);
+    IReadOnlyDictionary<string, object?>? Changes = null,
+    bool LogChanges = false);
 
 /// <summary>
 /// Запись события в журнал.

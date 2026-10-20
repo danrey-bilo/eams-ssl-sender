@@ -22,6 +22,10 @@ namespace EmailSslSender.IntegrationTests;
 /// TLS действительно включена (самоподписанный без отпечатка — отказ), что закреплённый отпечаток
 /// её проходит, что ключ уходит заголовком — и что ручная отправка доводит файлы до очереди писем
 /// запечатанными вложениями.
+///
+/// ⚠ ⚠ <b>И что ключ не уходит туда, куда его не вводили:</b> подменённый адрес с отпечатком
+/// подменного сервера — отказ без единого запроса к нему. Поэтому отпечаток в этих тестах
+/// задаётся ДО ключа — ровно как в панели.
 /// </remarks>
 [Collection(SenderHost.Collection)]
 public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
@@ -85,7 +89,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
     [Fact]
     public async Task Закреплённый_отпечаток_пропускает_и_ключ_едет_заголовком()
     {
-        host.Settings.Values["keymanager.server_sha256"] = _kmp.Отпечаток;
+        await ЗакрепитьAsync();
 
         var ответ = await host.CreateClient().PostAsync("/api/keymanager/test", null, Ct);
 
@@ -95,9 +99,77 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Отпечаток_закреплённый_после_ключа_требует_ввести_ключ_заново()
+    {
+        // Ключ вводили без отпечатка — закрепление после него меняет адресата ключа.
+        host.Settings.Values["keymanager.server_sha256"] = _kmp.Отпечаток;
+
+        var ответ = await host.CreateClient().PostAsync("/api/keymanager/test", null, Ct);
+
+        ответ.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        var тело = JsonNode.Parse(await ответ.Content.ReadAsStringAsync(Ct))!;
+        тело["code"]!.GetValue<string>().ShouldBe("KEYMANAGER_UNAVAILABLE");
+        тело["details"]!["reason"]!.GetValue<string>().ShouldContain("Введите ключ API заново");
+        _kmp.Запросов.ShouldBe(0);
+
+        await ЗакрепитьAsync();
+
+        (await host.CreateClient().PostAsync("/api/keymanager/test", null, Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
+    }
+
+    [Fact]
+    public async Task Ключ_не_уходит_на_подменённый_адрес_с_его_отпечатком()
+    {
+        // ⚠ Сценарий перехваченной сессии: адрес и отпечаток переставлены на свой сервер, и
+        // «проверить связь» понесла бы ключ туда.
+        await using var подменный = new ЗаглушкаKmp("ключ-подменного");
+        await подменный.ЗапуститьAsync();
+
+        host.Settings.Values["keymanager.base_url"] = подменный.Адрес;
+        host.Settings.Values["keymanager.server_sha256"] = подменный.Отпечаток;
+
+        var ответ = await host.CreateClient().PostAsync("/api/keymanager/test", null, Ct);
+
+        ответ.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        var причина = JsonNode.Parse(await ответ.Content.ReadAsStringAsync(Ct))!["details"]!["reason"]!.GetValue<string>();
+        причина.ShouldContain("заново");
+        причина.ShouldNotContain(Ключ);
+
+        подменный.Запросов.ShouldBe(0, "до подменного сервера не дошло ни одного запроса — и ключа");
+    }
+
+    [Fact]
+    public async Task Правка_и_удаление_подписки_отменяют_её_письма_в_очереди()
+    {
+        await ЗакрепитьAsync();
+        ПочтаНаНедоступныйСервер();
+
+        var клиент = host.CreateClient();
+        var id = await ПодпискаAsync(клиент);
+
+        (await клиент.PostAsync($"/api/certificate-subscriptions/{id}/send", null, Ct))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        (await ЖдутAsync("a@example.com")).ShouldBe(1);
+        (await ЖдутAsync("b@example.com")).ShouldBe(1);
+
+        // Убрали b — его письмо с закрытым ключом не уйдёт, а у a уйдёт.
+        (await клиент.PatchAsJsonAsync(
+                $"/api/certificate-subscriptions/{id}", new { recipients = new[] { "a@example.com" } }, Ct))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        (await ОтменёнAsync("b@example.com")).ShouldBe(1);
+        (await ЖдутAsync("a@example.com")).ShouldBe(1);
+
+        (await клиент.DeleteAsync($"/api/certificate-subscriptions/{id}", Ct)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        (await ОтменёнAsync("a@example.com")).ShouldBe(1);
+    }
+
+    [Fact]
     public async Task Ручная_отправка_кладёт_письма_с_запечатанными_вложениями()
     {
-        host.Settings.Values["keymanager.server_sha256"] = _kmp.Отпечаток;
+        await ЗакрепитьAsync();
         host.Settings.Values["mail.enabled"] = true;
         host.Settings.Values["mail.smtp_host"] = "127.0.0.1";
         host.Settings.Values["mail.smtp_port"] = 1;
@@ -140,6 +212,66 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
             вложения.ShouldNotBeNull().ShouldNotBeEmpty();
             вложения.AsSpan().IndexOf(ЗаглушкаKmp.ЗакрытыйКлюч).ShouldBe(-1, "ключ в очереди не лежит открытым");
         }
+    }
+
+    /// <summary>Закрепить отпечаток заглушки и ввести ключ после него — как это делает панель.</summary>
+    private async Task ЗакрепитьAsync()
+    {
+        host.Settings.Values["keymanager.server_sha256"] = _kmp.Отпечаток;
+
+        (await host.CreateClient().PutAsJsonAsync("/api/keymanager/api-key", new { api_key = Ключ }, Ct))
+            .StatusCode.ShouldBe(HttpStatusCode.NoContent);
+    }
+
+    /// <summary>Почта настроена, но сервер недоступен: письма копятся в очереди.</summary>
+    private void ПочтаНаНедоступныйСервер()
+    {
+        host.Settings.Values["mail.enabled"] = true;
+        host.Settings.Values["mail.smtp_host"] = "127.0.0.1";
+        host.Settings.Values["mail.smtp_port"] = 1;
+        host.Settings.Values["mail.smtp_security"] = "none";
+        host.Settings.Values["mail.from_address"] = "vault@example.com";
+    }
+
+    private async Task<Guid> ПодпискаAsync(HttpClient клиент)
+    {
+        var создано = await клиент.PostAsJsonAsync(
+            "/api/certificate-subscriptions",
+            new
+            {
+                common_name = "site.example.com",
+                recipients = new[] { "a@example.com", "b@example.com" },
+                formats = new[] { "PEM", "KEY" },
+            },
+            Ct);
+        создано.StatusCode.ShouldBe(HttpStatusCode.Created);
+
+        return (await создано.Content.ReadFromJsonAsync<JsonObject>(Ct))!["id"]!.GetValue<Guid>();
+    }
+
+    /// <summary>Писем с вложениями, ещё ждущих отправки, на адрес.</summary>
+    /// <remarks>
+    /// ⚠ Насос хоста в это время пробует недоступный сервер: попытка и причина у письма могут
+    /// меняться, а вложения стираются только на последней попытке — до неё далеко.
+    /// </remarks>
+    private Task<int> ЖдутAsync(string адрес) => СчётAsync(
+        "attachments IS NOT NULL AND next_attempt_at < '9999-01-01'", адрес);
+
+    /// <summary>Отменённых писем на адрес: вложения стёрты, срок — «никогда».</summary>
+    private Task<int> ОтменёнAsync(string адрес) => СчётAsync(
+        "attachments IS NULL AND next_attempt_at >= '9999-01-01'", адрес);
+
+    private async Task<int> СчётAsync(string условие, string адрес)
+    {
+        await using var scope = host.Services.CreateAsyncScope();
+        var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+
+        var запрос = "SELECT count(*)::int AS \"Value\" FROM mail_outbox WHERE kind = 'certificate_delivery' "
+            + "AND sent_at IS NULL AND to_address = {0} AND " + условие;
+
+        var строки = await db.Database.SqlQueryRaw<int>(запрос, адрес).ToListAsync(Ct);
+
+        return строки[0];
     }
 
     /// <summary>Key Manager Plus в процессе: HTTPS с самоподписанным сертификатом и тремя методами.</summary>

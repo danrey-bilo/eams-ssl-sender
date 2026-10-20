@@ -226,6 +226,7 @@ public sealed class ПодставнаяОчередь : IMailQueue
         Письма.Clear();
         Номера.Clear();
         Судьбы.Clear();
+        Отменённые.Clear();
         Ответ = MailQueueResult.Queued;
     }
 
@@ -268,6 +269,34 @@ public sealed class ПодставнаяОчередь : IMailQueue
                     номер => номер,
                     номер => Судьбы.GetValueOrDefault(номер)
                         ?? new MailLetterStatus(MailLetterState.Pending, Письма[Номера.IndexOf(номер)].To, null)));
+        }
+    }
+
+    /// <summary>Отменённые номера — в порядке отмены.</summary>
+    public List<Guid> Отменённые { get; } = [];
+
+    /// <summary>Как настоящая очередь: ждущее письмо умирает с причиной «Отменено: …».</summary>
+    public Task<int> CancelAsync(
+        IReadOnlyCollection<Guid> ids, string reason, CancellationToken cancellationToken = default)
+    {
+        lock (Письма)
+        {
+            var отменено = 0;
+
+            foreach (var номер in ids.Where(Номера.Contains))
+            {
+                if (Судьбы.TryGetValue(номер, out var судьба) && судьба.State != MailLetterState.Pending)
+                {
+                    continue;
+                }
+
+                Судьбы[номер] = new MailLetterStatus(
+                    MailLetterState.Dead, Письма[Номера.IndexOf(номер)].To, $"Отменено: {reason}");
+                Отменённые.Add(номер);
+                отменено++;
+            }
+
+            return Task.FromResult(отменено);
         }
     }
 }

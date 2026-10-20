@@ -110,6 +110,15 @@ internal sealed record SubscriptionOut(
 /// ⚠ ⚠ Подписка рассылает файлы сертификата <b>вместе с закрытым ключом</b> на адреса, которые в
 /// ней записаны: тот, кто дописал свой адрес, получает ключ следующим опросом. Защищает её вход
 /// со вторым фактором; повторного кода на действиях нет (решение владельца, 2026-10-20).
+///
+/// ⚠ ⚠ <b>Право получателя кончается вместе с подпиской, а не с отправкой письма.</b> Удаление
+/// подписки, смена Common Name и убранный из списка адрес отменяют письма, ещё стоящие в очереди
+/// (<see cref="IMailQueue.CancelAsync"/>): иначе закрытый ключ ушёл бы тому, у кого право уже
+/// отняли. Отмена — в той же транзакции, что и правка, под блокировкой строки подписки: опрос,
+/// отправляющий её в эту минуту, дописал бы номера писем мимо отмены.
+///
+/// ⚠ В журнал — какие поля изменились и сколько адресов стало, а не сами адреса: адрес
+/// получателя — сведение о человеке, а строка журнала уходит в общий лог.
 /// </remarks>
 [ApiController]
 [Route("api/certificate-subscriptions")]
@@ -189,7 +198,18 @@ internal sealed class SubscriptionsController(
                 audit.Write(new AuditEntry(
                     KeyManagerActions.SubscriptionCreated,
                     ResourceType: KeyManagerActions.SubscriptionResource,
-                    ResourceId: подписка.Id));
+                    ResourceId: подписка.Id,
+                    Changes: new Dictionary<string, object?>(StringComparer.Ordinal)
+                    {
+                        ["common_name"] = подписка.CommonName,
+                        ["recipients"] = подписка.Recipients.Length,
+                        ["formats"] = подписка.Formats,
+                        ["include_passphrase"] = подписка.IncludePassphrase,
+                        ["on_change"] = подписка.OnChange,
+                        ["interval_days"] = подписка.IntervalDays,
+                        ["enabled"] = подписка.Enabled,
+                    },
+                    LogChanges: true));
 
                 await db.SaveChangesAsync(token);
             },
@@ -217,6 +237,20 @@ internal sealed class SubscriptionsController(
             async token =>
             {
                 var строка = await НайтиAsync(id, tracked: true, token);
+                var изменения = new Dictionary<string, object?>(StringComparer.Ordinal);
+                var отменено = 0;
+
+                void Поле(string имя, object? было, object? стало)
+                {
+                    if (!Equals(было, стало))
+                    {
+                        изменения[имя] = new Dictionary<string, object?>(StringComparer.Ordinal)
+                        {
+                            ["from"] = было,
+                            ["to"] = стало,
+                        };
+                    }
+                }
 
                 if (body.CommonName is not null)
                 {
@@ -224,6 +258,13 @@ internal sealed class SubscriptionsController(
 
                     if (!string.Equals(имя, строка.CommonName, StringComparison.Ordinal))
                     {
+                        Поле("common_name", строка.CommonName, имя);
+
+                        // ⚠ Письма с прежним сертификатом подписке больше не принадлежат: её
+                        // получатели подписаны теперь на другой.
+                        отменено += await mail.CancelAsync(
+                            строка.PendingMailIds ?? [], "подписка переключена на другой Common Name", token);
+
                         строка.CommonName = имя;
                         строка.LastSentSerial = null;
                         строка.LastSentAt = null;
@@ -234,13 +275,39 @@ internal sealed class SubscriptionsController(
 
                 if (body.Recipients is not null)
                 {
-                    строка.Recipients = Адреса(body.Recipients);
+                    var адреса = Адреса(body.Recipients);
+                    var убраны = строка.Recipients.Except(адреса, StringComparer.OrdinalIgnoreCase).ToList();
+                    var добавлены = адреса.Except(строка.Recipients, StringComparer.OrdinalIgnoreCase).Count();
+
+                    if (убраны.Count > 0 || добавлены > 0)
+                    {
+                        изменения["recipients"] = new Dictionary<string, object?>(StringComparer.Ordinal)
+                        {
+                            ["from"] = строка.Recipients.Length,
+                            ["to"] = адреса.Length,
+                            ["added"] = добавлены,
+                            ["removed"] = убраны.Count,
+                        };
+                    }
+
+                    if (убраны.Count > 0)
+                    {
+                        отменено += await ОтменитьУбранным(строка, убраны, token);
+                    }
+
+                    строка.Recipients = адреса;
                 }
 
                 if (body.Formats is not null)
                 {
-                    строка.Formats = Форматы(body.Formats);
+                    var форматы = Форматы(body.Formats);
+                    Поле("formats", string.Join(",", строка.Formats), string.Join(",", форматы));
+                    строка.Formats = форматы;
                 }
+
+                Поле("include_passphrase", строка.IncludePassphrase, body.IncludePassphrase ?? строка.IncludePassphrase);
+                Поле("on_change", строка.OnChange, body.OnChange ?? строка.OnChange);
+                Поле("enabled", строка.Enabled, body.Enabled ?? строка.Enabled);
 
                 строка.IncludePassphrase = body.IncludePassphrase ?? строка.IncludePassphrase;
                 строка.OnChange = body.OnChange ?? строка.OnChange;
@@ -248,12 +315,21 @@ internal sealed class SubscriptionsController(
 
                 if (body.IntervalDays is not null)
                 {
-                    строка.IntervalDays = Интервал(body.IntervalDays);
+                    var интервал = Интервал(body.IntervalDays);
+                    Поле("interval_days", строка.IntervalDays, интервал);
+                    строка.IntervalDays = интервал;
                 }
 
                 if (body.Locale is not null)
                 {
-                    строка.Locale = Язык(body.Locale);
+                    var язык = Язык(body.Locale);
+                    Поле("locale", строка.Locale, язык);
+                    строка.Locale = язык;
+                }
+
+                if (отменено > 0)
+                {
+                    изменения["cancelled_letters"] = отменено;
                 }
 
                 строка.UpdatedAt = clock.GetUtcNow();
@@ -262,7 +338,9 @@ internal sealed class SubscriptionsController(
                 audit.Write(new AuditEntry(
                     KeyManagerActions.SubscriptionUpdated,
                     ResourceType: KeyManagerActions.SubscriptionResource,
-                    ResourceId: строка.Id));
+                    ResourceId: строка.Id,
+                    Changes: изменения.Count > 0 ? изменения : null,
+                    LogChanges: true));
 
                 await db.SaveChangesAsync(token);
 
@@ -276,24 +354,72 @@ internal sealed class SubscriptionsController(
     }
 
     /// <summary>Удалить подписку.</summary>
+    /// <remarks>
+    /// ⚠ Письма подписки, ещё стоящие в очереди, отменяются вместе с ней: закрытый ключ не уходит
+    /// по подписке, которой больше нет.
+    /// </remarks>
     [HttpDelete("{id:guid}")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
         await db.InTransactionAsync(
             async token =>
             {
-                db.Set<CertificateSubscription>().Remove(await НайтиAsync(id, tracked: true, token));
+                var строка = await НайтиAsync(id, tracked: true, token);
+                var отменено = await mail.CancelAsync(строка.PendingMailIds ?? [], "подписка удалена", token);
+
+                db.Set<CertificateSubscription>().Remove(строка);
 
                 audit.Write(new AuditEntry(
                     KeyManagerActions.SubscriptionDeleted,
                     ResourceType: KeyManagerActions.SubscriptionResource,
-                    ResourceId: id));
+                    ResourceId: id,
+                    Changes: new Dictionary<string, object?>(StringComparer.Ordinal)
+                    {
+                        ["common_name"] = строка.CommonName,
+                        ["recipients"] = строка.Recipients.Length,
+                        ["cancelled_letters"] = отменено,
+                    },
+                    LogChanges: true));
 
                 await db.SaveChangesAsync(token);
             },
             cancellationToken);
 
         return NoContent();
+    }
+
+    /// <summary>
+    /// Отменить письма подписки, адресованные убранным получателям, и забыть их номера.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Остальным получателям письма уходят как шли: их право не менялось, а отметка «отправлено»
+    /// без писем оставила бы их без сертификата до следующего выпуска.
+    /// </remarks>
+    private async Task<int> ОтменитьУбранным(
+        CertificateSubscription строка, IReadOnlyCollection<string> убраны, CancellationToken token)
+    {
+        if (строка.PendingMailIds is not { Length: > 0 } номера)
+        {
+            return 0;
+        }
+
+        var письма = await mail.StatusAsync(номера, token);
+        var отменить = номера
+            .Where(номер => письма.TryGetValue(номер, out var письмо)
+                && убраны.Contains(письмо.ToAddress, StringComparer.OrdinalIgnoreCase))
+            .ToList();
+
+        if (отменить.Count == 0)
+        {
+            return 0;
+        }
+
+        var отменено = await mail.CancelAsync(отменить, "получатель убран из подписки", token);
+        var остались = номера.Except(отменить).ToArray();
+
+        строка.PendingMailIds = остались.Length > 0 ? остались : null;
+
+        return отменено;
     }
 
     /// <summary>
@@ -344,16 +470,22 @@ internal sealed class SubscriptionsController(
     private async Task<SubscriptionOut> ВыдатьAsync(CertificateSubscription подписка, CancellationToken cancellationToken) =>
         SubscriptionOut.From(подписка, await mail.StatusAsync(подписка.PendingMailIds ?? [], cancellationToken));
 
+    /// <summary>
+    /// Подписка по номеру; для правки — под блокировкой строки.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ ⚠ Правка ждёт блокировку (<c>FOR UPDATE</c>, без <c>SKIP LOCKED</c>): отправка держит строку
+    /// секунды, пока выгружает файлы, и по выходе пишет новые номера писем. Прочитай правка строку
+    /// мимо блокировки — её отмена писем не увидела бы свежих номеров, а запись затёрла бы их
+    /// прежними.
+    /// </remarks>
     private async Task<CertificateSubscription> НайтиAsync(Guid id, bool tracked, CancellationToken cancellationToken)
     {
-        var набор = db.Set<CertificateSubscription>().AsQueryable();
+        var набор = tracked
+            ? db.Set<CertificateSubscription>().FromSql($"SELECT * FROM certificate_subscriptions WHERE id = {id} FOR UPDATE")
+            : db.Set<CertificateSubscription>().AsNoTracking().Where(п => п.Id == id);
 
-        if (!tracked)
-        {
-            набор = набор.AsNoTracking();
-        }
-
-        return await набор.FirstOrDefaultAsync(п => п.Id == id, cancellationToken)
+        return await набор.FirstOrDefaultAsync(cancellationToken)
             ?? throw AppException.NotFound("Подписка не найдена.");
     }
 

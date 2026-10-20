@@ -138,6 +138,142 @@ public sealed class AttachmentTests(MailDatabase база) : IAsyncLifetime
         письмо.NextAttemptAt.ShouldBe(MailAttachments.Никогда);
     }
 
+    // --- отмена и срок ----------------------------------------------------------------------
+
+    [Fact]
+    public async Task Отмена_стирает_вложения_и_хоронит_ждущее_письмо()
+    {
+        var (адрес, номер) = await ПоставитьСНомером(new MailAttachment("site.key", "application/x-pem-file", Ключ));
+
+        await using (var scope = база.Scope())
+        {
+            (await scope.ServiceProvider.GetRequiredService<IMailQueue>()
+                    .CancelAsync([номер], "подписка удалена", Ct))
+                .ShouldBe(1);
+        }
+
+        var письмо = await Письмо(адрес);
+        письмо.SealedAttachments.ShouldBeNull("закрытому ключу отменённого письма в базе не место");
+        письмо.NextAttemptAt.ShouldBe(MailAttachments.Никогда);
+        письмо.LastError.ShouldBe("Отменено: подписка удалена");
+
+        await using (var scope = база.Scope())
+        {
+            var состояние = await scope.ServiceProvider.GetRequiredService<IMailQueue>().StatusAsync([номер], Ct);
+            состояние[номер].State.ShouldBe(MailLetterState.Dead);
+        }
+
+        // Ни сразу, ни через сутки с поднятым пределом попыток насос его не возьмёт.
+        база.Настройки.Значения[MailSettings.MaxAttempts.Name] = 50;
+        база.Часы.Вперёд(TimeSpan.FromDays(1));
+        await Разобрать();
+
+        база.Отправитель.Ушедшие.ShouldBeEmpty();
+        (await Письмо(адрес)).Attempts.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task Отмена_не_трогает_ушедшее_и_мёртвое()
+    {
+        var (ушло, номерУшло) = await ПоставитьСНомером(new MailAttachment("site.key", "application/x-pem-file", Ключ));
+        await Разобрать();
+
+        база.Настройки.Значения[MailSettings.MaxAttempts.Name] = 1;
+        var (умерло, номерУмерло) = await ПоставитьСНомером(new MailAttachment("site.key", "application/x-pem-file", Ключ));
+        база.Отправитель.ПадатьНа = умерло;
+        await Разобрать();
+
+        var причина = (await Письмо(умерло)).LastError;
+        причина.ShouldNotBeNullOrWhiteSpace();
+
+        await using (var scope = база.Scope())
+        {
+            (await scope.ServiceProvider.GetRequiredService<IMailQueue>()
+                    .CancelAsync([номерУшло, номерУмерло, Guid.NewGuid()], "подписка удалена", Ct))
+                .ShouldBe(0);
+        }
+
+        var отправленное = await Письмо(ушло);
+        отправленное.SentAt.ShouldNotBeNull();
+        отправленное.LastError.ShouldBeNull();
+
+        (await Письмо(умерло)).LastError.ShouldBe(причина, "у мёртвого своя причина, её не затирают");
+    }
+
+    [Fact]
+    public async Task Отмена_откатывается_вместе_с_транзакцией_вызывающего()
+    {
+        var (адрес, номер) = await ПоставитьСНомером(new MailAttachment("site.key", "application/x-pem-file", Ключ));
+
+        await using (var scope = база.Scope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+
+            await using var транзакция = await db.Database.BeginTransactionAsync(Ct);
+            (await scope.ServiceProvider.GetRequiredService<IMailQueue>().CancelAsync([номер], "проверка", Ct))
+                .ShouldBe(1);
+            await транзакция.RollbackAsync(Ct);
+        }
+
+        var письмо = await Письмо(адрес);
+        письмо.SealedAttachments.ShouldNotBeNull("откат действия возвращает письмо в очередь");
+        письмо.NextAttemptAt.ShouldBeLessThan(MailAttachments.Никогда);
+        письмо.LastError.ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task Вложения_не_ушедшего_за_сутки_письма_стираются_и_письмо_умирает()
+    {
+        // ⚠ Почту выключили после постановки — насос не берёт ничего, и закрытый ключ лежал бы в
+        // очереди, пока её не включат.
+        var (застряло, номер) = await ПоставитьСНомером(new MailAttachment("site.key", "application/x-pem-file", Ключ));
+        var безВложений = await Поставить();
+        база.Настройки.Значения[MailSettings.Enabled.Name] = false;
+
+        база.Часы.Вперёд(TimeSpan.FromHours(23));
+        (await Просрочить()).ShouldBe(0, "сутки ещё не прошли");
+
+        база.Часы.Вперёд(TimeSpan.FromHours(2));
+        (await Просрочить()).ShouldBe(1);
+
+        var письмо = await Письмо(застряло);
+        письмо.SealedAttachments.ShouldBeNull();
+        письмо.NextAttemptAt.ShouldBe(MailAttachments.Никогда);
+        письмо.LastError.ShouldNotBeNull().ShouldContain("за сутки");
+
+        var простое = await Письмо(безВложений);
+        простое.NextAttemptAt.ShouldBeLessThan(MailAttachments.Никогда, "письмо без вложений сроком не задето");
+        простое.LastError.ShouldBeNull();
+
+        await using (var scope = база.Scope())
+        {
+            (await scope.ServiceProvider.GetRequiredService<IMailQueue>().StatusAsync([номер], Ct))[номер]
+                .State.ShouldBe(MailLetterState.Dead);
+        }
+
+        // Включили почту — ушло только письмо без вложений.
+        база.Настройки.Значения[MailSettings.Enabled.Name] = true;
+        await Разобрать();
+
+        база.Отправитель.Ушедшие.Select(п => п.ToAddress).ShouldBe([безВложений]);
+    }
+
+    [Fact]
+    public async Task Срок_вложений_дописывает_прежнюю_причину()
+    {
+        var (адрес, _) = await ПоставитьСНомером(new MailAttachment("site.key", "application/x-pem-file", Ключ));
+        база.Отправитель.ПадатьНа = адрес;
+        база.Настройки.Значения[MailSettings.MaxAttempts.Name] = 50;
+        await Разобрать();
+
+        база.Часы.Вперёд(TimeSpan.FromDays(2));
+        (await Просрочить()).ShouldBe(1);
+
+        var причина = (await Письмо(адрес)).LastError.ShouldNotBeNull();
+        причина.ShouldContain("за сутки");
+        причина.ShouldContain("Последняя ошибка");
+    }
+
     [Fact]
     public async Task Состояние_писем_по_номерам()
     {
@@ -280,6 +416,30 @@ public sealed class AttachmentTests(MailDatabase база) : IAsyncLifetime
         await db.SaveChangesAsync(Ct);
 
         return адрес;
+    }
+
+    private async Task<(string Адрес, Guid Номер)> ПоставитьСНомером(params MailAttachment[] вложения)
+    {
+        var адрес = $"кому-{Guid.NewGuid():N}@example.com";
+
+        await using var scope = база.Scope();
+        var очередь = scope.ServiceProvider.GetRequiredService<IMailQueue>();
+        var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+
+        var итог = await очередь.EnqueueAsync(адрес, ПисьмаБезПредела.Вид, MailLocales.Ru, Пусто, вложения, Ct);
+        итог.Result.ShouldBe(MailQueueResult.Queued);
+
+        await db.SaveChangesAsync(Ct);
+
+        return (адрес, итог.Id!.Value);
+    }
+
+    private async Task<int> Просрочить()
+    {
+        await using var scope = база.Scope();
+
+        return await SentMailCleanup.ForgetStaleAttachmentsAsync(
+            scope.ServiceProvider.GetRequiredService<SenderDbContext>(), база.Часы, Ct);
     }
 
     private async Task<int> Разобрать()
