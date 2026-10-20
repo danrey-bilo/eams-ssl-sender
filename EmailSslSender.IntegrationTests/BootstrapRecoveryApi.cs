@@ -35,6 +35,44 @@ public sealed class BootstrapRecoveryApi(SenderHost host)
         (await MeAsync(newAccess)).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
     }
 
+    /// <summary>
+    /// <c>reset-access</c> в настоящем приложении: прежняя сессия мертва, прежний пароль не входит,
+    /// новый — входит в сессию подключения аутентификатора.
+    /// </summary>
+    [Fact]
+    public async Task Восстановление_доступа_закрывает_вход_и_возвращает_к_подключению_фактора()
+    {
+        host.User.SignOut();
+        const string oldPassword = "Очень-Хороший-Пароль-42!";
+        const string newPassword = "Другой-Надёжный-Пароль-73!";
+        var email = $"reset-access-api-{Guid.NewGuid():N}@example.com";
+        var id = await IdentityModule.BootstrapSuperuserAsync(host.Services, email, "CLI admin", oldPassword, Ct);
+
+        // Первый вход подключает аутентификатор — дальше у учётной записи настоящий второй фактор.
+        var first = await host.LoginFixtureAsync(host.CreateClient(), email, oldPassword, false, Ct);
+        first.StatusCode.ShouldBe(HttpStatusCode.OK);
+        var oldAccess = (await first.Content.ReadFromJsonAsync<JsonObject>(Ct))!["access_token"]!.GetValue<string>();
+        (await MeAsync(oldAccess)).StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var итог = await IdentityModule.ResetAccessAsync(host.Services, email, newPassword, Ct);
+
+        итог.UserId.ShouldBe(id);
+        итог.IsActive.ShouldBeTrue();
+        итог.HadTwoFactor.ShouldBeTrue();
+        итог.SessionsRevoked.ShouldBe(1);
+        (await MeAsync(oldAccess)).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+
+        (await host.LoginFixtureAsync(host.CreateClient(), email, oldPassword, false, Ct, completeFactor: false))
+            .StatusCode.ShouldBe(HttpStatusCode.Unauthorized, "прежний пароль пережил восстановление");
+
+        var next = await host.LoginFixtureAsync(host.CreateClient(), email, newPassword, false, Ct, completeFactor: false);
+        next.StatusCode.ShouldBe(HttpStatusCode.OK, "новый пароль спросил прежний аутентификатор");
+        var newAccess = (await next.Content.ReadFromJsonAsync<JsonObject>(Ct))!["access_token"]!.GetValue<string>();
+        var me = (await (await MeAsync(newAccess)).Content.ReadFromJsonAsync<JsonObject>(Ct))!;
+        me["must_enroll_two_factor"]!.GetValue<bool>().ShouldBeTrue();
+        me["step_up_until"].ShouldBeNull("у сессии настройки нет подтверждённого фактора");
+    }
+
     private async Task<HttpResponseMessage> MeAsync(string access)
     {
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/me");

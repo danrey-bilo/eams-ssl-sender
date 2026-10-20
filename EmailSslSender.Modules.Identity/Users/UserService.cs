@@ -1107,7 +1107,18 @@ internal sealed class UserService(
     /// Путь для того, кто забыл пароль, а почты нет или она сломана. Пропуском служит доступ к
     /// машине, как у <see cref="BootstrapSuperuserAsync"/>. Все сессии закрываются.
     /// </remarks>
-    public Task<User> SetSuperuserPasswordAsync(
+    public async Task<User> SetSuperuserPasswordAsync(
+        string email, string password, CancellationToken cancellationToken = default) =>
+        (await SetConsolePasswordAsync(email, password, cancellationToken)).User;
+
+    /// <summary>
+    /// То же — с числом закрытых сессий: его называет итог консольной <c>reset-access</c>.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Своей транзакцией — или транзакцией вызывающего, если она открыта (<c>InTransactionAsync</c>
+    /// её уважает): <see cref="AccessRecovery"/> зовёт этот путь и снятие фактора одной транзакцией.
+    /// </remarks>
+    internal Task<(User User, int Sessions)> SetConsolePasswordAsync(
         string email, string password, CancellationToken cancellationToken = default) =>
         db.InTransactionAsync(async token =>
         {
@@ -1117,9 +1128,9 @@ internal sealed class UserService(
             var now = clock.GetUtcNow();
             await invitations.QuenchAsync(user.Id, Purposes.Reset, now, token);
             await invitations.QuenchAsync(user.Id, Purposes.Activation, now, token);
-            await tokens.RevokeAllAsync(user.Id, RevokeReasons.PasswordChanged, token);
+            var sessions = await tokens.RevokeAllAsync(user.Id, RevokeReasons.PasswordChanged, token);
             await db.SaveChangesAsync(token);
-            return user;
+            return (user, sessions);
         }, cancellationToken);
 
     /// <summary>Найти цель консольного восстановления — без включения отключённой учётной записи.</summary>

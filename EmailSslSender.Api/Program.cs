@@ -229,7 +229,18 @@ static async Task<int> RunCommandAsync(WebApplication app, string[] args)
             return 0;
         }
 
-        var password = Bootstrap.ReadPassword(Bootstrap.Argument(args, "--password-file"));
+        var password = Bootstrap.ReadPassword(
+            Bootstrap.Argument(args, "--password-file"),
+            args[0] == Bootstrap.ResetAccess ? "Новый пароль: " : "Пароль администратора: ");
+
+        // ⚠ Пароль, фактор, блокировка и сессии — одной транзакцией (разбор у AccessRecovery).
+        // Отключённую учётную запись команда не включает и говорит об этом в итоге.
+        if (args[0] == Bootstrap.ResetAccess)
+        {
+            var итог = await IdentityModule.ResetAccessAsync(app.Services, email, password);
+            Console.WriteLine(Bootstrap.ResetAccessSummary(итог));
+            return 0;
+        }
 
         if (args[0] == Bootstrap.SetSuperadminPassword)
         {
