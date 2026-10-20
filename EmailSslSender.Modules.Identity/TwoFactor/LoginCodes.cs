@@ -75,7 +75,13 @@ internal sealed class LoginCodes(
         return result;
     }
 
-    /// <summary>Подошёл ли код. Гасит его в любом случае — как расписку.</summary>
+    /// <summary>Подошёл ли код. Совпавший гасится.</summary>
+    /// <remarks>
+    /// ⚠ Неверный ввод код НЕ гасит: искать нечего — хеш ввода с кодом не совпал (прежняя подпись
+    /// «гасит в любом случае» врала, ревью 2026-10-20). Попытки держат вызывающие, и ДО проверки:
+    /// блокировка учётной записи (<c>LoginFailures.TakeAsync</c>) и, на входе, предел кодов на
+    /// расписку, к которой код привязан (<see cref="ChallengeAttempts"/>).
+    /// </remarks>
     public async Task<bool> VerifyAsync(
         Guid userId, string code, CancellationToken cancellationToken = default,
         string? binding = null, string purpose = Purposes.LoginCode)

@@ -179,7 +179,134 @@ public sealed class SignInTests(IdentityDatabase database)
         }
     }
 
+    /// <summary>
+    /// После истёкшей блокировки одна неудача не запирает снова: счёт начинается заново.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ ⚠ Ревью 2026-10-20. Счётчик не убывал никогда: после первой блокировки он оставался на
+    /// пороге, и истёкшую блокировку ставила заново ПЕРВАЯ же неудача. Одной неверной попытки раз в
+    /// <c>auth.lockout_minutes</c> хватало, чтобы владелец не вошёл никогда. Теперь, чтобы запереть
+    /// снова, нужен снова полный порог.
+    /// </remarks>
+    // мутация 2026-10-20: в LoginFailures.TakeAsync счёт после истёкшей блокировки продолжает
+    // расти (`+ 1` вместо `1`) → покраснел этот факт.
+    [Fact]
+    public async Task После_истёкшей_блокировки_одна_неудача_не_запирает_снова()
+    {
+        var (id, email) = await ActiveUserAsync();
+        database.Settings.Values["auth.lockout_threshold"] = 2;
+
+        try
+        {
+            for (var i = 0; i < 2; i++)
+            {
+                await Should.ThrowAsync<AppException>(() => SignInAsync(email, "Неверный-Пароль-1!"));
+            }
+
+            (await LockedUntilAsync(id)).ShouldNotBeNull("подготовка не сработала — блокировки нет");
+
+            await ОтмотатьБлокировкуAsync(id);
+
+            await Should.ThrowAsync<AppException>(() => SignInAsync(email, "Неверный-Пароль-1!"));
+
+            (await LockedUntilAsync(id)).ShouldBeNull("одна неудача после истёкшей блокировки заперла снова");
+            (await FailuresAsync(id)).ShouldBe(1, "счёт после истёкшей блокировки не начался заново");
+
+            // А полный порог по-прежнему запирает.
+            await Should.ThrowAsync<AppException>(() => SignInAsync(email, "Неверный-Пароль-1!"));
+
+            (await LockedUntilAsync(id)).ShouldNotBeNull("полный порог после истёкшей блокировки не запер");
+        }
+        finally
+        {
+            database.Settings.Values.Remove("auth.lockout_threshold");
+        }
+    }
+
+    /// <summary>
+    /// Одновременный подбор пароля получает ровно столько проверок, сколько разрешает порог.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ ⚠ Ревью 2026-10-20. Блокировка читалась из загруженной строки, а неудача засчитывалась
+    /// после argon2 — десять одновременных попыток при пороге три проходили проверку блокировки все.
+    /// Теперь попытка занимается одним условным обновлением до проверки пароля.
+    /// </remarks>
+    [Fact]
+    public async Task Одновременный_подбор_пароля_не_превышает_порог()
+    {
+        var (id, email) = await ActiveUserAsync();
+        database.Settings.Values["auth.lockout_threshold"] = 3;
+
+        try
+        {
+            var старт = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            var попытки = Enumerable.Range(0, 10).Select(_ => Task.Run(async () =>
+            {
+                await старт.Task;
+
+                return await Should.ThrowAsync<AppException>(() => SignInAsync(email, "Неверный-Пароль-1!"));
+            })).ToList();
+
+            старт.SetResult();
+
+            await Task.WhenAll(попытки);
+
+            database.Audit.Entries.Count(строка => строка.ActorId == id && строка.Reason == "bad_password")
+                .ShouldBe(3, "одновременные запросы получили больше проверок пароля, чем порог");
+            database.Audit.Entries.Count(строка => строка.ActorId == id && строка.Reason == "locked")
+                .ShouldBe(7);
+            (await FailuresAsync(id)).ShouldBe(3);
+        }
+        finally
+        {
+            database.Settings.Values.Remove("auth.lockout_threshold");
+        }
+    }
+
+    /// <summary>Верный пароль на последней попытке до порога не запирает своего владельца.</summary>
+    /// <remarks>
+    /// ⚠ Попытка занимается заранее и доводит счёт до порога — значит ставит блокировку ещё до
+    /// проверки пароля. Верный пароль обязан её снять, иначе владелец, ошибившийся порог минус
+    /// один раз, был бы заперт собственным правильным вводом.
+    /// </remarks>
+    [Fact]
+    public async Task Верный_пароль_на_пороге_не_запирает()
+    {
+        var (id, email) = await ActiveUserAsync();
+        database.Settings.Values["auth.lockout_threshold"] = 2;
+
+        try
+        {
+            await Should.ThrowAsync<AppException>(() => SignInAsync(email, "Неверный-Пароль-1!"));
+
+            var pair = await SignInAsync(email, Strong);
+
+            pair.Access.ShouldNotBeNullOrWhiteSpace();
+            (await LockedUntilAsync(id)).ShouldBeNull();
+            (await FailuresAsync(id)).ShouldBe(0);
+        }
+        finally
+        {
+            database.Settings.Values.Remove("auth.lockout_threshold");
+        }
+    }
+
     // --- обвязка -----------------------------------------------------------------------------
+
+    private Task<int> FailuresAsync(Guid id) =>
+        database.ReadAsync(db => db.Set<User>()
+            .Where(user => user.Id == id)
+            .Select(user => user.FailedLoginCount)
+            .FirstAsync(Ct));
+
+    /// <summary>Отмотать блокировку в прошлое: ждать её конца в тесте — минуты простоя.</summary>
+    private Task ОтмотатьБлокировкуAsync(Guid id) =>
+        database.ReadAsync(db => db.Set<User>()
+            .Where(user => user.Id == id)
+            .ExecuteUpdateAsync(
+                setters => setters.SetProperty(user => user.LockedUntil, DateTimeOffset.UtcNow.AddMinutes(-1)),
+                Ct));
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 

@@ -123,6 +123,8 @@ export function SecondFactor({ challenge, onEntered, onBack }: {
         <p className="muted">{viaEmail ? 'Код из письма' : 'Код из приложения-аутентификатора'}</p>
         <CodeInput value={code} onChange={setCode} />
         {sent && <p className="muted small">Код отправлен на почту.</p>}
+        {/* ⚠ Письмо приложение не заменяет: запасной путь — сброс фактора другим администратором. */}
+        {!viaEmail && <p className="muted small">Нет доступа к приложению — попросите другого администратора сбросить второй фактор.</p>}
         <ErrorText text={error} />
         <button type="submit" className="primary" disabled={busy}>Подтвердить</button>
         <div className="inline">

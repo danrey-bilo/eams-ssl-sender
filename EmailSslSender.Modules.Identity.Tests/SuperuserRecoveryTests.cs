@@ -36,6 +36,11 @@ public sealed class SuperuserRecoveryTests(IdentityDatabase database) : IAsyncLi
     {
         database.Actor.AsSuperuser();
         database.Settings.Values.Clear();
+
+        // ⚠ Почта — общее состояние коллекции: оставленная настроенной, она требует код письмом
+        // у каждого, кто фактор ещё не подтверждал, и краснит чужие файлы.
+        database.Почта.Настроена = false;
+        database.Почта.Исход = MailQueueResult.NotConfigured;
         return ValueTask.CompletedTask;
     }
 
@@ -156,10 +161,50 @@ public sealed class SuperuserRecoveryTests(IdentityDatabase database) : IAsyncLi
         fresh.FailedLoginCount.ShouldBe(0);
     }
 
+    /// <summary>Без почты первичная настройка суперпользователя идёт по паролю — после заведения и после сброса из консоли.</summary>
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public async Task Первичная_настройка_суперпользователя_не_зависит_от_старого_SMTP(bool afterReset)
+    public async Task Первичная_настройка_суперпользователя_без_почты_идёт_по_паролю(bool afterReset)
+    {
+        var user = await SuperuserAsync(afterReset);
+        await using var scope = database.Scope();
+        var initial = await scope.ServiceProvider.GetRequiredService<SignInService>()
+            .SignInAsync(user.Email, OldPassword, new RequestOrigin(null, "console-no-mail"), cancellationToken: Ct);
+        (await scope.ServiceProvider.GetRequiredService<IIdentityResolver>().ResolveAsync(new Request(initial.Pair.Access), Ct))!
+            .MustEnrollTwoFactor.ShouldBeTrue();
+    }
+
+    /// <summary>
+    /// При настроенной почте первичная настройка требует кода письмом, и отказ почты не превращает
+    /// её во вход по одному паролю.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ ⚠ ⚠ <b>Заменяет факт «первичная настройка не зависит от старого SMTP»</b> (ревью
+    /// безопасности 2026-10-20). Тот закреплял сессию настройки по одному паролю при любой почте —
+    /// а в ней узнавший пароль подключал свой аутентификатор и становился полноправным
+    /// администратором. Откат на «без кода», когда очередь отказала, вернул бы ту же дверь: отказ
+    /// очереди (предел частоты) вызывается снаружи. Цена названа: при настроенной, но неработающей
+    /// почте восстановлению из консоли нужна починенная почта или снятый адрес SMTP.
+    /// </remarks>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Отказ_почты_не_превращает_первичную_настройку_во_вход_по_паролю(bool afterReset)
+    {
+        var user = await SuperuserAsync(afterReset);
+        database.Почта.Настроена = true;
+        database.Почта.Исход = MailQueueResult.RateLimited;
+        await using var scope = database.Scope();
+
+        var отказ = await Should.ThrowAsync<AppException>(() => scope.ServiceProvider.GetRequiredService<SignInService>()
+            .SignInAsync(user.Email, OldPassword, new RequestOrigin(null, "console-bad-mail"), cancellationToken: Ct));
+
+        отказ.Code.ShouldBe(ErrorCodes.RateLimited, "отказ почты обошли входом по одному паролю");
+    }
+
+    /// <summary>Суперпользователь из консоли — заведённый и, если просят, со сброшенным из консоли фактором.</summary>
+    private async Task<User> SuperuserAsync(bool afterReset)
     {
         var user = await SuperuserAsync();
         if (afterReset)
@@ -168,13 +213,8 @@ public sealed class SuperuserRecoveryTests(IdentityDatabase database) : IAsyncLi
                 .ExecuteUpdateAsync(set => set.SetProperty(row => row.TwoFactorConfiguredAt, DateTimeOffset.UtcNow), Ct));
             await IdentityModule.ResetSuperuserTwoFactorAsync(database.Services, user.Email, Ct);
         }
-        database.Почта.Настроена = true;
-        database.Почта.Исход = MailQueueResult.RateLimited;
-        await using var scope = database.Scope();
-        var initial = await scope.ServiceProvider.GetRequiredService<SignInService>()
-            .SignInAsync(user.Email, OldPassword, new RequestOrigin(null, "console-bad-mail"), cancellationToken: Ct);
-        (await scope.ServiceProvider.GetRequiredService<IIdentityResolver>().ResolveAsync(new Request(initial.Pair.Access), Ct))!
-            .MustEnrollTwoFactor.ShouldBeTrue();
+
+        return user;
     }
 
     [Fact]

@@ -80,14 +80,14 @@ internal static class IdentitySettings
     /// <remarks>
     /// ⚠ ⚠ <b>Приложение-аутентификатор обязательно всем</b> (в EAMS — правило для
     /// суперпользователя, решение 0082; здесь каждая учётная запись — администратор). Пока его
-    /// не подключили, вход по паролю выдаёт сессию, в которой открыта только настройка
-    /// аутентификатора (<c>SignInService</c>, <c>SessionIdentityResolver</c>). Эта настройка
-    /// решает, чем спрашивать код у того, кто аутентификатор уже подключал: письмом или
-    /// приложением.
+    /// не подключили, вход выдаёт сессию, в которой открыта только настройка аутентификатора
+    /// (<c>SignInService</c>, <c>SessionIdentityResolver</c>); при настроенной почте — только
+    /// после кода из письма.
     ///
-    /// ⚠ <b>Настройка задаёт умолчание, а не приказ.</b> У человека с заведённым
-    /// аутентификатором фактор остаётся <c>totp</c>, что бы здесь ни стояло: понижать
-    /// фактическую защиту настройкой установки нельзя.
+    /// ⚠ ⚠ <b>На действующий способ эта настройка сегодня не влияет</b> (<c>SecondFactorPolicy</c>,
+    /// ревью 2026-10-20): подтвердивший аутентификатор подтверждает вход только им, остальные —
+    /// письмом, если почта настроена. Ключ оставлен, чтобы не ломать сохранённые значения и экран
+    /// настроек; понижать фактическую защиту он не может ни в одном значении.
     ///
     /// ⚠ ⚠ <b>«Выключить» среди вариантов НЕТ:</b> фактор обязателен всем, варьируется только
     /// способ. Переключатель <c>none</c> снимал бы второй фактор со всей установки одним
@@ -98,8 +98,8 @@ internal static class IdentitySettings
         Default: "email",
         "Second factor",
         "How sign-in is confirmed by default. There is no off: the factor is required for "
-        + "everyone, only the method varies. Someone who has set up an authenticator keeps using "
-        + "it unless they pick e-mail themselves.",
+        + "everyone. Someone who has set up an authenticator always confirms sign-in with it; "
+        + "an e-mailed code never replaces it.",
         "auth",
         IsSecurity: true,
         Choices: ["totp", "email"]);

@@ -325,9 +325,11 @@ internal sealed class UserService(
         var user = await RequireAsync(id, cancellationToken);
         var now = clock.GetUtcNow();
 
-        // ⚠ Запертая учётная запись смену не проходит, и счётчик не двигается: иначе блокировка
-        // закрывала бы вход и оставляла открытым подбор через смену пароля.
-        if (user.LockedUntil is { } until && until > now)
+        // ⚠ Попытка занимается ДО argon2 одним условным обновлением (ревью 2026-10-20, разбор у
+        // LoginFailures). Не заняли — учётная запись заперта: смену она не проходит, и счётчик не
+        // двигается — иначе блокировка закрывала бы вход и оставляла открытым подбор через смену
+        // пароля.
+        if (!await failures.TakeAsync(user.Id, now, cancellationToken))
         {
             throw WrongCurrentPassword();
         }
@@ -336,12 +338,14 @@ internal sealed class UserService(
         // паролю: иначе форма смены становится справочником политики для угнавшего вкладку.
         if (!await passwords.VerifyAsync(user.PasswordHash, current, cancellationToken))
         {
-            // мутация 2026-09-15: убрал засчёт неудачи → покраснел
-            // PasswordTests.Подбор_текущего_пароля_упирается_в_блокировку.
-            await failures.RecordAsync(user, "change_password_bad_password", now, cancellationToken);
+            // Счёт уже занят — остаётся след в журнале.
+            await failures.DenyAsync(user, "change_password_bad_password", cancellationToken);
 
             throw WrongCurrentPassword();
         }
+
+        // Текущий пароль верен — попытка неудачей не была.
+        await failures.ReturnAsync(user.Id, cancellationToken);
 
         var проверенный = user.PasswordHash;
 
@@ -515,22 +519,27 @@ internal sealed class UserService(
     {
         var адрес = Normalize(email);
 
+        var найден = await users.FindByEmailAsync(адрес, cancellationToken);
+
+        // ⚠ ⚠ Холостая работа — на КАЖДОМ пути, и на существующем адресе тоже (ревью 2026-10-20).
+        // Найдено ревью 23.8: без неё ветка «нет адреса» возвращалась мгновенно, а существующий
+        // адрес платил выдачу токена и постановку письма. Первая починка тратила Argon2 только на
+        // ветке «нет адреса» — и перевернула разницу: теперь сотни миллисекунд хеша платил
+        // незнакомый адрес, а существующий отвечал за десяток миллисекунд транзакции, то есть
+        // заметно быстрее. Перечисление адресов усреднением осталось, только с обратным знаком.
+        // Одинаковая работа на обоих путях оставляет разницу в одну транзакцию — величину того
+        // же порядка, что шум сети. Тот же приём, что на входе (`SignInService` →
+        // `WasteVerificationTimeAsync`).
+        //
+        // ⚠ ⚠ ВНЕ транзакции (проработка API 2026-10-19, решение 0095). Внутри неё каждый
+        // запрос держал соединение пула, пока стоял в очереди к Argon2, и поток таких запросов
+        // выедал пул — вставало всё API. Как в `ActivateAsync`: хеш считается до транзакции.
+        await passwords.WasteVerificationTimeAsync(cancellationToken);
+
         // ⚠ Отключённому не шлём: ссылка ему всё равно не поможет — сброс пароля отказывает
         // отключённой учётной записи. Ответ снаружи при этом тот же.
-        if (await users.FindByEmailAsync(адрес, cancellationToken) is not { IsActive: true })
+        if (найден is not { IsActive: true })
         {
-            // ⚠ Холостая работа, чтобы «нет такого адреса» не отличалось по времени от «есть,
-            // выдали ссылку» (найдено ревью 23.8): без неё эта ветка возвращается мгновенно, а
-            // существующий адрес платит выдачу токена и постановку письма — перечисление адресов
-            // усреднением. Тот же приём, что на входе (`SignInService` →
-            // `WasteVerificationTimeAsync`).
-            //
-            // ⚠ ⚠ ВНЕ транзакции (проработка API 2026-10-19, решение 0095). Внутри неё каждый
-            // запрос на выдуманный адрес держал соединение пула, пока стоял в очереди к Argon2, и
-            // поток таких запросов выедал пул — вставало всё API. Как в `ActivateAsync`: хеш
-            // считается до транзакции.
-            await passwords.WasteVerificationTimeAsync(cancellationToken);
-
             return;
         }
 
