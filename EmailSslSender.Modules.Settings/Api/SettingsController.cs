@@ -22,7 +22,6 @@ internal sealed record SettingOut(
     [property: JsonPropertyName("description")] string Description,
     [property: JsonPropertyName("category")] string Category,
     [property: JsonPropertyName("type")] SettingType Type,
-    [property: JsonPropertyName("scope")] string Scope,
     [property: JsonPropertyName("is_security")] bool IsSecurity,
     [property: JsonPropertyName("nullable")] bool Nullable,
     [property: JsonPropertyName("requires_restart")] bool RequiresRestart,

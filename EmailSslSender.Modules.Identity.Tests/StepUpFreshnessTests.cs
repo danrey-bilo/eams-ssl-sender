@@ -1,7 +1,6 @@
 using System.Net;
 using EmailSslSender.Modules.Identity.Settings;
 using EmailSslSender.Modules.Identity.TwoFactor;
-using EmailSslSender.Shared.Contracts.Settings;
 using EmailSslSender.Shared.Errors;
 
 namespace EmailSslSender.Modules.Identity.Tests;
@@ -110,7 +109,6 @@ public sealed class StepUpFreshnessTests
         объявление.DefaultValue.ShouldBe(10);
         объявление.Minimum.ShouldBe(1);
         объявление.Maximum.ShouldBe(120);
-        объявление.Scope.ShouldBe(SettingScope.System);
         объявление.Title.ShouldNotBeNullOrWhiteSpace();
         объявление.Description.ShouldNotBeNullOrWhiteSpace();
     }

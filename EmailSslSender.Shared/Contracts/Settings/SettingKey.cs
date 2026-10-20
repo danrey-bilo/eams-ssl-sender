@@ -1,23 +1,6 @@
 namespace EmailSslSender.Shared.Contracts.Settings;
 
 /// <summary>
-/// Где живёт значение настройки: одно на установку или своё у каждого человека.
-/// </summary>
-/// <remarks>
-/// Значения <c>Team</c> нет намеренно: настройка команды означала бы разрешение конфликта
-/// («человек в двух командах с разными значениями»), а разрешать его некому — правило
-/// пришлось бы придумать здесь и повторить в каждом читателе.
-/// </remarks>
-public enum SettingScope
-{
-    /// <summary>Одно значение на установку. Правится администратором.</summary>
-    System,
-
-    /// <summary>Своё у каждого человека. Правится им самим под <c>/api/me</c>.</summary>
-    User,
-}
-
-/// <summary>
 /// Объявление настройки без её типа — то, что нужно экрану и проверке значения.
 /// </summary>
 /// <remarks>
@@ -43,9 +26,6 @@ public interface ISettingDeclaration
 
     /// <summary>Правка меняет поведение защиты.</summary>
     bool IsSecurity { get; }
-
-    /// <summary>Одно на установку или своё у каждого.</summary>
-    SettingScope Scope { get; }
 
     /// <summary>Тип значения — <c>typeof(T)</c>, включая обнуляемость числовых.</summary>
     Type ValueType { get; }
@@ -99,7 +79,6 @@ public interface ISettingDeclaration
 /// подтверждением: «включить запись разрешённых проверок» и «удалять журнал через N
 /// месяцев» — не то, что меняют мимоходом.
 /// </param>
-/// <param name="Scope">Одно значение на установку или своё у каждого человека.</param>
 /// <param name="Minimum">Нижняя граница числа или длины строки.</param>
 /// <param name="Maximum">Верхняя граница.</param>
 /// <param name="Choices">Допустимые значения; пусто — любое подходящее по типу.</param>
@@ -116,7 +95,6 @@ public sealed record SettingKey<T>(
     string Description,
     string Category,
     bool IsSecurity = false,
-    SettingScope Scope = SettingScope.System,
     double? Minimum = null,
     double? Maximum = null,
     IReadOnlyList<string>? Choices = null,

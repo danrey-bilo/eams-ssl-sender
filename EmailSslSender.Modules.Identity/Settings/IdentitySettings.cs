@@ -73,36 +73,6 @@ internal static class IdentitySettings
         Minimum: 1, Maximum: 10_080);
 
     /// <summary>
-    /// Чем подтверждают вход по умолчанию.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ ⚠ <b>Приложение-аутентификатор обязательно всем</b> (в EAMS — правило для
-    /// суперпользователя, решение 0082; здесь каждая учётная запись — администратор). Пока его
-    /// не подключили, вход выдаёт сессию, в которой открыта только настройка аутентификатора
-    /// (<c>SignInService</c>, <c>SessionIdentityResolver</c>); при настроенной почте — только
-    /// после кода из письма.
-    ///
-    /// ⚠ ⚠ <b>На действующий способ эта настройка сегодня не влияет</b> (<c>SecondFactorPolicy</c>,
-    /// ревью 2026-10-20): подтвердивший аутентификатор подтверждает вход только им, остальные —
-    /// письмом, если почта настроена. Ключ оставлен, чтобы не ломать сохранённые значения и экран
-    /// настроек; понижать фактическую защиту он не может ни в одном значении.
-    ///
-    /// ⚠ ⚠ <b>«Выключить» среди вариантов НЕТ:</b> фактор обязателен всем, варьируется только
-    /// способ. Переключатель <c>none</c> снимал бы второй фактор со всей установки одним
-    /// нажатием.
-    /// </remarks>
-    public static readonly SettingKey<string> SecondFactor = new(
-        "auth.second_factor",
-        Default: "email",
-        "Second factor",
-        "How sign-in is confirmed by default. There is no off: the factor is required for "
-        + "everyone. Someone who has set up an authenticator always confirms sign-in with it; "
-        + "an e-mailed code never replaces it.",
-        "auth",
-        IsSecurity: true,
-        Choices: ["totp", "email"]);
-
-    /// <summary>
     /// Сколько живёт расписка между вводом пароля и вводом кода.
     /// </summary>
     /// <remarks>

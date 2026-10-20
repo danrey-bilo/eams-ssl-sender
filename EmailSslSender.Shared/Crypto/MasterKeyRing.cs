@@ -150,9 +150,6 @@ public sealed class MasterKeyRing
         return new MasterKeyRing(copy, copy.Keys.Max());
     }
 
-    /// <summary>Есть ли такая версия. Нужна конверту, чтобы дать внятный отказ.</summary>
-    public bool Has(int version) => _keys.ContainsKey(version);
-
     /// <summary>
     /// Ключ нужной версии.
     /// </summary>

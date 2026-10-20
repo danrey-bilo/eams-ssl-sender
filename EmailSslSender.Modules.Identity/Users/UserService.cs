@@ -61,9 +61,7 @@ internal sealed class UserService(
     // «пароль сменён» не должно существовать, если сама смена откатилась.
     MailNotices mail,
 
-    // ⚠ Разрешение способа второго фактора — соседняя служба того же модуля. Проверки
-    // «обязателен ли фактор» здесь НЕТ намеренно: отказаться от него нельзя вовсе, и живёт
-    // отказ в списке допустимого (SecondFactorMethods.Choosable), а не в проверке после нажатия.
+    // Способ второго фактора решает соседняя служба того же модуля; выбирать его некому.
     SecondFactorPolicy methods,
 
     // ⚠ Счётчик неудач внутри открытой сессии — тот же, что у входа (ревью 2026-09-15, S2):
@@ -441,62 +439,12 @@ internal sealed class UserService(
         }
     }
 
-    /// <summary>Что человек выбрал себе и что будет действовать.</summary>
-    /// <remarks>
-    /// ⚠ Два значения, а не одно: выбранное — то, что он нажал; действующее — то, что
-    /// получится с учётом послаблений. Показав одно, экран соврал бы либо про выбор, либо
-    /// про то, что произойдёт.
-    /// </remarks>
-    public async Task<(string? Chosen, string Effective)> SecondFactorAsync(
-        CancellationToken cancellationToken = default)
+    /// <summary>Чем этот человек подтвердит следующий вход.</summary>
+    public async Task<string> SecondFactorAsync(CancellationToken cancellationToken = default)
     {
         var user = await RequireAsync(actor.Id!.Value, cancellationToken);
 
-        return (user.SecondFactorMethod, await methods.ResolveAsync(user, cancellationToken));
-    }
-
-    /// <summary>
-    /// Выбрать себе способ второго фактора.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ ⚠ <b>«Нет фактора» не выбирается вовсе.</b> Фактор обязателен всем, выбирается
-    /// только способ; отказ живёт в самом списке допустимого (<c>SecondFactorMethods.Choosable</c>),
-    /// а не в проверке после нажатия. <c>none</c> остаётся возможным исходом разрешения, когда нет
-    /// ни почты, ни аутентификатора, — но это следствие настроек установки, а не решение человека.
-    /// </remarks>
-    public async Task ChooseSecondFactorAsync(
-        string? method, CancellationToken cancellationToken = default)
-    {
-        if (!SecondFactorPolicy.Выбираем(method))
-        {
-            throw new AppException(
-                ErrorCodes.Validation,
-                "Такого способа второго фактора выбрать нельзя.",
-                HttpStatusCode.UnprocessableContent,
-                new Dictionary<string, object?>(StringComparer.Ordinal)
-                {
-                    ["allowed"] = SecondFactorMethods.Choosable,
-                });
-        }
-
-        await db.InTransactionAsync(
-            async token =>
-            {
-                var user = await RequireAsync(actor.Id!.Value, token);
-
-                user.SecondFactorMethod = method;
-                user.UpdatedAt = clock.GetUtcNow();
-
-                audit.Write(new AuditEntry(
-                    IdentityActions.TwoFactorMethodChanged,
-                    ActorId: actor.Id,
-                    ResourceType: IdentityResources.User,
-                    ResourceId: user.Id,
-                    Changes: new Dictionary<string, object?> { ["method"] = method }));
-
-                await db.SaveChangesAsync(token);
-            },
-            cancellationToken);
+        return await methods.ResolveAsync(user, cancellationToken);
     }
 
     /// <summary>

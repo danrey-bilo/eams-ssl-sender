@@ -87,14 +87,13 @@ internal sealed class SettingsCatalog
     /// <remarks>
     /// ⚠ Сравнивается всё, что видит клиент и проверка значения, — <b>кроме</b> подписей.
     /// Расхождение в тексте пояснения ничего не ломает: экран покажет то, что пришло первым,
-    /// и оба текста верны. Расхождение в границе, умолчании, типе или области — ломает.
+    /// и оба текста верны. Расхождение в границе, умолчании или типе — ломает.
     /// </remarks>
     private static bool Совпадают(ISettingDeclaration a, ISettingDeclaration b) =>
         a.ValueType == b.ValueType
         && Equals(a.DefaultValue, b.DefaultValue)
         && a.Minimum == b.Minimum
         && a.Maximum == b.Maximum
-        && a.Scope == b.Scope
         && a.IsNullable == b.IsNullable
         && a.IsSecurity == b.IsSecurity
         && a.Choices.SequenceEqual(b.Choices, StringComparer.Ordinal);

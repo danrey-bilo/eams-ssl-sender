@@ -18,7 +18,7 @@ namespace EmailSslSender.Api.Migrations
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasAnnotation("ProductVersion", "10.0.11")
+                .HasAnnotation("ProductVersion", "10.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.HasPostgresExtension(modelBuilder, "citext");
@@ -146,10 +146,6 @@ namespace EmailSslSender.Api.Migrations
                         .IsRequired()
                         .HasColumnType("text")
                         .HasColumnName("password_hash");
-
-                    b.Property<string>("SecondFactorMethod")
-                        .HasColumnType("text")
-                        .HasColumnName("second_factor_method");
 
                     b.Property<DateTimeOffset?>("TwoFactorConfiguredAt")
                         .HasColumnType("timestamp with time zone")

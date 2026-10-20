@@ -31,17 +31,6 @@ public static class RevokeReasons
     /// <summary>Сменили пароль — значит выгоняем всех, кто мог его знать.</summary>
     public const string PasswordChanged = "password_changed";
 
-    /// <summary>
-    /// Человек включил второй фактор — прежним сессиям не место.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Фактор включают тогда, когда заподозрили кражу. Токен обновления, украденный до
-    /// этого момента, кода не спрашивает никогда: путь обновления про фактор не знает.
-    /// Отдельная причина, а не «отозвано»: человек, увидевший на экране «сессия закрыта,
-    /// потому что вы включили второй фактор», понимает, что произошло, и не звонит.
-    /// </remarks>
-    public const string TwoFactorEnabled = "two_factor_enabled";
-
     /// <summary>Второй фактор сняли — телефон потерян или украден.</summary>
     public const string TwoFactorReset = "two_factor_reset";
 }

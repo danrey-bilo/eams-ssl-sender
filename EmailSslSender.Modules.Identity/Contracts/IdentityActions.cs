@@ -89,15 +89,6 @@ public static class IdentityActions
     /// </remarks>
     public static readonly AuditAction TwoFactorDisabled = new("user.totp_disabled", "Отключён второй фактор");
 
-    /// <summary>Человек выбрал себе способ второго фактора.</summary>
-    /// <remarks>
-    /// ⚠ Пишется, хотя это выбор человека о себе: понижение способа — событие безопасности.
-    /// Переход с аутентификатора на почту делает вход зависимым от почтового ящика, а «как в
-    /// системе» может означать отсутствие фактора вовсе.
-    /// </remarks>
-    public static readonly AuditAction TwoFactorMethodChanged = new(
-        "user.two_factor_method", "Выбран способ второго фактора");
-
     /// <summary>Личность переподтверждена перед действием, которое этого требует.</summary>
     /// <remarks>
     /// ⚠ <b>Пишется и удача, и отказ.</b> Череда отказов подряд — это подбор кода на живой

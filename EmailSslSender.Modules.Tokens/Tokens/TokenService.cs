@@ -436,8 +436,6 @@ internal sealed class TokenService(
         RevokeReasons.UserInactive => "Учётная запись отключена.",
         RevokeReasons.PasswordChanged => "Пароль изменён — войдите заново.",
 
-        RevokeReasons.TwoFactorEnabled => "Вы включили второй фактор — прежние сессии закрыты. "
-            + "Войдите заново.",
         RevokeReasons.TwoFactorReset => "Второй фактор снят — прежние сессии закрыты. Войдите заново.",
 
         _ => "Сессия кончилась. Войдите заново.",

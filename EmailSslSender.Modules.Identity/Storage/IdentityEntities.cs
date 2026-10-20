@@ -61,12 +61,6 @@ internal sealed class IdentityEntities : IEntityConfigurationProvider
             user.Property(row => row.UpdatedAt).HasColumnName("updated_at").HasDefaultValueSql("now()");
             user.Property(row => row.DeletedAt).HasColumnName("deleted_at");
 
-            // ⚠ Обнуляемая колонка, и `null` — не «не заполнено», а третье состояние «как в
-            // системе». Без него смена настройки установки не подействовала бы ни
-            // на кого, у кого способ однажды записали.
-            user.Property(row => row.SecondFactorMethod)
-                .HasColumnName("second_factor_method").HasColumnType("text");
-
             user.HasIndex(row => row.Email)
                 .HasDatabaseName(EmailIndex)
                 .IsUnique()

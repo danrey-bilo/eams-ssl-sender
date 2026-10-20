@@ -36,28 +36,17 @@ internal sealed record TwoFactorSetupOut(
 /// <param name="Enrolled">Заведён ли аутентификатор.</param>
 /// <param name="Confirmed">Подтверждён ли он кодом.</param>
 /// <param name="Required">Требует ли система фактор от этого человека.</param>
-/// <param name="ChosenMethod">Что человек выбрал себе. <c>null</c> — «как в системе».</param>
 /// <param name="EffectiveMethod">
-/// Что будет действовать при следующем входе.
-///
-/// ⚠ ⚠ Два поля, а не одно, и разница видна человеку. Выбранное — то, что он нажал;
-/// действующее — то, что получится с учётом послаблений: <c>totp</c> без заведённого
-/// аутентификатора становится почтой, почта без настроенной почты — ничем. Показав одно
-/// «действующее», экран соврал бы про его выбор; показав одно «выбранное» — про то, что
-/// произойдёт.
+/// Чем подтверждается следующий вход: <c>totp</c> у подтвердившего аутентификатор, иначе
+/// <c>email</c> при настроенной почте, иначе <c>none</c>.
 /// </param>
 /// <param name="AvailableMethods">Какие способы подтверждения сейчас доступны на установке.</param>
 internal sealed record TwoFactorStatusOut(
     [property: JsonPropertyName("enrolled")] bool Enrolled,
     [property: JsonPropertyName("confirmed")] bool Confirmed,
     [property: JsonPropertyName("required")] bool Required,
-    [property: JsonPropertyName("chosen_method")] string? ChosenMethod = null,
     [property: JsonPropertyName("effective_method")] string? EffectiveMethod = null,
     [property: JsonPropertyName("available_methods")] IReadOnlyList<string>? AvailableMethods = null);
-
-/// <summary>Каким быть своему второму фактору.</summary>
-internal sealed record TwoFactorMethodIn(
-    [property: JsonPropertyName("method")] string? Method);
 
 /// <summary>Смена своего пароля.</summary>
 internal sealed record ChangePasswordIn
@@ -209,38 +198,10 @@ internal sealed class MeController(
     public async Task<TwoFactorStatusOut> TwoFactorStatus(CancellationToken cancellationToken)
     {
         var status = await factors.StatusAsync(cancellationToken);
-        var (выбран, действует) = await people.SecondFactorAsync(cancellationToken);
 
         return new TwoFactorStatusOut(
-            status.Enrolled, status.Confirmed, status.Required, выбран, действует,
+            status.Enrolled, status.Confirmed, status.Required, await people.SecondFactorAsync(cancellationToken),
             await methods.AvailableAsync((await users.FindAsync(actor.Id!.Value, cancellationToken))!, cancellationToken));
-    }
-
-    /// <summary>
-    /// Выбрать себе способ второго фактора.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ ⚠ <b><c>null</c> означает «как в системе», и это третье состояние обязательно.</b>
-    /// Без него смена умолчания установки не подействовала бы ни на кого, кто способ однажды
-    /// выбрал, — то есть настройка перестала бы работать молча и навсегда.
-    ///
-    /// ⚠ <b>Выбрать «нет фактора» нельзя, если система его требует.</b> Настройка установки —
-    /// потолок, а не предложение: иначе обязательный фактор снимался бы одним запросом от
-    /// самого человека.
-    ///
-    /// ⚠ <b>Ответ — то же состояние</b>, что у <c>GET</c>: экран перерисовывается целиком, и
-    /// второй запрос за тем же был бы дороже этих полей.
-    /// </remarks>
-    [HttpPut("two-factor")]
-    [AllowWhileTwoFactorEnrollmentRequired("выбор способа — часть включения фактора")]
-    public async Task<TwoFactorStatusOut> ChooseTwoFactor(
-        [FromBody] TwoFactorMethodIn body, CancellationToken cancellationToken)
-    {
-        ArgumentNullException.ThrowIfNull(body);
-
-        await people.ChooseSecondFactorAsync(body.Method, cancellationToken);
-
-        return await TwoFactorStatus(cancellationToken);
     }
 
     /// <summary>

@@ -102,20 +102,6 @@ public sealed class SettingDeclarationTests
     }
 
     [Fact]
-    public void Область_по_умолчанию_системная()
-    {
-        // Умолчание выбрано так, что забытый параметр даёт настройку установки, а не личную:
-        // личная, ставшая системной по недосмотру, была бы видна всем; наоборот — правилась
-        // бы каждым по-своему, и «почему у нас разные пороги» выяснялось бы месяцами.
-        ISettingDeclaration системная = new SettingKey<int>("x.a", 1, "A", "", "x");
-        ISettingDeclaration личная = new SettingKey<int>(
-            "x.b", 1, "B", "", "x", Scope: SettingScope.User);
-
-        системная.Scope.ShouldBe(SettingScope.System);
-        личная.Scope.ShouldBe(SettingScope.User);
-    }
-
-    [Fact]
     public void Признак_перезапуска_по_умолчанию_снят()
     {
         ISettingDeclaration ключ = new SettingKey<int>("x.c", 1, "C", "", "x");

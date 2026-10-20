@@ -13,7 +13,6 @@ internal sealed class IdentitySettingDeclarations : ISettingDeclarationProvider
         IdentitySettings.RequireDigit,
         IdentitySettings.RequireSymbol,
         IdentitySettings.InvitationTtlMinutes,
-        IdentitySettings.SecondFactor,
         IdentitySettings.LockoutThreshold,
         IdentitySettings.LockoutMinutes,
         IdentitySettings.LinkRetentionDays,

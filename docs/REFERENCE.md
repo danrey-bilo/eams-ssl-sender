@@ -519,7 +519,6 @@ curl -s "$API/api/users?limit=50" -H "Authorization: Bearer $TOKEN"
 | PATCH | `/api/me` | | Своё имя: `display_name` |
 | POST | `/api/me/password` | Н | Сменить свой пароль: `current_password`, `new_password` |
 | GET | `/api/me/two-factor` | Н | Состояние фактора и доступные способы |
-| PUT | `/api/me/two-factor` | | Предпочитаемый способ: `{"method": "totp" \| "email"}` |
 | POST | `/api/me/two-factor/totp/setup` | Н | Завести секрет TOTP |
 | POST | `/api/me/two-factor/totp/confirm` | Н | Подтвердить секрет кодом |
 | POST | `/api/me/two-factor/totp/disable` | | Отключить приложение (только если работают коды письмом): `password` |
@@ -621,7 +620,6 @@ curl -s "$API/api/users?limit=50" -H "Authorization: Bearer $TOKEN"
 | `keymanager.base_url` | — | Адрес Key Manager Plus, только `https://`, например `https://kmp.example.local:6565` |
 | `keymanager.poll_minutes` | `15` | Как часто опрашивать (1–1440 минут) |
 | `keymanager.server_sha256` | — | Отпечаток SHA-256 самоподписанного сертификата Key Manager Plus |
-| `auth.second_factor` | `email` | Унаследована из EAMS и при обязательном аутентификаторе на вход не влияет: кто подтвердил приложение, входит с ним, а письмо выбирает себе сам (`PUT /api/me/two-factor`). Выключить фактор нельзя |
 | `auth.two_factor_challenge_minutes` | `5` | Сколько живёт расписка между паролем и кодом |
 | `auth.step_up_minutes` | `10` | Сколько после кода (или входа с кодом) важные действия его не спрашивают (1–120 минут) |
 | `auth.password_min_length` и `auth.password_require_*` | — | Политика паролей |

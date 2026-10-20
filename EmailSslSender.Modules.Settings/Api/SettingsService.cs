@@ -82,17 +82,6 @@ internal sealed class SettingsService(
                     HttpStatusCode.UnprocessableContent,
                     new Dictionary<string, object?>(StringComparer.Ordinal) { ["key"] = имя });
 
-            // ⚠ Личное предпочтение системным адресом не правится. Не «нет прав» — «не туда»:
-            // выпрашивать право, которое ничего не изменит, человека отправлять нельзя.
-            if (объявление.Scope != SettingScope.System)
-            {
-                throw new AppException(
-                    ErrorCodes.SettingLevelForbidden,
-                    "Это личное предпочтение: оно правится под /api/me, а не настройками установки.",
-                    HttpStatusCode.UnprocessableContent,
-                    new Dictionary<string, object?>(StringComparer.Ordinal) { ["key"] = имя });
-            }
-
             объявления[имя] = объявление;
         }
 
@@ -217,7 +206,6 @@ internal sealed class SettingsService(
             объявление.Description,
             объявление.Category,
             SettingValues.Имя(объявление),
-            объявление.Scope == SettingScope.User ? "user" : "system",
             объявление.IsSecurity,
             объявление.IsNullable,
             объявление.RequiresRestart,

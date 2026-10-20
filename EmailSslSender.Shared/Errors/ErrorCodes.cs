@@ -188,15 +188,6 @@ public static class ErrorCodes
     /// </remarks>
     public const string MailSendFailed = "MAIL_SEND_FAILED";
 
-    /// <summary>Настройку правят не на том уровне: личную — как системную или наоборот.</summary>
-    /// <remarks>
-    /// ⚠ <b>Не «нет прав».</b> Отказ по правам говорит «вам нельзя»; этот говорит «не
-    /// туда»: системную настройку не задать себе лично, а личное предпочтение не навязать
-    /// установке. Слить их с отказом по правам значило бы отправить человека выпрашивать
-    /// право, которое ничего не изменит.
-    /// </remarks>
-    public const string SettingLevelForbidden = "SETTING_LEVEL_FORBIDDEN";
-
     // --- Key Manager Plus --------------------------------------------------------------
 
     /// <summary>Не заданы адрес Key Manager Plus или ключ API.</summary>

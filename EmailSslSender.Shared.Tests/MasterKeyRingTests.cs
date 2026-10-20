@@ -17,7 +17,6 @@ public sealed class MasterKeyRingTests
 
         ring.CurrentVersion.ShouldBe(1);
         ring.Count.ShouldBe(1);
-        ring.Has(1).ShouldBeTrue();
     }
 
     [Fact]
@@ -29,7 +28,6 @@ public sealed class MasterKeyRingTests
 
         ring.CurrentVersion.ShouldBe(2);
         ring.Count.ShouldBe(2);
-        ring.Has(1).ShouldBeTrue();
     }
 
     [Fact]

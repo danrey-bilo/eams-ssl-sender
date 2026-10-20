@@ -121,7 +121,6 @@ public sealed class CatalogTests
 
         // ⚠ Личных предпочтений в этой установке нет: язык писем один на всех.
         catalog.All.Count.ShouldBe(1);
-        catalog.All.ShouldAllBe(d => d.Scope == SettingScope.System);
         catalog.All.ShouldAllBe(d => d.Category == "ui");
         catalog.All.ShouldAllBe(d => !d.IsSecurity);
     }

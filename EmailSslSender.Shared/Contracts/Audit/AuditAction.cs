@@ -11,7 +11,10 @@ namespace EmailSslSender.Shared.Contracts.Audit;
 /// прошлые строки ненаходимыми ровно тогда, когда их ищут. Ошиблись — заводится новое имя.
 /// </remarks>
 /// <param name="Name">Имя события.</param>
-/// <param name="Title">Как это событие называется для человека.</param>
+/// <param name="Title">
+/// Как это событие называется для человека — подсказка читающему код рядом с объявлением. В
+/// журнал уходит только <paramref name="Name"/>.
+/// </param>
 public readonly record struct AuditAction(string Name, string? Title = null)
 {
     public override string ToString() => Name;
