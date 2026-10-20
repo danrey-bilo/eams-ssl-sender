@@ -58,8 +58,10 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         var письмо = база.Почта.Письма[0];
         письмо.Kind.ShouldBe(CertificateMail.Kind);
         письмо.Values["serial_number"].ShouldBe("aa01");
-        письмо.Values["expires_on"].ShouldBe("2027-01-01");
+        письмо.Values["expires_on"].ShouldBe("01.01.2027");
         письмо.Values["reason"].ShouldBe(CertificateMail.Reason(DeliveryReason.Initial, MailLocales.Ru));
+        письмо.Values["files"].ShouldBe("site.example.com.pem, site.example.com.key");
+        письмо.Values["warning"].ShouldContain("закрытый ключ", Case.Sensitive, "во вложении KEY");
         письмо.Attachments.Select(ф => ф.FileName).ShouldBe(["site.example.com.pem", "site.example.com.key"]);
         Encoding.ASCII.GetString(письмо.Attachments[1].Content).ShouldBe("KEY:aa01");
 
@@ -375,14 +377,34 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
 
         // ⚠ Пароль — вложением: тело письма живёт в очереди до уборки, вложения стираются сразу.
         var a = база.Почта.Письма.Single(п => п.To == "a@example.com");
-        a.Values["passphrase"].ShouldContain(CertificateMail.PassphraseFile);
-        a.Values["passphrase"].ShouldNotContain("пароль-a");
+        a.Values["files"].ShouldEndWith(CertificateMail.PassphraseFile);
+        a.Values.Values.ShouldNotContain(з => з.Contains("пароль-a", StringComparison.Ordinal));
         Encoding.UTF8.GetString(a.Attachments.Single(ф => ф.FileName == CertificateMail.PassphraseFile).Content)
             .Trim().ShouldBe("пароль-a");
 
         var b = база.Почта.Письма.Single(п => п.To == "b@example.com");
-        b.Values["passphrase"].ShouldBeEmpty();
         b.Attachments.ShouldNotContain(ф => ф.FileName == CertificateMail.PassphraseFile);
+    }
+
+    [Fact]
+    public async Task Без_ключа_во_вложении_нет_и_просьбы_не_пересылать()
+    {
+        База("site.example.com", "aa01", Год);
+        await Подписка("site.example.com", ["a@example.com"], formats: [CertificateFormats.Crt]);
+
+        await Опросить();
+
+        база.Почта.Письма.Single().Values["warning"].ShouldBeEmpty();
+    }
+
+    [Theory]
+    [InlineData(MailLocales.Ru, "08.01.2027")]
+    [InlineData(MailLocales.Uk, "08.01.2027")]
+    [InlineData(MailLocales.En, "2027-01-08")]
+    public void Срок_в_письме_в_привычном_языку_виде(string язык, string ожидается)
+    {
+        CertificateMail.ExpiresOn(new DateOnly(2027, 1, 8), язык).ShouldBe(ожидается);
+        CertificateMail.ExpiresOn(null, язык).ShouldBe("—");
     }
 
     [Fact]
@@ -505,7 +527,8 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         bool onChange = true,
         int? intervalDays = null,
         bool enabled = true,
-        bool includePassphrase = false)
+        bool includePassphrase = false,
+        string[]? formats = null)
     {
         await using var scope = база.Scope();
         var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
@@ -515,7 +538,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
             Id = Guid.CreateVersion7(),
             CommonName = commonName,
             Recipients = recipients,
-            Formats = [.. CertificateFormats.Default],
+            Formats = formats ?? [.. CertificateFormats.Default],
             OnChange = onChange,
             IntervalDays = intervalDays,
             Enabled = enabled,

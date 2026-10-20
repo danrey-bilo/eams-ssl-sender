@@ -46,6 +46,9 @@ internal static class CertificateFormats
         _ => "bin",
     };
 
+    /// <summary>Несёт ли тип закрытый ключ сам по себе (PEM — смотря что внутри).</summary>
+    public static bool CarriesPrivateKey(string format) => format is Key or Pkcs or Jks;
+
     /// <summary>
     /// Тип содержимого вложения.
     /// </summary>

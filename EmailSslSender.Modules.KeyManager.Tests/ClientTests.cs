@@ -201,16 +201,28 @@ public sealed class ClientTests
     }
 
     [Fact]
-    public async Task Файл_берётся_как_есть_с_именем_из_ответа()
+    public async Task Файл_берётся_как_есть_а_имя_своё_с_расширением_типа()
     {
+        // Живой 7.1.1 называет и PEM, и KEY одинаково — «mdmtst.example.com», без расширения.
         byte[] байты = [0x30, 0x82, 0x01, 0x0a];
-        var заглушка = new Заглушка(_ => Файл(байты, "server.pfx"));
+        var заглушка = new Заглушка(_ => Файл(байты, "site.example.com"));
 
         var файл = await Клиент(заглушка).DownloadAsync("site.example.com", "01", CertificateFormats.Pkcs, Ct);
 
         файл.Content.ShouldBe(байты);
-        файл.FileName.ShouldBe("server.pfx");
+        файл.FileName.ShouldBe("site.example.com.pfx");
         файл.ContentType.ShouldBe("application/x-pkcs12");
+    }
+
+    [Fact]
+    public async Task Архив_вместо_файла_называется_zip()
+    {
+        var заглушка = new Заглушка(_ => Файл([(byte)'P', (byte)'K', 3, 4, 0], "bundle"));
+
+        var файл = await Клиент(заглушка).DownloadAsync("site.example.com", "01", CertificateFormats.Pem, Ct);
+
+        файл.FileName.ShouldBe("site.example.com.pem.zip");
+        файл.ContentType.ShouldBe("application/zip");
     }
 
     [Fact]

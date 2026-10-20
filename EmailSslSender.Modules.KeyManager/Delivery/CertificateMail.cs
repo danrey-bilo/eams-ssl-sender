@@ -1,3 +1,4 @@
+using System.Globalization;
 using EmailSslSender.Shared.Contracts.Mail;
 
 namespace EmailSslSender.Modules.KeyManager.Delivery;
@@ -27,8 +28,9 @@ internal enum DeliveryReason
 /// предел пять писем в час на адрес оставил бы сотрудника на шести подписках без шестого
 /// сертификата.
 ///
-/// ⚠ <b>Тело только текстовое</b>, как у всех писем установки, и прямо просит не пересылать
-/// письмо: во вложении бывает закрытый ключ.
+/// ⚠ <b>Письмо короткое нарочно</b> (просьба владельца): имя, срок, причина, файлы. Просьба не
+/// пересылать — только когда во вложении действительно есть закрытый ключ или его пароль
+/// (<see cref="Warning"/>); безусловное предупреждение читать перестают.
 /// </remarks>
 internal sealed class CertificateMail : IMailTemplateProvider
 {
@@ -42,40 +44,28 @@ internal sealed class CertificateMail : IMailTemplateProvider
             MailLocales.Ru,
             "Сертификат {common_name}",
             "Сертификат: {common_name}\n"
-            + "Серийный номер: {serial_number}\n"
             + "Действует до: {expires_on}\n"
-            + "Причина отправки: {reason}\n\n"
-            + "Файлы во вложении: {files}\n"
-            + "{passphrase}\n"
-            + "Письмо отправлено автоматически по подписке на сертификат в ManageEngine Key Manager Plus.\n"
-            + "Во вложении может быть закрытый ключ: не пересылайте это письмо и удалите его, когда\n"
-            + "установите сертификат."),
+            + "Причина: {reason}\n"
+            + "Файлы: {files}\n"
+            + "{warning}"),
         new(
             Kind,
             MailLocales.Uk,
             "Сертифікат {common_name}",
             "Сертифікат: {common_name}\n"
-            + "Серійний номер: {serial_number}\n"
             + "Дійсний до: {expires_on}\n"
-            + "Причина надсилання: {reason}\n\n"
-            + "Файли у вкладенні: {files}\n"
-            + "{passphrase}\n"
-            + "Лист надіслано автоматично за підпискою на сертифікат у ManageEngine Key Manager Plus.\n"
-            + "У вкладенні може бути закритий ключ: не пересилайте цей лист і видаліть його, коли\n"
-            + "встановите сертифікат."),
+            + "Причина: {reason}\n"
+            + "Файли: {files}\n"
+            + "{warning}"),
         new(
             Kind,
             MailLocales.En,
             "Certificate {common_name}",
             "Certificate: {common_name}\n"
-            + "Serial number: {serial_number}\n"
             + "Valid until: {expires_on}\n"
-            + "Reason: {reason}\n\n"
-            + "Attached files: {files}\n"
-            + "{passphrase}\n"
-            + "This letter was sent automatically by a certificate subscription in ManageEngine Key\n"
-            + "Manager Plus. The attachment may contain a private key: do not forward this letter and\n"
-            + "delete it once the certificate is installed."),
+            + "Reason: {reason}\n"
+            + "Files: {files}\n"
+            + "{warning}"),
     ];
 
     public IReadOnlyCollection<string> UnthrottledKinds => [Kind];
@@ -83,37 +73,41 @@ internal sealed class CertificateMail : IMailTemplateProvider
     /// <summary>Причина словами на языке письма.</summary>
     public static string Reason(DeliveryReason reason, string locale) => (locale, reason) switch
     {
-        (MailLocales.Ru, DeliveryReason.Initial) => "подписка оформлена, первая отправка",
-        (MailLocales.Ru, DeliveryReason.Changed) => "сертификат обновлён в Key Manager Plus",
-        (MailLocales.Ru, DeliveryReason.Scheduled) => "плановая отправка по расписанию",
-        (MailLocales.Ru, DeliveryReason.Manual) => "отправлено администратором вручную",
-        (MailLocales.Uk, DeliveryReason.Initial) => "підписку оформлено, перше надсилання",
-        (MailLocales.Uk, DeliveryReason.Changed) => "сертифікат оновлено в Key Manager Plus",
-        (MailLocales.Uk, DeliveryReason.Scheduled) => "планове надсилання за розкладом",
-        (MailLocales.Uk, DeliveryReason.Manual) => "надіслано адміністратором вручну",
-        (_, DeliveryReason.Initial) => "subscription created, first delivery",
-        (_, DeliveryReason.Changed) => "the certificate was renewed in Key Manager Plus",
-        (_, DeliveryReason.Scheduled) => "scheduled delivery",
-        _ => "sent manually by an administrator",
+        (MailLocales.Ru, DeliveryReason.Initial) => "новая подписка",
+        (MailLocales.Ru, DeliveryReason.Changed) => "сертификат обновлён",
+        (MailLocales.Ru, DeliveryReason.Scheduled) => "по расписанию",
+        (MailLocales.Ru, DeliveryReason.Manual) => "вручную",
+        (MailLocales.Uk, DeliveryReason.Initial) => "нова підписка",
+        (MailLocales.Uk, DeliveryReason.Changed) => "сертифікат оновлено",
+        (MailLocales.Uk, DeliveryReason.Scheduled) => "за розкладом",
+        (MailLocales.Uk, DeliveryReason.Manual) => "вручну",
+        (_, DeliveryReason.Initial) => "new subscription",
+        (_, DeliveryReason.Changed) => "certificate renewed",
+        (_, DeliveryReason.Scheduled) => "scheduled",
+        _ => "sent manually",
+    };
+
+    /// <summary>Срок действия в привычном языку виде; неизвестный — прочерк.</summary>
+    public static string ExpiresOn(DateOnly? date, string locale) => date switch
+    {
+        null => "—",
+        { } дата when locale is MailLocales.Ru or MailLocales.Uk =>
+            дата.ToString("dd.MM.yyyy", CultureInfo.InvariantCulture),
+        { } дата => дата.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
     };
 
     /// <summary>Имя вложения с паролем закрытого ключа.</summary>
+    /// <remarks>
+    /// ⚠ Пароль — вложением, не в теле: тело живёт в очереди до уборки, а вложения стираются
+    /// сразу после отправки.
+    /// </remarks>
     public const string PassphraseFile = "passphrase.txt";
 
-    /// <summary>
-    /// Строка о пароле ключа или пустая, если пароль не шлём.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Самого пароля в теле нет: тело живёт в очереди до уборки, а вложения стираются сразу после
-    /// отправки.
-    /// </remarks>
-    public static string Passphrase(bool attached, string locale) => !attached ? string.Empty : locale switch
+    /// <summary>Просьба не пересылать письмо — или пусто, если секретов во вложении нет.</summary>
+    public static string Warning(bool secret, string locale) => !secret ? string.Empty : locale switch
     {
-        MailLocales.Ru => $"Пароль закрытого ключа — во вложении {PassphraseFile}.\n",
-        MailLocales.Uk => $"Пароль закритого ключа — у вкладенні {PassphraseFile}.\n",
-        _ => $"The private key passphrase is in the attached {PassphraseFile}.\n",
+        MailLocales.Ru => "\nНе пересылайте письмо: в нём закрытый ключ.\n",
+        MailLocales.Uk => "\nНе пересилайте лист: у ньому закритий ключ.\n",
+        _ => "\nDo not forward this letter: it contains a private key.\n",
     };
-
-    /// <summary>Неизвестный срок действия.</summary>
-    public const string UnknownDate = "—";
 }

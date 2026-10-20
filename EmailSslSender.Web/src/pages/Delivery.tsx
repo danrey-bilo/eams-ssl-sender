@@ -100,7 +100,7 @@ export function DeliveryPage() {
                   <tr key={s.id} className={s.enabled ? '' : 'off'}>
                     <td>
                       <span>{s.common_name}</span>
-                      <span className="sub">{expires ? 'до ' + fmtDate(expires) : s.enabled ? '' : 'выключена'}</span>
+                      {expires && <span className="sub">до {fmtDate(expires)}</span>}
                     </td>
                     <td className="hide-sm" title={s.recipients.join('\n')}>
                       {s.recipients[0]}
@@ -129,6 +129,12 @@ export function DeliveryPage() {
 
 function LastDelivery({ s }: { s: Subscription }) {
   const { show } = useOverlay();
+
+  // Выключенная не шлёт ничего — зелёная точка у неё обманывала бы.
+  if (!s.enabled) {
+    const last = s.last_sent_at ? 'Последняя отправка ' + fmtDateTime(s.last_sent_at) : undefined;
+    return <span title={last}><Status kind="">Выключена</Status></span>;
+  }
 
   switch (s.delivery) {
     case 'failed':

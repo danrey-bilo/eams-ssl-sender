@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Net;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -145,9 +144,14 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
                 + $"({ответ.Content.Headers.ContentType?.MediaType ?? "тип не указан"}, {байты.Length} байт).");
         }
 
+        // ⚠ ⚠ Имя своё, а не из Content-Disposition: живой 7.1.1 называет и PEM, и KEY одинаково —
+        // «mdmtst.example.com», без расширения, и получатель видел два одноимённых файла,
+        // которые не открыть двойным щелчком.
+        var zip = байты.AsSpan().StartsWith("PK\x03\x04"u8);
+
         return new KmpFile(
-            ИмяФайла(ответ.Content.Headers.ContentDisposition) ?? ИмяПоУмолчанию(commonName, тип),
-            CertificateFormats.ContentType(тип),
+            ИмяПоУмолчанию(commonName, тип, zip ? "zip" : null),
+            zip ? "application/zip" : CertificateFormats.ContentType(тип),
             байты);
     }
 
@@ -453,21 +457,19 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
         return $"Key Manager Plus вернул неразборчивый ответ вместо файла {тип} сертификата {commonName}.";
     }
 
-    private static string? ИмяФайла(ContentDispositionHeaderValue? disposition)
-    {
-        var имя = disposition?.FileNameStar ?? disposition?.FileName;
-
-        return string.IsNullOrWhiteSpace(имя) ? null : имя.Trim('"', ' ');
-    }
-
     /// <summary>
-    /// Имя файла из Common Name: <c>*.example.com</c> → <c>wildcard.example.com.pem</c>.
+    /// Имя файла из Common Name и типа: <c>*.example.com</c> + PEM → <c>wildcard.example.com.pem</c>.
     /// </summary>
-    internal static string ИмяПоУмолчанию(string commonName, string тип)
+    /// <remarks>
+    /// Расширение у каждого типа своё, поэтому имена вложений одного письма не совпадают; ZIP
+    /// (если Key Manager Plus упакует несколько файлов) называется <c>.pem.zip</c> и т. п.
+    /// </remarks>
+    internal static string ИмяПоУмолчанию(string commonName, string тип, string? упаковка = null)
     {
         var основа = commonName.Replace("*", "wildcard", StringComparison.Ordinal);
         var чистое = new string([.. основа.Select(с => char.IsLetterOrDigit(с) || с is '.' or '-' or '_' ? с : '_')]);
+        var имя = $"{(чистое.Length == 0 ? "certificate" : чистое)}.{CertificateFormats.Extension(тип)}";
 
-        return $"{(чистое.Length == 0 ? "certificate" : чистое)}.{CertificateFormats.Extension(тип)}";
+        return упаковка is null ? имя : $"{имя}.{упаковка}";
     }
 }
