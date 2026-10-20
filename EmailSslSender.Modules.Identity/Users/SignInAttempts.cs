@@ -1,5 +1,6 @@
 using System.Net;
 using System.Threading.RateLimiting;
+using EmailSslSender.Shared.Api;
 using EmailSslSender.Shared.Errors;
 
 namespace EmailSslSender.Modules.Identity.Users;
@@ -18,6 +19,10 @@ namespace EmailSslSender.Modules.Identity.Users;
 ///
 /// ⚠ Счётчики в памяти процесса: экземпляр приложения один (решение 0002). Почта
 /// нормализуется так же, как при поиске, — иначе «Admin@» и «admin@» были бы разными ключами.
+///
+/// ⚠ Адрес — ключом <see cref="RateLimitAddress"/>, тем же, что у пределов хоста: IPv6 по сети
+/// /64. Иначе абонент со своей /64 брал бы новый адрес на каждую попытку, и предел на пару
+/// «адрес + почта» не ограничивал бы ничего.
 /// </remarks>
 internal sealed class SignInAttempts(IdentityModuleOptions options) : IDisposable
 {
@@ -37,7 +42,7 @@ internal sealed class SignInAttempts(IdentityModuleOptions options) : IDisposabl
         ArgumentNullException.ThrowIfNull(email);
 
         using var разрешение = _пределы.AttemptAcquire(
-            $"{address?.ToString() ?? "?"}|{email.Trim().ToLowerInvariant()}");
+            $"{RateLimitAddress.Key(address) ?? "?"}|{email.Trim().ToLowerInvariant()}");
 
         if (!разрешение.IsAcquired)
         {
