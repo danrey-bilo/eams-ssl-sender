@@ -1,0 +1,99 @@
+# Релиз: тег vX.Y.Z → образ в GitHub Container Registry и страница релиза с файлами установки.
+#
+#   git tag v1.0.0 && git push origin v1.0.0
+#
+# Образ: ghcr.io/<владелец>/<репозиторий>:X.Y.Z, :X.Y и :latest. К релизу прикладываются:
+#   - email-ssl-sender-deploy-vX.Y.Z.zip — docker-compose.yml, .env.example, scripts/*.sh;
+#   - email-ssl-sender-image-vX.Y.Z.tar.gz — тот же образ для сервера без доступа к ghcr.io
+#     (`docker load -i …`).
+name: release
+
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+  packages: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Версия и имя образа
+        id: v
+        run: |
+          echo "tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      # Тесты не гоняются здесь: им нужен Docker для PostgreSQL (Testcontainers), и релиз
+      # тегируется с проверенного main. Сборка образа сама проверяет компиляцию и типы панели.
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.v.outputs.image }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: EmailSslSender.Api/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Файлы релиза
+        env:
+          TAG: ${{ steps.v.outputs.tag }}
+          VERSION: ${{ steps.v.outputs.version }}
+          IMAGE: ${{ steps.v.outputs.image }}
+        run: |
+          docker pull "$IMAGE:$VERSION"
+          docker save "$IMAGE:$VERSION" | gzip -9 > "email-ssl-sender-image-$TAG.tar.gz"
+
+          mkdir -p "bundle/email-ssl-sender/scripts"
+          # В архиве установки образ закреплён на версии релиза, а не на latest.
+          sed "s|\${SENDER_IMAGE:-[^}]*}|\${SENDER_IMAGE:-$IMAGE:$VERSION}|" docker-compose.yml \
+            > "bundle/email-ssl-sender/docker-compose.yml"
+          cp .env.example "bundle/email-ssl-sender/.env.example"
+          cp scripts/gen-secrets.sh scripts/set-tunnel-token.sh "bundle/email-ssl-sender/scripts/"
+          chmod +x bundle/email-ssl-sender/scripts/*.sh
+          (cd bundle && zip -qr "../email-ssl-sender-deploy-$TAG.zip" email-ssl-sender)
+
+          sed -e "s|{TAG}|$TAG|g" -e "s|{VERSION}|$VERSION|g" -e "s|{IMAGE}|$IMAGE|g" \
+            -e "s|{REPOSITORY}|$GITHUB_REPOSITORY|g" .github/release-notes.md > notes.md
+
+          sha256sum "email-ssl-sender-deploy-$TAG.zip" "email-ssl-sender-image-$TAG.tar.gz" > SHA256SUMS
+
+      - name: Страница релиза
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          gh release create "$TAG" \
+            --title "Email SSL Sender $TAG" \
+            --notes-file notes.md \
+            --verify-tag \
+            "email-ssl-sender-deploy-$TAG.zip" \
+            "email-ssl-sender-image-$TAG.tar.gz" \
+            SHA256SUMS
