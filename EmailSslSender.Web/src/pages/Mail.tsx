@@ -76,6 +76,15 @@ function SmtpForm({ mail, settings, onSaved, onDropPassword }: {
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setError('');
+    // Пароль привязан к серверу, порту, защите и логину: сменили что-то из них — нужен заново.
+    const moved = hostName(host).toLowerCase() !== hostName(text(settings, 'mail.smtp_host')).toLowerCase()
+      || port.trim() !== text(settings, 'mail.smtp_port').trim()
+      || security !== (text(settings, 'mail.smtp_security') || 'starttls')
+      || user.trim() !== text(settings, 'mail.smtp_username').trim();
+    if (mail.password_set && moved && user.trim() && !password) {
+      setError('Сервер изменился — введите пароль заново.');
+      return;
+    }
     setBusy(true);
     try {
       await saveSettings(settings, {

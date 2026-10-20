@@ -276,7 +276,7 @@ curl -s -X POST $API/api/auth/refresh -H 'Content-Type: application/json' -d '{"
 |---|---|---|
 | `tls` | SSL/TLS с первого байта (SMTPS) | 465 |
 | `starttls` | Обычное соединение, затем обязательный STARTTLS | 587 |
-| `none` | Без шифрования — только для ловушки писем или релея в той же сети | 25, 1025 |
+| `none` | Без шифрования — только ловушка писем или релей в той же сети, **без логина**: пароль по открытому соединению не отправляется | 25, 1025 |
 
 ```bash
 curl -s -X PATCH $API/api/settings/system -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"values":{"mail.enabled":true,"mail.smtp_host":"smtp.example.com","mail.smtp_port":465,"mail.smtp_security":"tls","mail.smtp_username":"noreply@example.com","mail.from_address":"noreply@example.com","mail.from_name":"Email SSL Sender","server.public_url":"https://sender.example.com"}}'
@@ -286,7 +286,10 @@ curl -s -X PATCH $API/api/settings/system -H "Authorization: Bearer $TOKEN" -H '
 приглашения и сброса пароля.
 
 **2. Пароль SMTP.** Он хранится в базе зашифрованным мастер-ключом и обратно не отдаётся
-никогда. Пустая строка снимает пароль.
+никогда. Пустая строка снимает пароль. Пароль привязан к серверу, порту, защите и логину,
+действующим в момент ввода: после их смены письма не уходят с ошибкой «введите пароль SMTP
+заново» — так вошедший не перенаправит пароль на свой сервер. Задавайте сначала настройки,
+потом пароль.
 
 ```bash
 curl -s -X PUT $API/api/mail/password -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"password":"ПАРОЛЬ_SMTP"}'
@@ -352,7 +355,9 @@ build 7110) и рассылает файлы SSL-сертификатов по *
 
 **1. Ключ API.** В Key Manager Plus откройте **Settings → General Settings → API Key** и нажмите
 **Generate**. Ключ привязан к хосту, на котором его создали. У нас он хранится запечатанным
-мастер-ключом и обратно не отдаётся. Пустая строка снимает ключ.
+мастер-ключом и обратно не отдаётся. Пустая строка снимает ключ. Ключ привязан к
+`keymanager.base_url` и `keymanager.server_sha256`, действующим в момент ввода: задайте сначала
+адрес и отпечаток, потом ключ; после их смены ключ вводится заново.
 
 ```bash
 curl -s -X PUT $API/api/keymanager/api-key -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"api_key":"3E014D78-E603-413A-AC24-6392F0001283"}'
@@ -372,7 +377,8 @@ curl -s -X PATCH $API/api/settings/system -H "Authorization: Bearer $TOKEN" -H '
 ```
 
 Если сертификат выдан своим удостоверяющим центром, отпечаток не нужен. Передайте корневой
-сертификат контейнеру через `SSL_CERT_FILE`, как для SMTP.
+сертификат контейнеру через `SSL_CERT_FILE`, как для SMTP. Без отпечатка проверяется и отзыв
+сертификата: контейнеру нужен доступ к OCSP/CRL удостоверяющего центра.
 
 **3. Проверка связи** работает и до включения интеграции. Ответ — число сертификатов, которые
 видит Key Manager Plus. При отказе приходит `409 KEYMANAGER_UNAVAILABLE`, а в `details.reason`
@@ -418,7 +424,9 @@ curl -s -X POST $API/api/certificate-subscriptions -H "Authorization: Bearer $TO
 впервые — `GET /api/keymanager/certificates`.
 
 Почта проверяется до выгрузки: пока она не настроена, закрытые ключи из Key Manager Plus не
-выгружаются вовсе.
+выгружаются вовсе. Удаление подписки, удаление получателя или смена Common Name отменяют её
+неотправленные письма. Письмо с вложениями, не ушедшее за 24 часа, теряет вложения и считается
+неотправленным — после починки почты отправьте подписку заново.
 
 **Что сверить на своём Key Manager Plus.** Документация не описывает, в каком виде
 `getCertificate` отдаёт файлы. Клиент принимает только то, что похоже на файл сертификата или
@@ -798,7 +806,8 @@ docker compose run --rm api reset-superadmin-2fa --email admin@example.com
    docker compose run --rm api rewrap-keys
    ```
 
-4. Когда команда сообщит, что переложено всё, старую строку можно убрать. Учтите: копии
+4. Когда команда сообщит, что переложено всё (включая неотправленные письма `mail_outbox`),
+   старую строку можно убрать. Учтите: копии
    базы, снятые раньше, открываются только старым ключом.
 
 **Резервные копии.** Снимайте `pg_dump` базы `sender` и **отдельно** храните мастер-ключ.

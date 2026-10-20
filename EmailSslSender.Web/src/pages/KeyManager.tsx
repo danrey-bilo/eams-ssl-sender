@@ -89,6 +89,13 @@ function ConnectionForm({ km, settings, onSaved, onDropKey }: {
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setError('');
+    // Ключ привязан к адресу и отпечатку: сервер не отдаст его на новый адрес без повторного ввода.
+    const moved = url.trim() !== text(settings, 'keymanager.base_url').trim()
+      || pin.trim() !== text(settings, 'keymanager.server_sha256').trim();
+    if (km.api_key_set && moved && !apiKey.trim()) {
+      setError('Адрес изменился — введите ключ API заново.');
+      return;
+    }
     setBusy(true);
     try {
       await saveSettings(settings, {
