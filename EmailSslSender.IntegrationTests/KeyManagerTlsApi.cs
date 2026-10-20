@@ -9,8 +9,12 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace EmailSslSender.IntegrationTests;
 
@@ -214,6 +218,190 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
         }
     }
 
+    /// <summary>
+    /// Выгрузка отдаёт файл как есть: тип, имя вложения, без кэша — и ключ API едет заголовком.
+    /// </summary>
+    [Fact]
+    public async Task Выгрузка_сертификата_отдаёт_файл_под_именем_вложения_и_без_кэша()
+    {
+        await ЗакрепитьAsync();
+        await СнимокAsync();
+
+        var ответ = await host.CreateClient().PostAsJsonAsync(
+            "/api/keymanager/certificates/download",
+            new { common_name = "site.example.com", serial_number = "0a1b2c", format = "pem" },
+            Ct);
+
+        ответ.StatusCode.ShouldBe(HttpStatusCode.OK, await ответ.Content.ReadAsStringAsync(Ct));
+        (await ответ.Content.ReadAsByteArrayAsync(Ct)).ShouldBe(ЗаглушкаKmp.Сертификат);
+        ответ.Content.Headers.ContentType!.MediaType.ShouldBe("application/x-pem-file");
+        ответ.Content.Headers.GetValues("Content-Disposition").Single()
+            .ShouldBe("attachment; filename=\"site.example.com.pem\"");
+        ответ.Headers.CacheControl!.NoStore.ShouldBeTrue();
+        _kmp.Запросов.ShouldBe(1);
+    }
+
+    /// <summary>
+    /// Закрытый ключ приходит текстом PEM вместе с паролем; без пароля в Key Manager Plus — <c>null</c>.
+    /// </summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Закрытый_ключ_приходит_текстом_PEM_и_пароль_по_возможности(bool парольЕсть)
+    {
+        await ЗакрепитьAsync();
+        await СнимокAsync();
+        _kmp.Пароль = парольЕсть ? ЗаглушкаKmp.ПарольКлюча : null;
+
+        var ответ = await host.CreateClient().PostAsJsonAsync(
+            "/api/keymanager/certificates/private-key",
+            new { common_name = "site.example.com", serial_number = "0a1b2c" },
+            Ct);
+
+        ответ.StatusCode.ShouldBe(HttpStatusCode.OK, await ответ.Content.ReadAsStringAsync(Ct));
+        ответ.Headers.CacheControl!.NoStore.ShouldBeTrue();
+
+        var тело = (await ответ.Content.ReadFromJsonAsync<JsonObject>(Ct))!;
+        тело["private_key"]!.GetValue<string>().ShouldBe(System.Text.Encoding.UTF8.GetString(ЗаглушкаKmp.ЗакрытыйКлюч));
+
+        if (парольЕсть)
+        {
+            тело["passphrase"]!.GetValue<string>().ShouldBe(ЗаглушкаKmp.ПарольКлюча);
+        }
+        else
+        {
+            тело["passphrase"].ShouldBeNull("отказ Key Manager Plus в пароле обязан стать null, а не ошибкой");
+        }
+    }
+
+    [Fact]
+    public async Task Ключ_не_текстом_PEM_отвечает_409_с_причиной()
+    {
+        await ЗакрепитьAsync();
+        await СнимокAsync();
+        _kmp.КлючВDer = true;
+
+        var ответ = await host.CreateClient().PostAsJsonAsync(
+            "/api/keymanager/certificates/private-key",
+            new { common_name = "site.example.com", serial_number = "0a1b2c" },
+            Ct);
+
+        ответ.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        var тело = JsonNode.Parse(await ответ.Content.ReadAsStringAsync(Ct))!;
+        тело["code"]!.GetValue<string>().ShouldBe("KEYMANAGER_UNAVAILABLE");
+        тело["details"]!["reason"]!.GetValue<string>().ShouldBe("Key Manager Plus отдал ключ не в виде PEM");
+    }
+
+    /// <summary>
+    /// В журнале — чей ключ показан, и ни ключа, ни пароля: ни в строке журнала, ни где-либо в логе.
+    /// </summary>
+    [Fact]
+    public async Task Показ_ключа_пишется_в_журнал_без_ключа_и_пароля()
+    {
+        await ЗакрепитьAsync();
+        await СнимокAsync();
+        _kmp.Пароль = ЗаглушкаKmp.ПарольКлюча;
+
+        var перо = new ВсеСтроки();
+
+        await using var фабрика = host.WithWebHostBuilder(builder => builder.ConfigureTestServices(services =>
+        {
+            services.RemoveAll<IHostedService>();
+
+            // ⚠ Serilog хоста сторонних поставщиков не зовёт: подменяется вся фабрика логов этого
+            // хоста — так видна каждая строка, своя и чужая (EF, MVC), на всех уровнях.
+            services.AddSingleton<ILoggerFactory>(new LoggerFactory([перо]));
+        }));
+
+        var клиент = фабрика.CreateClient();
+
+        // ⚠ Мастер-ключ у каждого хоста обвязки свой и разовый: ключ API, запечатанный основным
+        // хостом, этому не открыть — вводится заново, как в панели.
+        (await клиент.PutAsJsonAsync("/api/keymanager/api-key", new { api_key = Ключ }, Ct))
+            .StatusCode.ShouldBe(HttpStatusCode.NoContent);
+
+        (await клиент.PostAsJsonAsync(
+                "/api/keymanager/certificates/private-key",
+                new { common_name = "site.example.com", serial_number = "0a1b2c" },
+                Ct))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        (await клиент.PostAsJsonAsync(
+                "/api/keymanager/certificates/download",
+                new { common_name = "site.example.com", serial_number = "0a1b2c", format = "KEY" },
+                Ct))
+            .StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var строки = перо.Снимок();
+
+        var показ = строки.Single(с => с.Contains("keymanager.private_key_viewed", StringComparison.Ordinal));
+        показ.ShouldContain("site.example.com");
+        показ.ShouldContain("0a1b2c");
+
+        var выгрузка = строки.Single(с => с.Contains("keymanager.certificate_downloaded", StringComparison.Ordinal));
+        выгрузка.ShouldContain("\"format\":\"KEY\"");
+
+        foreach (var строка in строки)
+        {
+            строка.ShouldNotContain("BEGIN PRIVATE KEY");
+            строка.ShouldNotContain(ЗаглушкаKmp.ПарольКлюча);
+        }
+    }
+
+    /// <summary>Пара «site.example.com + 0a1b2c» в снимке опроса — как после настоящего опроса.</summary>
+    private async Task СнимокAsync()
+    {
+        await using var scope = host.Services.CreateAsyncScope();
+
+        await scope.ServiceProvider.GetRequiredService<SenderDbContext>().Database.ExecuteSqlRawAsync(
+            """
+            INSERT INTO keymanager_certificates (common_name, serial_number, expires_on, first_seen_at, last_seen_at)
+            VALUES ('site.example.com', '0a1b2c', '2027-10-02', now(), now())
+            ON CONFLICT (common_name, serial_number) DO NOTHING
+            """,
+            Ct);
+    }
+
+    /// <summary>Логгер-провайдер, запоминающий каждую строку лога хоста.</summary>
+    private sealed class ВсеСтроки : ILoggerProvider
+    {
+        private readonly List<string> _строки = [];
+
+        public List<string> Снимок()
+        {
+            lock (_строки)
+            {
+                return [.. _строки];
+            }
+        }
+
+        public ILogger CreateLogger(string categoryName) => new Перо(_строки);
+
+        public void Dispose()
+        {
+        }
+
+        private sealed class Перо(List<string> строки) : ILogger
+        {
+            public IDisposable? BeginScope<TState>(TState state)
+                where TState : notnull => null;
+
+            public bool IsEnabled(LogLevel logLevel) => true;
+
+            public void Log<TState>(
+                LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+                Func<TState, Exception?, string> formatter)
+            {
+                ArgumentNullException.ThrowIfNull(formatter);
+
+                lock (строки)
+                {
+                    строки.Add(formatter(state, exception) + (exception is null ? string.Empty : " " + exception));
+                }
+            }
+        }
+    }
+
     /// <summary>Закрепить отпечаток заглушки и ввести ключ после него — как это делает панель.</summary>
     private async Task ЗакрепитьAsync()
     {
@@ -274,10 +462,15 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
         return строки[0];
     }
 
-    /// <summary>Key Manager Plus в процессе: HTTPS с самоподписанным сертификатом и тремя методами.</summary>
+    /// <summary>Key Manager Plus в процессе: HTTPS с самоподписанным сертификатом и четырьмя методами.</summary>
     private sealed class ЗаглушкаKmp(string ключ) : IAsyncDisposable
     {
         public static readonly byte[] ЗакрытыйКлюч = "-----BEGIN PRIVATE KEY-----\nзаглушка\n"u8.ToArray();
+
+        public static readonly byte[] Сертификат = "-----BEGIN CERTIFICATE-----\nзаглушка\n"u8.ToArray();
+
+        /// <summary>Пароль ключа, который хранит заглушка, когда его просят хранить.</summary>
+        public const string ПарольКлюча = "пароль-заглушки-не-для-лога";
 
         private WebApplication? _приложение;
         private X509Certificate2? _сертификат;
@@ -288,6 +481,12 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
         public string Отпечаток { get; private set; } = "";
 
         public int Запросов => _запросов;
+
+        /// <summary>Пароль ключа; <c>null</c> — заглушка отвечает отказом, как Key Manager Plus без пароля.</summary>
+        public string? Пароль { get; set; }
+
+        /// <summary>Отдавать ключ в DER, а не текстом PEM.</summary>
+        public bool КлючВDer { get; set; }
 
         public async Task ЗапуститьAsync()
         {
@@ -340,9 +539,17 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
                     }),
                     "getCertificate" => Results.File(
                         Вход()["fileType"]!.GetValue<string>() == "KEY"
-                            ? ЗакрытыйКлюч
-                            : "-----BEGIN CERTIFICATE-----\nзаглушка\n"u8.ToArray(),
+                            ? (КлючВDer ? [0x30, 0x82, 0x04, 0xBD, 0x02, 0x01, 0x00] : ЗакрытыйКлюч)
+                            : Сертификат,
                         "application/octet-stream"),
+                    "getCertificatePassphrase" => Пароль is { } пароль
+                        ? Results.Json(new
+                        {
+                            name = "GetCertificatePassphrase",
+                            result = new { status = "Success", message = "Passphrase fetched successfully" },
+                            details = new { Passphrase = пароль },
+                        })
+                        : Results.Json(new { result = new { status = "Failed", message = "Passphrase not available" } }),
                     _ => Results.NotFound(),
                 };
             });

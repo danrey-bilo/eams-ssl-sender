@@ -21,4 +21,15 @@ public static class KeyManagerActions
 
     public static readonly AuditAction CertificateSent =
         new("keymanager.certificate_sent", "Сертификат поставлен в очередь писем");
+
+    /// <summary>Вид ресурса сертификата в строке журнала: пара «Common Name + серийный номер».</summary>
+    public const string CertificateResource = "certificate";
+
+    /// <summary>Администратор выгрузил файл сертификата себе (не письмом).</summary>
+    public static readonly AuditAction CertificateDownloaded =
+        new("keymanager.certificate_downloaded", "Файл сертификата выгружен администратору");
+
+    /// <summary>Администратору показан закрытый ключ сертификата.</summary>
+    public static readonly AuditAction PrivateKeyViewed =
+        new("keymanager.private_key_viewed", "Показан закрытый ключ сертификата");
 }

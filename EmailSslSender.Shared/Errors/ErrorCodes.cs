@@ -211,6 +211,11 @@ public static class ErrorCodes
     public const string KeyManagerUnavailable = "KEYMANAGER_UNAVAILABLE";
 
     /// <summary>Сертификата с таким Common Name в Key Manager Plus нет.</summary>
+    /// <remarks>
+    /// Ручная отправка подписки отвечает им <c>409</c> (сертификата нет в Key Manager Plus), а
+    /// выгрузка сертификата и показ ключа — <c>404</c>: пары «Common Name + серийный номер» нет в
+    /// снимке опроса (<c>keymanager_certificates</c>).
+    /// </remarks>
     public const string KeyManagerCertificateNotFound = "KEYMANAGER_CERTIFICATE_NOT_FOUND";
 
     /// <summary>Эту подписку прямо сейчас отправляет другой запрос или фоновый опрос.</summary>

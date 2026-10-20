@@ -1,5 +1,6 @@
 using EmailSslSender.Modules.KeyManager.Client;
 using EmailSslSender.Modules.KeyManager.Delivery;
+using EmailSslSender.Modules.KeyManager.Export;
 using EmailSslSender.Modules.KeyManager.Secrets;
 using EmailSslSender.Modules.KeyManager.Settings;
 using EmailSslSender.Modules.KeyManager.Storage;
@@ -58,6 +59,9 @@ public static class KeyManagerModule
         services.AddScoped<CertificateSnapshots>();
         services.AddScoped<CertificateDelivery>();
         services.AddScoped<CertificatePolling>();
+
+        // Выгрузка сертификата и показ ключа администратору — в ответ, а не письмом.
+        services.AddScoped<CertificateExport>();
 
         // ⚠ Сигнал — синглтон и регистрируется всегда: контроллер будит опрос и там, где опрос
         // не поднят, — тогда сигнал просто никто не ждёт.
