@@ -114,9 +114,12 @@ cp .env.example .env
 **6. База и первый администратор.** Пароль спрашивается скрытым вводом.
 
 ```bash
-docker compose run --rm api migrate
+docker compose run --rm migrate
 docker compose run --rm api create-superadmin --email admin@example.com
 ```
+
+`migrate` накатывает схему и заводит роль базы `sender_app`, которой ходит сервис: она только
+читает и пишет строки. Пароль владельца схемы есть только у службы `migrate`.
 
 **7. Запуск.**
 
@@ -217,6 +220,9 @@ Authenticator, Microsoft Authenticator, Aegis, 1Password). Дальше вход
   отменяются; письмо, не ушедшее за 24 часа, теряет вложения.
 - **Контейнер:** не root, файловая система только для чтения, без Linux capabilities. Наружу
   ни одного порта: сервис слушает `127.0.0.1`, публикация — исходящим туннелем.
+- **База:** сервис ходит ролью `sender_app` — только чтение и запись строк, без права менять
+  схему и без прав суперпользователя. Пароль владельца схемы есть только у службы `migrate`.
+  У самой базы нет выхода в интернет.
 - **Панель:** строгая CSP, без внешних скриптов, запрет встраивания во фрейм, сессия в куке
   `HttpOnly; Secure; SameSite=Strict`.
 - **Журнал действий** — строки `audit` в логах сервиса (`docker compose logs api | grep audit`):
@@ -237,12 +243,17 @@ Authenticator, Microsoft Authenticator, Aegis, 1Password). Дальше вход
 ## Обновление
 
 ```bash
+./scripts/gen-secrets.sh          # создаст недостающие файлы секретов, существующие не тронет
 docker compose pull
-docker compose run --rm api migrate
+docker compose run --rm migrate
 docker compose up -d
 ```
 
 `migrate` обязателен после каждого обновления: на старой схеме базы сервис не стартует.
+
+> С версии 1.0.2 сервис ходит в базу отдельной ролью `sender_app`. При обновлении со старой
+> версии нужен новый файл `secrets/sender_app_password` — его создаст `gen-secrets.sh` — и
+> `migrate` до `up -d`, иначе сервис не подключится к базе.
 
 ---
 

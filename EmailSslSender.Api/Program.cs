@@ -16,10 +16,12 @@ using EmailSslSender.Shared.Contracts.Audit;
 using EmailSslSender.Shared.Contracts.Authz;
 using EmailSslSender.Shared.Contracts.Settings;
 using EmailSslSender.Shared.Crypto;
+using EmailSslSender.Shared.Data;
 using EmailSslSender.Shared.Errors;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Serilog;
 
@@ -256,25 +258,52 @@ static async Task<int> RunCommandAsync(WebApplication app, string[] args)
 
 static async Task<int> MigrateCommandAsync(WebApplication app)
 {
-    var pending = await app.PendingMigrationsAsync();
-
-    if (pending.Count == 0)
+    try
     {
-        Console.WriteLine($"{Bootstrap.Migrate}: схема уже совпадает с кодом, накатывать нечего");
+        var pending = await app.PendingMigrationsAsync();
+
+        if (pending.Count == 0)
+        {
+            Console.WriteLine($"{Bootstrap.Migrate}: схема уже совпадает с кодом, накатывать нечего");
+        }
+        else
+        {
+            Console.WriteLine($"{Bootstrap.Migrate}: применяю {pending.Count}");
+
+            foreach (var name in pending)
+            {
+                Console.WriteLine($"  {name}");
+            }
+
+            await app.MigrateAsync();
+        }
+
+        // ⚠ Роль сервиса приводится в порядок и без новых миграций: сменили файл пароля или
+        // ставите поверх старой установки — `migrate` и есть способ это применить.
+        if (RuntimeRole.FromConfiguration(app.Configuration) is var (role, password))
+        {
+            await using var scope = app.Services.CreateAsyncScope();
+            var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+            var connection = (Npgsql.NpgsqlConnection)db.Database.GetDbConnection();
+
+            await connection.OpenAsync();
+            await RuntimeRole.EnsureAsync(connection, role, password);
+
+            Console.WriteLine($"{Bootstrap.Migrate}: роль сервиса {role} — только чтение и запись строк");
+        }
+
+        Console.WriteLine($"{Bootstrap.Migrate}: готово");
         return 0;
     }
-
-    Console.WriteLine($"{Bootstrap.Migrate}: применяю {pending.Count}");
-
-    foreach (var name in pending)
+    catch (Npgsql.PostgresException error) when (error.SqlState == Npgsql.PostgresErrorCodes.InsufficientPrivilege)
     {
-        Console.WriteLine($"  {name}");
+        // ⚠ Служба api ходит ролью без права менять схему — и это задумано. Сказать, где её
+        // меняют, полезнее, чем «permission denied for schema public».
+        await Console.Error.WriteLineAsync(
+            $"Ошибка: у этой роли нет права менять схему. Схему накатывает служба migrate: "
+            + "docker compose run --rm migrate");
+        return 1;
     }
-
-    await app.MigrateAsync();
-
-    Console.WriteLine($"{Bootstrap.Migrate}: готово");
-    return 0;
 }
 
 static async Task<int> RewrapAsync(WebApplication app, string[] args)

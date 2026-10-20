@@ -18,7 +18,7 @@
    cp .env.example .env
    ./scripts/set-tunnel-token.sh   # токен Cloudflare Tunnel
    docker compose pull api         # не нужно, если образ загружен из файла
-   docker compose run --rm api migrate
+   docker compose run --rm migrate
    docker compose run --rm api create-superadmin --email admin@example.com
    docker compose up -d
    ```
@@ -26,8 +26,9 @@
 ## Обновление
 
 ```bash
+./scripts/gen-secrets.sh
 docker compose pull
-docker compose run --rm api migrate
+docker compose run --rm migrate
 docker compose up -d
 ```
 

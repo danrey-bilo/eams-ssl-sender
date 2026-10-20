@@ -54,6 +54,17 @@ public static class ConnectionSecrets
         return new NpgsqlConnectionStringBuilder(строка) { Password = пароль }.ConnectionString;
     }
 
+    /// <summary>
+    /// Значение файла секрета, путь к которому в переменной <paramref name="variable"/>, или
+    /// <c>null</c>, если переменная не задана.
+    /// </summary>
+    public static string? ReadSecretFile(IConfiguration configuration, string variable)
+    {
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        return Прочитать(configuration, variable);
+    }
+
     private static string? Прочитать(IConfiguration configuration, string переменная)
     {
         var путь = configuration[переменная];

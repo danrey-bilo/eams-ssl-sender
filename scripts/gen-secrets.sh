@@ -1,5 +1,6 @@
 #!/bin/sh
-# Создать файлы секретов установки: мастер-ключ и пароль базы.
+# Создать файлы секретов установки: мастер-ключ и два пароля базы — владельца схемы (только для
+# службы migrate) и роли сервиса sender_app. Старая установка получает недостающий файл повторным запуском.
 #
 # Значения намеренно не живут в переменных окружения: переменная видна в `docker inspect`
 # и в /proc/<pid>/environ, а вывод inspect пересылают в тикет целиком.
@@ -51,5 +52,6 @@ chmod 700 "$SECRETS_DIR"
 
 echo "Создаю секреты в $SECRETS_DIR/:"
 write_secret sender_master_kek "$(random_base64)" "мастер-ключ, base64 32 байта"
-write_secret sender_postgres_password "$(random_urlsafe)" "пароль базы"
+write_secret sender_postgres_password "$(random_urlsafe)" "пароль владельца схемы — только для службы migrate"
+write_secret sender_app_password "$(random_urlsafe)" "пароль роли сервиса sender_app"
 echo "Готово. Каталог $SECRETS_DIR/ в git не попадает (.gitignore); сохраните копию мастер-ключа отдельно от копий базы."

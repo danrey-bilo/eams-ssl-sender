@@ -52,11 +52,10 @@ public sealed class SchemaGateTests : IAsyncLifetime
         // набрать. Без третьего оператор в три часа ночи вспоминает синтаксис по памяти.
         отказ.Message.ShouldContain("Схема базы отстала");
         отказ.Message.ShouldContain("InitialCreate");
-        // ⚠ Именно `run --rm api migrate`, БЕЗ `dotnet EmailSslSender.Api.dll`. У образа это
-        // `ENTRYPOINT`, и `run` дописывает аргументы к нему: полная строка дала бы приложению
-        // аргументы «dotnet EmailSslSender.Api.dll migrate», первый из которых командой не
-        // является, — и контейнер поднял бы сервер вместо миграции.
-        отказ.Message.ShouldContain("run --rm api migrate");
+        // ⚠ Именно `run --rm migrate` — отдельная служба: только у неё пароль владельца схемы,
+        // служба api ходит ролью без права менять схему. И БЕЗ `dotnet EmailSslSender.Api.dll`:
+        // у образа это `ENTRYPOINT`, а команду `migrate` служба передаёт сама.
+        отказ.Message.ShouldContain("docker compose run --rm migrate");
 
         // ⚠ И про копию — тоже в сообщении. Разделение шагов заведено ровно затем, чтобы
         // копию было где снять; напоминание об этом в тексте отказа — единственное место,

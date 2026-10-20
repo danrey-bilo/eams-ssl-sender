@@ -132,6 +132,6 @@ public static class DatabaseStartup
             + $"({string.Join(", ", pending)}). Приложение не стартует, пока схема не "
             + "накатана: делать это самому означало бы менять базу раньше, чем оператор "
             + "успеет снять копию. Порядок: сначала копия базы, затем "
-            + "docker compose run --rm api migrate");
+            + "docker compose run --rm migrate");
     }
 }

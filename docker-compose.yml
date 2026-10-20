@@ -5,7 +5,7 @@
 #   ./scripts/set-tunnel-token.sh # токен Cloudflare Tunnel — в файл секрета, не в .env
 #   cp .env.example .env
 #   docker compose pull           # готовый образ; из исходников — docker compose build
-#   docker compose run --rm api migrate
+#   docker compose run --rm migrate
 #   docker compose run --rm api create-superadmin --email admin@example.com
 #   docker compose up -d
 #
@@ -38,8 +38,10 @@ services:
       ASPNETCORE_HTTP_PORTS: "8001"
       # ⚠ `GSS Encryption Mode=Disable`: Npgsql иначе пробует Kerberos, а в обрезанном образе
       # библиотеки libgssapi нет — каждое подключение печатало бы ошибку загрузки.
-      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=sender;Username=sender;Maximum Pool Size=40;GSS Encryption Mode=Disable"
-      SENDER_POSTGRES_PASSWORD_FILE: /run/secrets/sender_postgres_password
+      # ⚠ ⚠ Сервис ходит ролью sender_app: только чтение и запись строк. Пароля владельца схемы
+      # (суперпользователя базы) у этой службы нет вовсе — он есть только у службы migrate.
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=sender;Username=sender_app;Maximum Pool Size=40;GSS Encryption Mode=Disable"
+      SENDER_POSTGRES_PASSWORD_FILE: /run/secrets/sender_app_password
       SENDER_MASTER_KEK_FILE: /run/secrets/sender_master_kek
       # Сети, которым верим заголовки X-Forwarded-For / -Proto: сеть туннеля (в ней только
       # cloudflared и сам API) и, если задан, свой обратный прокси. Не верь мы туннелю — все
@@ -54,7 +56,7 @@ services:
       - /tmp
     secrets:
       - sender_master_kek
-      - sender_postgres_password
+      - sender_app_password
     ports:
       - "127.0.0.1:8001:8001"
     # default — выход к SMTP и Key Manager Plus; db — к базе; edge — к туннелю.
@@ -71,6 +73,41 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Схема базы и роль сервиса. Одноразовая служба: docker compose run --rm migrate
+  #
+  # ⚠ Ходит владельцем схемы (sender — суперпользователь в образе postgres) и единственная знает
+  # его пароль. Накатывает миграции и заводит или обновляет роль sender_app с паролем из
+  # secrets/sender_app_password: SELECT/INSERT/UPDATE/DELETE, без права менять схему.
+  # Профиль tools — чтобы `docker compose up -d` её не запускал.
+  migrate:
+    image: ${SENDER_IMAGE:-ghcr.io/danrey-bilo/email_ssl_sender:latest}
+    profiles: ["tools"]
+    command: ["migrate"]
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=sender;Username=sender;GSS Encryption Mode=Disable"
+      SENDER_POSTGRES_PASSWORD_FILE: /run/secrets/sender_postgres_password
+      SENDER_MASTER_KEK_FILE: /run/secrets/sender_master_kek
+      SENDER_APP_ROLE: sender_app
+      SENDER_APP_PASSWORD_FILE: /run/secrets/sender_app_password
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    secrets:
+      - sender_master_kek
+      - sender_postgres_password
+      - sender_app_password
+    networks:
+      - db
+    logging: *logging
     depends_on:
       postgres:
         condition: service_healthy
@@ -153,6 +190,8 @@ secrets:
     file: ./secrets/sender_master_kek
   sender_postgres_password:
     file: ./secrets/sender_postgres_password
+  sender_app_password:
+    file: ./secrets/sender_app_password
   cloudflare_tunnel_token:
     file: ./secrets/cloudflare_tunnel_token
 

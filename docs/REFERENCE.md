@@ -128,8 +128,20 @@ cp .env.example .env              # в нём COMPOSE_PROFILES=tunnel
 накатывают только этой командой, в том числе после каждого обновления кода.
 
 ```bash
-docker compose run --rm api migrate
+docker compose run --rm migrate
 ```
+
+Служба `migrate` — одноразовая (профиль `tools`) и единственная, у которой есть пароль
+владельца схемы `sender` (суперпользователь в образе `postgres`). Кроме миграций она заводит
+или обновляет роль `sender_app`, которой ходит служба `api`:
+
+| Что может `sender_app` | Чего не может |
+|---|---|
+| `SELECT`, `INSERT`, `UPDATE`, `DELETE` в схеме `public`, последовательности | `CREATE`, `ALTER`, `DROP`, `COPY … TO PROGRAM`, создавать роли и базы |
+
+Права на таблицы будущих миграций выдаются сами (`ALTER DEFAULT PRIVILEGES`). Пароль роли —
+`secrets/sender_app_password`; сменили файл — следующий `migrate` сменит пароль в базе.
+Служба `api` на попытку `migrate` ответит, что схему меняет служба `migrate`.
 
 **5. Первая учётная запись.** Пароль спрашивается скрытым вводом дважды. Для сценариев есть
 `--password-file путь`, а для имени — `--display-name "Имя"`.
@@ -825,7 +837,7 @@ docker compose logs api | grep '"audit '
 ```
 
 **Обновление:** `docker compose pull api` (или `docker compose build` из исходников), затем
-`docker compose run --rm api migrate`, затем `docker compose up -d`.
+`docker compose run --rm migrate`, затем `docker compose up -d`.
 
 ---
 
