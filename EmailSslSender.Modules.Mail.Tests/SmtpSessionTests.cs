@@ -83,9 +83,19 @@ public sealed class SmtpSessionTests(MailDatabase база)
     }
 
     [Theory]
-    [InlineData("https://mail.example.com")]
+    [InlineData("https://mail.example.com", "mail.example.com")]
+    [InlineData(" smtp://mail.example.com/ ", "mail.example.com")]
+    [InlineData("mail.example.com", "mail.example.com")]
+    [InlineData("mail.example.com:465", "mail.example.com:465")]
+    public void Схема_перед_именем_сервера_срезается(string хост, string имя)
+    {
+        SmtpSender.ИмяСервера(хост).ShouldBe(имя);
+    }
+
+    [Theory]
     [InlineData("mail.example.com:465")]
-    [InlineData("mail.example.com/")]
+    [InlineData("https://mail.example.com:465")]
+    [InlineData("mail.example.com/smtp")]
     public async Task Адрес_вместо_имени_сервера_отказ_с_понятным_текстом(string хост)
     {
         await using var scope = база.Scope();

@@ -134,4 +134,9 @@ export const api = {
   del: <T = null>(path: string) => request<T>('DELETE', path),
 };
 
-export const errorText = (err: unknown): string => (err instanceof ApiError ? err.message : 'Что-то пошло не так.');
+/** Текст ошибки; `details.reason` (ответ чужого сервера — SMTP, Key Manager) точнее общего сообщения. */
+export const errorText = (err: unknown): string => {
+  if (!(err instanceof ApiError)) return 'Что-то пошло не так.';
+  const reason = err.details?.reason;
+  return typeof reason === 'string' && reason ? reason : err.message;
+};

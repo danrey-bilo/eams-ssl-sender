@@ -94,7 +94,23 @@ internal sealed class SmtpSender(SystemSecrets secrets) : IMailSender
             throw new AppException(ErrorCodes.Validation, "Адрес почтового сервера не задан.");
         }
 
-        return new SmtpSession(policy, хост, secrets);
+        return new SmtpSession(policy, ИмяСервера(хост), secrets);
+    }
+
+    /// <summary>
+    /// «https://mail.example.com/» → «mail.example.com».
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Схему вписывают по привычке адреса из браузера, и смысл у неё один — это имя сервера.
+    /// Порт и путь не срезаются: «host:465» с портом 587 в настройке — противоречие, которое
+    /// решать администратору, а не нам; на них сессия отказывает с понятным текстом.
+    /// </remarks>
+    internal static string ИмяСервера(string хост)
+    {
+        var имя = хост.Trim();
+        var схема = имя.IndexOf("://", StringComparison.Ordinal);
+
+        return (схема >= 0 ? имя[(схема + 3)..] : имя).TrimEnd('/');
     }
 
     /// <summary>Кодировка тем и тел — одна на всё.</summary>

@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react';
-import { api, ApiError, Cancelled, errorText } from '../lib/api';
+import { api, Cancelled, errorText } from '../lib/api';
 import { fmtDate, fmtDateTime } from '../lib/format';
 import { useLoad } from '../lib/hooks';
 import { loadSettings, saveSettings, text, type Settings } from '../lib/settings';
@@ -29,9 +29,7 @@ export function KeyManagerPage() {
       const r = await api.post<{ certificates: number }>('/api/keymanager/test');
       toast('Связь есть · сертификатов: ' + r.certificates);
     } catch (err) {
-      if (err instanceof Cancelled) return;
-      const reason = err instanceof ApiError ? err.details?.reason : undefined;
-      toast(typeof reason === 'string' ? reason : errorText(err), 'err');
+      if (!(err instanceof Cancelled)) toast(errorText(err), 'err');
     }
   };
 
