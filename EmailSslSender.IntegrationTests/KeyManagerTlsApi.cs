@@ -182,7 +182,13 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
                     return Results.Json(new { result = new { status = "Failed", message = "Invalid API key" } });
                 }
 
-                var вход = JsonNode.Parse(контекст.Request.Query["INPUT_DATA"].ToString())!["operation"]!["Details"]!;
+                // Как живой 7.1.1: параметр, не объявленный для метода, — 400 от фильтра безопасности.
+                if (метод == "getAllSSLCertsExpiryDate" && контекст.Request.Query.Count > 0)
+                {
+                    return Results.Text("EXTRA_PARAM_FOUND", "text/html", statusCode: 400);
+                }
+
+                JsonNode Вход() => JsonNode.Parse(контекст.Request.Query["INPUT_DATA"].ToString())!["operation"]!["Details"]!;
 
                 return метод switch
                 {
@@ -197,12 +203,11 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
                                 ["Common Name"] = "site.example.com",
                                 ["serialNumber"] = "0a1b2c",
                                 ["ExpiryDate"] = "Oct 2, 2027",
-                                ["formattedExpiryDate"] = "2027-10-02",
                             },
                         },
                     }),
                     "getCertificate" => Results.File(
-                        вход["fileType"]!.GetValue<string>() == "KEY"
+                        Вход()["fileType"]!.GetValue<string>() == "KEY"
                             ? ЗакрытыйКлюч
                             : "-----BEGIN CERTIFICATE-----\nзаглушка\n"u8.ToArray(),
                         "application/octet-stream"),

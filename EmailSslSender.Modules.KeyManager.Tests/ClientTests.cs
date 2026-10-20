@@ -36,6 +36,55 @@ public sealed class ClientTests
     }
 
     [Fact]
+    public async Task Список_запрашивается_без_INPUT_DATA()
+    {
+        // 7.1.1 (build 7110) на INPUT_DATA у этого метода отвечает 400 EXTRA_PARAM_FOUND.
+        var заглушка = new Заглушка(_ => Json("""{"name":"x","result":{"status":"Success"},"details":[]}"""));
+
+        await Клиент(заглушка).ListAsync(Ct);
+
+        заглушка.Запросы.Single().RequestUri!.Query.ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task Код_фильтра_безопасности_попадает_в_текст_отказа()
+    {
+        var заглушка = new Заглушка(_ => new HttpResponseMessage(HttpStatusCode.BadRequest)
+        {
+            Content = new StringContent("EXTRA_PARAM_FOUND\n", Encoding.Latin1, "text/html"),
+        });
+
+        var ошибка = await Should.ThrowAsync<KeyManagerException>(() => Клиент(заглушка).ListAsync(Ct));
+
+        ошибка.Message.ShouldBe("Key Manager Plus ответил 400 на getAllSSLCertsExpiryDate: EXTRA_PARAM_FOUND.");
+    }
+
+    [Fact]
+    public async Task Страница_ошибки_не_попадает_в_текст_отказа()
+    {
+        var заглушка = new Заглушка(_ => new HttpResponseMessage(HttpStatusCode.BadGateway)
+        {
+            Content = new StringContent("<html><body>upstream 10.0.0.5 down</body></html>", Encoding.UTF8, "text/html"),
+        });
+
+        var ошибка = await Should.ThrowAsync<KeyManagerException>(() => Клиент(заглушка).ListAsync(Ct));
+
+        ошибка.Message.ShouldBe("Key Manager Plus ответил 502 на getAllSSLCertsExpiryDate.");
+    }
+
+    [Fact]
+    public async Task Неверный_ключ_с_кодом_200_говорит_про_ключ()
+    {
+        // Так отвечает живой 7.1.1: AuthenticationFailure в конверте, HTTP 200.
+        var заглушка = new Заглушка(_ => Json(
+            """{"result":{"message":"Login Failed!","status":"Failure"},"name":"AuthenticationFailure"}"""));
+
+        var ошибка = await Should.ThrowAsync<KeyManagerException>(() => Клиент(заглушка).ListAsync(Ct));
+
+        ошибка.Message.ShouldBe("Key Manager Plus не принял ключ API (Login Failed!).");
+    }
+
+    [Fact]
     public async Task Вход_едет_в_INPUT_DATA_конвертом_operation_Details()
     {
         var заглушка = new Заглушка(_ => Файл("-----BEGIN CERTIFICATE-----\n"u8.ToArray()));
@@ -71,9 +120,19 @@ public sealed class ClientTests
         список.Count.ShouldBe(2, "строка без серийного номера пропускается, а не роняет опрос");
         список[0].ShouldBe(new KmpCertificate("*.zoho.com", "c745dcae53f59103beda2477ccce73a", new DateOnly(2025, 10, 2)));
         список[1].ShouldBe(new KmpCertificate("site.example.com", "0a1b", new DateOnly(2027, 8, 27)));
+    }
 
-        var вход = JsonNode.Parse(Параметр(заглушка.Запросы.Single(), "INPUT_DATA"))!;
-        вход["operation"]!["Details"]!["customExpiryDateFormat"]!.GetValue<string>().ShouldBe("yyyy-MM-dd");
+    [Theory]
+    [InlineData("Oct 2, 2025", "2025-10-02")]
+    [InlineData("Oct 23, 2026", "2026-10-23")]
+    [InlineData(" Oct 23, 2026 1:59:59 AM ", "2026-10-23")]
+    [InlineData("2026-10-23", "2026-10-23")]
+    [InlineData("скоро", null)]
+    public void Срок_разбирается_терпимо(string текст, string? ожидается)
+    {
+        var дата = KeyManagerClient.Дата(new JsonObject { ["ExpiryDate"] = текст });
+
+        дата.ShouldBe(ожидается is null ? null : DateOnly.Parse(ожидается, System.Globalization.CultureInfo.InvariantCulture));
     }
 
     [Fact]

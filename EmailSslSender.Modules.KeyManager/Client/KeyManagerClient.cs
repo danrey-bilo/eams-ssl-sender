@@ -4,6 +4,7 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 
 namespace EmailSslSender.Modules.KeyManager.Client;
 
@@ -56,6 +57,12 @@ internal interface IKeyManagerClient : IDisposable
 /// ⚠ <b>Вход — JSON в параметре <c>INPUT_DATA</c></b> вида <c>{"operation":{"Details":{…}}}</c>,
 /// для GET — в строке запроса, закодированным.
 ///
+/// ⚠ ⚠ <b><c>getAllSSLCertsExpiryDate</c> зовётся без <c>INPUT_DATA</c>.</b> Фильтр
+/// безопасности Key Manager Plus пускает к каждому адресу только объявленные параметры, и 7.1.1
+/// (build 7110) на <c>INPUT_DATA</c> у этого метода отвечает <c>400 EXTRA_PARAM_FOUND</c> — хотя
+/// документация обещает <c>customExpiryDateFormat</c> с build 7040. Срок берётся из
+/// <c>ExpiryDate</c> («Oct 2, 2025»). Неизвестный параметр на любом методе даёт тот же отказ.
+///
 /// ⚠ ⚠ <b>Конверт ответа у Key Manager Plus непостоянен</b>, и разбор терпим к этому нарочно:
 /// <c>result.status</c> у одних методов и плоский <c>Status</c> у других, <c>Success</c> и
 /// <c>SUCCESS</c>, <c>details</c> — то массив, то объект. Коды ошибок и формат отказа не описаны
@@ -66,7 +73,7 @@ internal interface IKeyManagerClient : IDisposable
 /// Принимается файл как есть; JSON вместо файла — отказ, с перечнем ключей ответа (не значений:
 /// в них может лежать ключ) — по нему клиент дописывается после сверки с живым сервером.
 /// </remarks>
-internal sealed class KeyManagerClient(HttpClient http, string apiKey) : IKeyManagerClient
+internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) : IKeyManagerClient
 {
     /// <summary>Заголовок с ключом API.</summary>
     internal const string Заголовок = "AUTHTOKEN";
@@ -74,15 +81,9 @@ internal sealed class KeyManagerClient(HttpClient http, string apiKey) : IKeyMan
     /// <summary>Путь методов относительно адреса сервера.</summary>
     internal const string Путь = "api/pki/restapi/";
 
-    /// <summary>Формат даты, который просим у <c>getAllSSLCertsExpiryDate</c> (build ≥ 7040).</summary>
-    private const string ФорматДаты = "yyyy-MM-dd";
-
     public async Task<IReadOnlyList<KmpCertificate>> ListAsync(CancellationToken cancellationToken = default)
     {
-        using var ответ = await ЗапроситьAsync(
-            "getAllSSLCertsExpiryDate",
-            new JsonObject { ["customExpiryDateFormat"] = ФорматДаты },
-            cancellationToken);
+        using var ответ = await ЗапроситьAsync("getAllSSLCertsExpiryDate", детали: null, cancellationToken);
 
         var корень = await JsonAsync(ответ, cancellationToken);
         Проверить(корень, "список сертификатов");
@@ -171,15 +172,21 @@ internal sealed class KeyManagerClient(HttpClient http, string apiKey) : IKeyMan
     public void Dispose() => http.Dispose();
 
     /// <summary>
-    /// Отправить GET с <c>INPUT_DATA</c> и ключом в заголовке; неуспешный HTTP — отказ.
+    /// Отправить GET с ключом в заголовке и <c>INPUT_DATA</c>, если есть детали; неуспешный
+    /// HTTP — отказ.
     /// </summary>
     private async Task<HttpResponseMessage> ЗапроситьAsync(
-        string метод, JsonObject детали, CancellationToken cancellationToken)
+        string метод, JsonObject? детали, CancellationToken cancellationToken)
     {
-        var вход = new JsonObject { ["operation"] = new JsonObject { ["Details"] = детали } }.ToJsonString();
+        var адрес = Путь + метод;
 
-        using var запрос = new HttpRequestMessage(
-            HttpMethod.Get, $"{Путь}{метод}?INPUT_DATA={Uri.EscapeDataString(вход)}");
+        if (детали is not null)
+        {
+            var вход = new JsonObject { ["operation"] = new JsonObject { ["Details"] = детали } }.ToJsonString();
+            адрес += $"?INPUT_DATA={Uri.EscapeDataString(вход)}";
+        }
+
+        using var запрос = new HttpRequestMessage(HttpMethod.Get, адрес);
 
         запрос.Headers.TryAddWithoutValidation(Заголовок, apiKey);
 
@@ -236,12 +243,25 @@ internal sealed class KeyManagerClient(HttpClient http, string apiKey) : IKeyMan
         _ => $"сбой HTTP ({ошибка.HttpRequestError})",
     };
 
-    /// <summary>Текст отказа из тела ответа, если тело — конверт Key Manager Plus.</summary>
+    /// <summary>
+    /// Текст отказа из тела ответа: сообщение конверта Key Manager Plus или код фильтра
+    /// безопасности (<c>EXTRA_PARAM_FOUND</c>, <c>INVALID_METHOD</c>).
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Прочее тело (HTML прокси, страница Tomcat) в текст не попадает: он едет в лог и в
+    /// <c>last_error</c>.
+    /// </remarks>
     private static async Task<string> ПричинаAsync(HttpResponseMessage ответ, CancellationToken cancellationToken)
     {
+        var текст = (await ответ.Content.ReadAsStringAsync(cancellationToken)).Trim();
+
+        if (КодОтказа().IsMatch(текст))
+        {
+            return $": {текст}";
+        }
+
         try
         {
-            var текст = await ответ.Content.ReadAsStringAsync(cancellationToken);
             var корень = JsonNode.Parse(текст) as JsonObject;
             var сообщение = корень is null ? null : Сообщение(корень);
 
@@ -252,6 +272,10 @@ internal sealed class KeyManagerClient(HttpClient http, string apiKey) : IKeyMan
             return string.Empty;
         }
     }
+
+    /// <summary>Тело-код фильтра безопасности Key Manager Plus: одно слово заглавными.</summary>
+    [GeneratedRegex("^[A-Z][A-Z0-9_]{2,63}$")]
+    private static partial Regex КодОтказа();
 
     private static async Task<JsonObject> JsonAsync(HttpResponseMessage ответ, CancellationToken cancellationToken)
     {
@@ -271,6 +295,10 @@ internal sealed class KeyManagerClient(HttpClient http, string apiKey) : IKeyMan
     /// <summary>
     /// Успех — только явное <c>success</c> в любом регистре; иначе отказ с текстом сервера.
     /// </summary>
+    /// <remarks>
+    /// ⚠ Неверный ключ Key Manager Plus отдаёт с кодом <b>200</b>:
+    /// <c>{"name":"AuthenticationFailure","result":{"status":"Failure","message":"Login Failed!"}}</c>.
+    /// </remarks>
     private static void Проверить(JsonObject корень, string что)
     {
         var статус = Статус(корень);
@@ -281,11 +309,15 @@ internal sealed class KeyManagerClient(HttpClient http, string apiKey) : IKeyMan
         }
 
         var сообщение = Сообщение(корень);
+        var текст = string.IsNullOrWhiteSpace(сообщение) ? $"статус «{статус ?? "нет"}»" : сообщение;
 
-        throw new KeyManagerException(
-            $"Key Manager Plus отказал ({что}): "
-            + (string.IsNullOrWhiteSpace(сообщение) ? $"статус «{статус ?? "нет"}»" : сообщение));
+        throw new KeyManagerException(ОтказВхода(корень)
+            ? $"Key Manager Plus не принял ключ API ({текст})."
+            : $"Key Manager Plus отказал ({что}): {текст}");
     }
+
+    private static bool ОтказВхода(JsonObject корень) =>
+        string.Equals(Строка(корень, "name"), "AuthenticationFailure", StringComparison.OrdinalIgnoreCase);
 
     private static string? Статус(JsonObject корень) =>
         Строка(корень["result"] as JsonObject, "status") ?? Строка(корень, "Status") ?? Строка(корень, "status");
@@ -313,22 +345,26 @@ internal sealed class KeyManagerClient(HttpClient http, string apiKey) : IKeyMan
     }
 
     /// <summary>
-    /// Срок действия: сперва заказанный <c>formattedExpiryDate</c>, затем <c>ExpiryDate</c>
-    /// вида «Oct 2, 2025».
+    /// Срок действия из <c>ExpiryDate</c> вида «Oct 2, 2025»; со временем или в ISO — тоже.
     /// </summary>
-    private static DateOnly? Дата(JsonObject элемент)
+    /// <remarks>
+    /// ⚠ Неразобранная дата — <c>null</c>, а не отказ: срок только показывается и упорядочивает
+    /// сертификаты, а текущий выбирается по времени появления.
+    /// </remarks>
+    internal static DateOnly? Дата(JsonObject элемент)
     {
+        var текст = Строка(элемент, "ExpiryDate")?.Trim();
+
         if (DateOnly.TryParseExact(
-                Строка(элемент, "formattedExpiryDate"), ФорматДаты, CultureInfo.InvariantCulture,
-                DateTimeStyles.None, out var заказанная))
+                текст, ["MMM d, yyyy", "MMM dd, yyyy", "yyyy-MM-dd"], CultureInfo.InvariantCulture,
+                DateTimeStyles.None, out var дата))
         {
-            return заказанная;
+            return дата;
         }
 
-        return DateOnly.TryParseExact(
-            Строка(элемент, "ExpiryDate"), ["MMM d, yyyy", "MMM dd, yyyy"], CultureInfo.InvariantCulture,
-            DateTimeStyles.None, out var обычная)
-            ? обычная
+        return DateTime.TryParse(
+            текст, CultureInfo.InvariantCulture, DateTimeStyles.AllowWhiteSpaces, out var сВременем)
+            ? DateOnly.FromDateTime(сВременем)
             : null;
     }
 
