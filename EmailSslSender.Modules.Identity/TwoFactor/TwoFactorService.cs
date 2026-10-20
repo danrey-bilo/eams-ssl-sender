@@ -28,8 +28,9 @@ internal sealed record TwoFactorSetup(string Secret, string Uri);
 /// <param name="Confirmed">Фактор действует.</param>
 /// <param name="Required">Система требует его от этого человека.</param>
 /// <remarks>
-/// ⚠ Кодов восстановления в системе нет (решение 0061): запасной путь у фактора один — письмо.
-/// Поля «осталось кодов» здесь не бывает, и экрана, который бы его показывал, — тоже.
+/// ⚠ Кодов восстановления в системе нет (решение 0061), и письмо подтверждённый аутентификатор
+/// не заменяет (ревью 2026-10-20): потерявшему телефон фактор снимает другой администратор или
+/// консоль. Поля «осталось кодов» здесь не бывает, и экрана, который бы его показывал, — тоже.
 /// </remarks>
 internal sealed record TwoFactorStatus(bool Enrolled, bool Confirmed, bool Required);
 
@@ -151,9 +152,12 @@ internal sealed class TwoFactorService(
     /// выбрасывает хозяина отовсюду. Выгнать все сессии по-прежнему можно — осознанно и своей
     /// кнопкой на экране сессий, а не побочным действием включения.
     ///
-    /// ⚠ <b>Кодов восстановления нет.</b> Потерял аутентификатор — берёт код письмом: экран
-    /// вызова предлагает переключиться, а <see cref="SecondFactorPolicy"/> отдаёт почту тому,
-    /// кто выбрал её сам. Цена — установка без настроенной почты (риск Р11).
+    /// ⚠ ⚠ <b>Кодов восстановления нет, и письмо их больше не заменяет</b> (ревью безопасности
+    /// 2026-10-20). Подтверждённый аутентификатор — единственный второй фактор своего владельца
+    /// (<see cref="SecondFactorPolicy"/>): запасной путь «код письмом» вместе с публичным сбросом
+    /// пароля отдавал учётную запись тому, у кого есть один лишь ящик. Потерял аутентификатор —
+    /// фактор снимает другой администратор (<see cref="ResetForAsync"/>) или консольная
+    /// <c>reset-superadmin-2fa</c>.
     /// </remarks>
     public async Task ConfirmAsync(string code, CancellationToken cancellationToken = default)
     {
@@ -320,10 +324,9 @@ internal sealed class TwoFactorService(
     /// Проверить код аутентификатора при входе.
     /// </summary>
     /// <remarks>
-    /// ⚠ ⚠ <b>Кода восстановления здесь больше нет</b> (решение 0061). Второй способ ввести
-    /// код — письмо, и проверяет его <see cref="LoginCodes"/>: путь входа спрашивает обе службы
-    /// подряд и принимает то, что подошло. Отсюда следствие, о котором легко забыть: эта служба
-    /// на код письмом отвечает <c>false</c>, и это не отказ, а «не моё».
+    /// ⚠ ⚠ <b>Кода восстановления здесь больше нет</b> (решение 0061). Код письмом проверяет
+    /// <see cref="LoginCodes"/>, и путь входа спрашивает ровно одну из двух служб: владельца
+    /// аутентификатора — эту, прочих — ту (ревью 2026-10-20: письмо аутентификатор не заменяет).
     /// </remarks>
     public async Task<bool> VerifyAsync(Guid userId, string code, CancellationToken cancellationToken = default)
     {
@@ -410,12 +413,16 @@ internal sealed class TwoFactorService(
     /// Причина в журнале своя (<c>reauth_bad_password</c>), а не общая с входом: разбирающему
     /// происшествие важно, что подбирали не на форме входа, а внутри уже открытой сессии — это
     /// разные истории с разной реакцией.
+    ///
+    /// ⚠ Попытка занимается ДО argon2 одним условным обновлением и возвращается верным паролем
+    /// (ревью 2026-10-20, разбор у <see cref="LoginFailures"/>): порог не зависит от числа
+    /// одновременных запросов.
     /// </remarks>
     private async Task EnsurePasswordAsync(User user, string password, CancellationToken cancellationToken)
     {
         var now = clock.GetUtcNow();
 
-        if (user.LockedUntil is { } until && until > now)
+        if (!await failures.TakeAsync(user.Id, now, cancellationToken))
         {
             throw new AppException(
                 ErrorCodes.InvalidCredentials, "Пароль неверен", HttpStatusCode.BadRequest);
@@ -423,10 +430,12 @@ internal sealed class TwoFactorService(
 
         if (await passwords.VerifyAsync(user.PasswordHash, password, cancellationToken))
         {
+            await failures.ReturnAsync(user.Id, cancellationToken);
+
             return;
         }
 
-        await failures.RecordAsync(user, "reauth_bad_password", now, cancellationToken);
+        await failures.DenyAsync(user, "reauth_bad_password", cancellationToken);
 
         throw new AppException(
             ErrorCodes.InvalidCredentials, "Пароль неверен", HttpStatusCode.BadRequest);

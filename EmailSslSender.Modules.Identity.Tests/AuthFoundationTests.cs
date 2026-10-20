@@ -157,8 +157,8 @@ public sealed class AuthFoundationTests(IdentityDatabase database) : IAsyncLifet
     }
 
     /// <summary>
-    /// Человек, который второй фактор уже подтверждал (например, аутентификатором, а потом
-    /// выбрал письмо). Только у такого вход спрашивает код письмом.
+    /// Человек, который второй фактор уже подтверждал, а аутентификатора сейчас нет (например,
+    /// отключил его). Такому вход спрашивает код письмом и даёт по нему рабочую сессию.
     /// </summary>
     private async Task<User> ConfiguredUserAsync()
     {
@@ -169,26 +169,56 @@ public sealed class AuthFoundationTests(IdentityDatabase database) : IAsyncLifet
     }
 
     /// <summary>
-    /// Без подтверждённого фактора вход по паролю даёт сессию настройки — даже при работающей почте.
+    /// Без подтверждённого фактора при работающей почте пароль даёт расписку и письмо, а код из
+    /// письма — сессию настройки, не рабочую.
     /// </summary>
     /// <remarks>
-    /// ⚠ ⚠ Правило этой установки: каждая учётная запись — администратор, и, как у
-    /// суперпользователя EAMS, приложение-аутентификатор обязательно. Код письмом до первого
-    /// подтверждения фактора не выдаётся: иначе вход держался бы на одном почтовом ящике, а
-    /// сломанный SMTP запирал бы снаружи всех администраторов разом.
+    /// ⚠ ⚠ ⚠ <b>Факт перевёрнут ревью безопасности 2026-10-20.</b> Прежде здесь требовалось
+    /// обратное: «код письмом до первого подтверждения не выдаётся», и сессия настройки давалась по
+    /// одному паролю — с доводом «иначе вход держался бы на одном ящике, а сломанный SMTP запирал бы
+    /// всех». Цена довода оказалась хуже: в сессии настройки узнавший пароль подключал СВОЙ
+    /// аутентификатор и становился полноправным администратором без единого кода. Теперь при
+    /// настроенной почте нужен и пароль, и ящик; аутентификатор по-прежнему обязателен — код из
+    /// письма открывает только его подключение. Сломанный SMTP задевает тех, кто фактор ещё не
+    /// подключал; у подключивших вход идёт аутентификатором и от почты не зависит.
     /// </remarks>
     [Fact]
-    public async Task Без_подтверждённого_фактора_вход_даёт_настройку_даже_при_работающей_почте()
+    public async Task Без_подтверждённого_фактора_при_работающей_почте_нужен_код_и_даётся_настройка()
     {
         var user = await UserAsync();
         database.Почта.Настроена = true;
         database.Почта.Исход = MailQueueResult.Queued;
         database.Почта.Письма.Clear();
 
+        var refusal = await Should.ThrowAsync<AppException>(() => SignInAsync(user.Email));
+
+        refusal.Code.ShouldBe(ErrorCodes.TwoFactorRequired, "сессия настройки выдана по одному паролю");
+        refusal.Details!["method"].ShouldBe(SecondFactorMethods.Email);
+
+        var challenge = (string)refusal.Details["challenge"]!;
+        var code = database.Почта.Последнее(user.Email)!.Values["code"];
+
+        await using var scope = database.Scope();
+        var outcome = await scope.ServiceProvider.GetRequiredService<SignInService>().CompleteTwoFactorAsync(
+            challenge, code, new RequestOrigin(null, "test"), cancellationToken: Ct);
+
+        (await ResolveAsync(outcome.Pair.Access)).MustEnrollTwoFactor
+            .ShouldBeTrue("код письмом выдал рабочую сессию — аутентификатор перестал быть обязательным");
+    }
+
+    /// <summary>Без почты (свежая установка) пароль по-прежнему даёт сессию настройки.</summary>
+    /// <remarks>
+    /// ⚠ Настроить почту можно только войдя: требовать письмо, которое некуда послать, — запертая
+    /// дверь без ключа. Принятый риск второго послабления <c>SecondFactorPolicy</c>.
+    /// </remarks>
+    [Fact]
+    public async Task Без_почты_и_фактора_пароль_даёт_сессию_настройки()
+    {
+        var user = await UserAsync();
+
         var outcome = await SignInAsync(user.Email);
 
         (await ResolveAsync(outcome.Pair.Access)).MustEnrollTwoFactor.ShouldBeTrue();
-        database.Почта.Письма.ShouldNotContain(letter => letter.To == user.Email, "код письмом до первого подтверждения не выдаётся");
     }
 
     [Fact]

@@ -11,6 +11,7 @@ using EmailSslSender.Modules.KeyManager;
 using EmailSslSender.Modules.Mail;
 using EmailSslSender.Modules.Settings;
 using EmailSslSender.Modules.Tokens;
+using EmailSslSender.Shared.Api;
 using EmailSslSender.Shared.Contracts.Audit;
 using EmailSslSender.Shared.Contracts.Authz;
 using EmailSslSender.Shared.Contracts.Settings;
@@ -89,7 +90,9 @@ builder.Services.AddRateLimiter(limiter =>
             return RateLimitPartition.GetNoLimiter("прочее");
         }
 
-        var address = context.Connection.RemoteIpAddress?.ToString() ?? "неизвестно";
+        // ⚠ IPv6 — по сети /64, а не по адресу: своя /64 у абонента — это 2⁶⁴ адресов, и предел
+        // «на адрес» обходился бы сменой адреса на каждую попытку (RateLimitAddress).
+        var address = RateLimitAddress.Key(context.Connection.RemoteIpAddress) ?? "неизвестно";
 
         return RateLimitPartition.GetFixedWindowLimiter(
             $"{group.Name}:{address}",

@@ -181,6 +181,8 @@ public sealed class SignInAtomicityTests(IdentityDatabase database)
             provider.GetRequiredService<ISettingsReader>(),
             provider.GetRequiredService<IAuditWriter>(),
             provider.GetRequiredService<SignInAttempts>(),
+            provider.GetRequiredService<LoginFailures>(),
+            provider.GetRequiredService<TwoFactor.ChallengeAttempts>(),
             provider.GetRequiredService<TimeProvider>());
 
         return (await service.SignInAsync(email, password, Origin, cancellationToken: Ct)).Pair;

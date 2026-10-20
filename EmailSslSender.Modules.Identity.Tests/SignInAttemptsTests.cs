@@ -32,4 +32,24 @@ public sealed class SignInAttemptsTests
         Should.NotThrow(() => попытки.Require(Офис, "boris@example.com"), "сосед по адресу заперт чужим перебором");
         Should.NotThrow(() => попытки.Require(IPAddress.Parse("198.51.100.1"), "anna@example.com"), "другой адрес заперт");
     }
+
+    /// <summary>Адреса одной IPv6-сети /64 делят один предел.</summary>
+    /// <remarks>
+    /// ⚠ Своя /64 у абонента — 2⁶⁴ адресов: без свёртки перебирающий брал новый адрес на каждую
+    /// попытку, и предел на пару «адрес + почта» не ограничивал ничего.
+    /// </remarks>
+    [Fact]
+    public void Адреса_одной_сети_64_делят_предел()
+    {
+        using var попытки = new SignInAttempts(new IdentityModuleOptions { SignInAttemptsPerMinute = 2 });
+
+        попытки.Require(IPAddress.Parse("2001:db8:5:6::1"), "anna@example.com");
+        попытки.Require(IPAddress.Parse("2001:db8:5:6::2"), "anna@example.com");
+
+        Should.Throw<AppException>(() => попытки.Require(IPAddress.Parse("2001:db8:5:6:ffff::3"), "anna@example.com"))
+            .Code.ShouldBe(ErrorCodes.RateLimited, "смена адреса внутри своей /64 обошла предел");
+
+        Should.NotThrow(
+            () => попытки.Require(IPAddress.Parse("2001:db8:5:7::1"), "anna@example.com"), "соседняя /64 заперта чужим перебором");
+    }
 }

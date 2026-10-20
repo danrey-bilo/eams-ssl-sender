@@ -64,6 +64,9 @@ internal sealed class StepUpService(
     /// ⚠ <b>Проверка кода и засчёт неудачи — ВНЕ транзакции.</b> Отказ, брошенный внутри неё,
     /// откатил бы и счётчик, и строку журнала (писатель журнала кладёт строку в транзакцию
     /// вызывающего). Образец — переспрос пароля в <see cref="TwoFactorService"/>.
+    ///
+    /// ⚠ Попытка занимается до проверки (<see cref="LoginFailures.TakeAsync"/>) и возвращается
+    /// верным кодом — порог не зависит от числа одновременных запросов.
     /// </remarks>
     public async Task<DateTimeOffset> ConfirmAsync(string code, CancellationToken cancellationToken = default)
     {
@@ -86,11 +89,12 @@ internal sealed class StepUpService(
             ?? throw new AppException(
                 ErrorCodes.UserInactive, "Учётная запись отключена", HttpStatusCode.Unauthorized);
 
-        // ⚠ Запертая учётная запись переподтверждения не проходит — и код при этом не
-        // проверяется вовсе: иначе блокировка закрывала бы вход и оставляла открытым подбор кода
-        // из уже захваченной сессии. Счётчик здесь не растёт (разбор вечной блокировки — у
-        // SignInService.CountFailureAsync).
-        if (человек.LockedUntil is { } until && until > сейчас)
+        // ⚠ ⚠ Попытка занимается ДО проверки кода, одним условным обновлением (ревью 2026-10-20,
+        // разбор у LoginFailures): прежде блокировка читалась из загруженной строки, и
+        // одновременные запросы из захваченной сессии получали каждый свою догадку. Не заняли —
+        // учётная запись заперта, и код не проверяется вовсе: иначе блокировка закрывала бы вход и
+        // оставляла открытым подбор кода из уже захваченной сессии.
+        if (!await failures.TakeAsync(кто, сейчас, cancellationToken))
         {
             await ОтказатьAsync(кто, токен, "locked", cancellationToken);
 
@@ -99,22 +103,27 @@ internal sealed class StepUpService(
 
         // ⚠ Код расходуется и без транзакции: принятый шаг записывается условным обновлением,
         // которое фиксируется само.
-        var принят = await factors.VerifyAsync(кто, code, cancellationToken)
-            || await codes.VerifyAsync(кто, code, cancellationToken, токен.ToString("N"), Purposes.StepUpCode);
+        //
+        // ⚠ ⚠ Проверяется ровно один способ, как и на входе (ревью 2026-10-20): у владельца
+        // аутентификатора — только его код, письмо его не заменяет (SecondFactorPolicy).
+        var принят = await factors.ConfirmedAsync(кто, cancellationToken)
+            ? await factors.VerifyAsync(кто, code, cancellationToken)
+            : await codes.VerifyAsync(кто, code, cancellationToken, токен.ToString("N"), Purposes.StepUpCode);
 
         if (!принят)
         {
-            // мутация 2026-09-15: убрал засчёт неудачи (осталась только строка журнала) →
-            // покраснел StepUpTests.Подбор_кода_упирается_в_блокировку.
-            await failures.RecordAsync(
+            // Счёт уже занят — остаётся след в журнале.
+            await failures.DenyAsync(
                 человек,
                 "step_up_bad_code",
-                сейчас,
                 cancellationToken,
                 Строка(кто, токен, AuditResult.Deny, "invalid_code"));
 
             throw Отказ();
         }
+
+        // Код верен — попытка неудачей не была.
+        await failures.ReturnAsync(кто, cancellationToken);
 
         var помечен = await db.InTransactionAsync(
             async token =>

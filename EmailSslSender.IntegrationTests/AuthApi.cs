@@ -239,6 +239,40 @@ public sealed class AuthApi(SenderHost host)
         Refresh(refreshed).ShouldNotBe(cookie, "ротация: прежний токен больше не действует");
     }
 
+    /// <summary>
+    /// Половина, взятая из куки, не выносится в тело — даже если просили <c>use_cookie: false</c>.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ ⚠ Ревью безопасности 2026-10-20. Прежде <c>use_cookie: false</c> с пустым полем брало
+    /// половину из куки <c>HttpOnly</c> и возвращало новую телом: сценарий, внедрённый в страницу,
+    /// одним запросом получал на руки то, до чего кука его не допускала, и уносил сессию.
+    /// </remarks>
+    // мутация 2026-10-20: вернул `Respond(…, body.UseCookie)` в Refresh → покраснел этот факт.
+    [Fact]
+    public async Task Половина_из_куки_не_выносится_в_тело()
+    {
+        var email = await ActiveUserAsync();
+
+        var login = await Client().PostAsJsonAsync("/api/auth/login", new { email, password = Strong }, Ct);
+        var cookie = Refresh(login);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, "/api/auth/refresh")
+        {
+            Content = JsonContent.Create(new { use_cookie = false }),
+        };
+
+        request.Headers.Add("Cookie", $"__Host-sender-refresh={cookie}");
+
+        var refreshed = await Client().SendAsync(request, Ct);
+
+        refreshed.StatusCode.ShouldBe(HttpStatusCode.OK);
+
+        var body = (await refreshed.Content.ReadFromJsonAsync<JsonObject>(Ct))!;
+
+        body["refresh_token"].ShouldBeNull("половина из HttpOnly-куки вынесена в тело — под руки сценарию");
+        Refresh(refreshed).ShouldNotBe(cookie, "новая половина обязана уйти кукой");
+    }
+
     [Fact]
     public async Task Повторное_использование_токена_закрывает_сессию()
     {

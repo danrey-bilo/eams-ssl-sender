@@ -429,18 +429,23 @@ public sealed class TwoFactorTests(IdentityDatabase database)
     }
 
     /// <summary>
-    /// Потерявший аутентификатор просит код письмом — той же распиской, с того же экрана.
+    /// Владельцу аутентификатора код письмом не шлётся — и не принимается, даже если нашёлся бы.
     /// </summary>
     /// <remarks>
-    /// ⚠ ⚠ <b>Это ЗАМЕНА кодов восстановления</b> (решение владельца 0061), и проверяется здесь
-    /// ровно то, ради чего замена делалась: человек с включённым аутентификатором, у которого
-    /// телефона в руках нет, входит письмом и не зовёт администратора.
+    /// ⚠ ⚠ ⚠ <b>Заменяет факт «потерявший аутентификатор входит кодом из письма»</b> (ревью
+    /// безопасности 2026-10-20). Тот закреплял запасной путь решения 0061 — и вместе с ним
+    /// цепочку «ящик → публичный сброс пароля → вход → код письмом → тот же ящик», которой чужой
+    /// с доступом к почте забирал учётную запись под аутентификатором. Потерявшему телефон
+    /// фактор снимает другой администратор (<c>Снятие_фактора_администратором_возвращает_вход</c>).
     ///
-    /// ⚠ <b>Расписка переживает просьбу.</b> Погасив её, мы отобрали бы вход у того, кто как раз
-    /// попросил помощи: расписки нет, код ещё не пришёл.
+    /// ⚠ Проверены ОБЕ двери: выдача (письма нет) и приём. Код для приёма заводится в обход
+    /// выдачи, прямо под эту расписку, — иначе вторая проверка зеленела бы оттого, что кода просто
+    /// не существует.
     /// </remarks>
+    // мутация 2026-10-20: в CompleteTwoFactorAsync вернул проверку обоих способов подряд
+    // (аутентификатор || письмо) → покраснел этот факт (вход по коду из письма состоялся).
     [Fact]
-    public async Task Потерявший_аутентификатор_входит_кодом_из_письма()
+    public async Task Владельцу_аутентификатора_код_письмом_не_шлётся_и_не_принимается()
     {
         var (id, email) = await UserAsync();
 
@@ -449,24 +454,178 @@ public sealed class TwoFactorTests(IdentityDatabase database)
         await СПочтойAsync(async () =>
         {
             var расписка = await ChallengeAsync(email);
+            var было = database.Почта.Отправленные.Count;
 
-            await InSessionsAsync(async sessions =>
+            var отказ = await Should.ThrowAsync<AppException>(() => InSessionsAsync(async sessions =>
             {
                 await sessions.SendEmailCodeAsync(расписка, Ct);
 
                 return true;
-            });
+            }));
 
+            отказ.Code.ShouldBe(ErrorCodes.TwoFactorInvalid);
+            database.Почта.Отправленные.Count.ShouldBe(было, "владельцу аутентификатора ушёл код письмом");
+
+            // Код письмом, привязанный к ЭТОЙ расписке, — в обход выдачи.
+            await using (var scope = database.Scope())
+            {
+                var db = scope.ServiceProvider.GetRequiredService<Shared.Data.SenderDbContext>();
+                var человек = await db.Set<User>().FirstAsync(строка => строка.Id == id, Ct);
+
+                await scope.ServiceProvider.GetRequiredService<LoginCodes>()
+                    .IssueAsync(человек, Ct, Invitations.CodeBinding(расписка));
+                await db.SaveChangesAsync(Ct);
+            }
+
+            var код = database.Почта.Последнее(email)!.Values["code"];
+
+            var непринят = await Should.ThrowAsync<AppException>(() => InSessionsAsync(sessions =>
+                sessions.CompleteTwoFactorAsync(расписка, код, Origin, cancellationToken: Ct)));
+
+            непринят.Code.ShouldBe(ErrorCodes.TwoFactorInvalid, "код письмом заменил аутентификатор");
+        });
+    }
+
+    /// <summary>
+    /// Без подтверждённого фактора и с настроенной почтой — сначала код письмом, и лишь потом сессия
+    /// настройки.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ ⚠ ⚠ Ревью безопасности 2026-10-20. Прежде способ <c>email</c> у учётной записи, ни разу не
+    /// подтверждавшей фактор, молча подменялся отсутствием фактора: сессия настройки выдавалась по
+    /// одному паролю, и в ней узнавший пароль подключал СВОЙ аутентификатор — полноправный
+    /// администратор без единого кода. Теперь пароль даёт расписку и письмо, а код из письма —
+    /// сессию настройки (без отметки фактора), не рабочую: аутентификатор по-прежнему обязателен.
+    /// </remarks>
+    // мутация 2026-10-20: вернул подмену `email` → `none` при пустом TwoFactorConfiguredAt →
+    // покраснел этот факт (вход по паролю выдал токены).
+    [Fact]
+    public async Task Без_подтверждённого_фактора_вход_просит_код_письмом_и_даёт_сессию_настройки()
+    {
+        var (id, email) = await UserAsync();
+
+        await СПочтойAsync(async () =>
+        {
+            var отказ = await Should.ThrowAsync<AppException>(() => SignInAsync(email));
+
+            отказ.Code.ShouldBe("TWO_FACTOR_REQUIRED", "сессия настройки выдана по одному паролю");
+            отказ.Details!["method"].ShouldBe("email");
+
+            var расписка = (string)отказ.Details!["challenge"]!;
             var письмо = database.Почта.Последнее(email);
 
-            письмо.ShouldNotBeNull("код письмом не ушёл — запасного пути у фактора не осталось");
+            письмо.ShouldNotBeNull("код письмом не ушёл вместе с распиской");
 
-            var пара = await InSessionsAsync(sessions =>
-                sessions.CompleteTwoFactorAsync(
-                    расписка, письмо.Values["code"], Origin, cancellationToken: Ct));
+            var пара = (await InSessionsAsync(sessions => sessions.CompleteTwoFactorAsync(
+                расписка, письмо.Values["code"], Origin, cancellationToken: Ct))).Pair;
 
-            пара.Pair.Access.ShouldNotBeNullOrWhiteSpace();
+            await using var scope = database.Scope();
+
+            var личность = await scope.ServiceProvider.GetRequiredService<Shared.Contracts.Authz.IIdentityResolver>()
+                .ResolveAsync(new Заголовком(пара.Access), Ct);
+
+            личность.ShouldNotBeNull();
+            личность!.MustEnrollTwoFactor.ShouldBeTrue("код письмом выдал рабочую сессию вместо сессии настройки");
+
+            var отмечен = await database.ReadAsync(db => db.Set<User>()
+                .Where(строка => строка.Id == id)
+                .Select(строка => строка.TwoFactorConfiguredAt)
+                .SingleAsync(Ct));
+
+            отмечен.ShouldBeNull("письмо отметило фактор подтверждённым, а подтверждать было нечего");
         });
+    }
+
+    /// <summary>Пришедший с одним заголовком — больше распознавателю ничего не нужно.</summary>
+    private sealed class Заголовком(string access) : Shared.Contracts.Authz.IIdentityRequest
+    {
+        public string? Header(string name) =>
+            name == "Authorization" ? $"Bearer {access}" : null;
+
+        public string? Cookie(string name) => null;
+    }
+
+    /// <summary>
+    /// Опечаток у расписки — <see cref="ChallengeAttempts.Limit"/>, затем она гаснет.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Ревью 2026-10-20: неверный код не гасил ни расписку, ни код письмом, и одна расписка
+    /// перебиралась до блокировки учётной записи. Верный код после исчерпанных попыток — отказ
+    /// «начните заново»: проверяется, что расписка именно погашена, а не что не подошёл код.
+    /// </remarks>
+    // мутация 2026-10-20: снял challengeAttempts.Take из CompleteTwoFactorAsync → покраснел этот факт.
+    [Fact]
+    public async Task Опечатки_ограничены_и_исчерпанная_расписка_гаснет()
+    {
+        var (id, email) = await UserAsync();
+        var secret = await EnableAsync(id);
+
+        var challenge = await ChallengeAsync(email);
+
+        for (var попытка = 1; попытка <= ChallengeAttempts.Limit; попытка++)
+        {
+            var отказ = await Should.ThrowAsync<AppException>(() => InSessionsAsync(sessions =>
+                sessions.CompleteTwoFactorAsync(challenge, "000000", Origin, cancellationToken: Ct)));
+
+            отказ.Code.ShouldBe(ErrorCodes.TwoFactorInvalid);
+            отказ.Details!["can_retry"].ShouldBe(
+                попытка < ChallengeAttempts.Limit, $"попытка {попытка}: обещание повтора не совпало с остатком");
+        }
+
+        var поздно = await Should.ThrowAsync<AppException>(() => InSessionsAsync(sessions =>
+            sessions.CompleteTwoFactorAsync(challenge, CodeFor(secret, steps: 1), Origin, cancellationToken: Ct)));
+
+        поздно.Code.ShouldBe("SESSION_EXPIRED", "исчерпанная расписка приняла верный код");
+    }
+
+    /// <summary>
+    /// Одновременные попытки упираются в порог блокировки: догадок ровно столько, сколько разрешено.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ ⚠ Ревью 2026-10-20. Прежде блокировка читалась из загруженной строки, а неудача
+    /// засчитывалась после проверки — десять одновременных запросов при пороге три проходили
+    /// проверку блокировки все и получали десять догадок. Теперь попытка занимается одним условным
+    /// обновлением ДО проверки, и проверок кода ровно три; остальным — «заперто» без проверки.
+    /// </remarks>
+    // мутация 2026-10-20: заменил LoginFailures.TakeAsync в CompleteTwoFactorAsync на чтение
+    // LockedUntil из загруженной строки с засчётом после проверки → покраснел этот факт.
+    [Fact]
+    public async Task Одновременный_подбор_кода_не_превышает_порог()
+    {
+        var (id, email) = await UserAsync();
+
+        await EnableAsync(id);
+
+        database.Settings.Values["auth.lockout_threshold"] = 3;
+
+        try
+        {
+            // ⚠ Порог (3) ниже предела опечаток расписки (5): иначе проверялся бы не он.
+            var живая = await ChallengeAsync(email);
+            var старт = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            var попытки = Enumerable.Range(0, 10).Select(_ => Task.Run(async () =>
+            {
+                await старт.Task;
+
+                return await Should.ThrowAsync<AppException>(() => InSessionsAsync(sessions =>
+                    sessions.CompleteTwoFactorAsync(живая, "000000", Origin, cancellationToken: Ct)));
+            })).ToList();
+
+            старт.SetResult();
+
+            await Task.WhenAll(попытки);
+
+            var проверено = database.Audit.Entries.Count(строка =>
+                строка.ActorId == id && строка.Reason == "bad_code");
+
+            проверено.ShouldBeLessThanOrEqualTo(3, "одновременные запросы получили больше догадок, чем порог");
+            (await FailuresAsync(id)).ShouldBe(3);
+        }
+        finally
+        {
+            database.Settings.Values.Remove("auth.lockout_threshold");
+        }
     }
 
     /// <summary>По выдуманной расписке письмо не уходит.</summary>
@@ -508,10 +667,12 @@ public sealed class TwoFactorTests(IdentityDatabase database)
         });
     }
 
-    /// <summary>Вызов называет и способ, и то, чем ещё можно подтвердить вход.</summary>
+    /// <summary>Вызов называет способ и то, чем вход будет принят, — и письма у владельца аутентификатора там нет.</summary>
     /// <remarks>
-    /// ⚠ Без этого списка экран «нет доступа к коду?» пришлось бы рисовать наугад — и на
-    /// установке без почты он предлагал бы кнопку в никуда.
+    /// ⚠ ⚠ Прежде здесь требовалось ОБРАТНОЕ: «email» в списке — запасной путь потерявшего телефон.
+    /// Ревью безопасности 2026-10-20 этот путь закрыло: письмо не заменяет подтверждённый
+    /// аутентификатор, и кнопка «код на почту» на экране второго шага не должна появляться даже
+    /// при настроенной почте.
     /// </remarks>
     [Fact]
     public async Task Вызов_называет_доступные_способы()
@@ -532,8 +693,7 @@ public sealed class TwoFactorTests(IdentityDatabase database)
                 .ShouldBeAssignableTo<IReadOnlyList<string>>()
                 .ShouldNotBeNull();
 
-            доступны.ShouldContain("totp");
-            доступны.ShouldContain("email", "иначе запасного пути у потерявшего телефон не видно");
+            доступны.ShouldBe(["totp"], "письмо предложено владельцу аутентификатора — ящик снова ключ от учётной записи");
         });
     }
 

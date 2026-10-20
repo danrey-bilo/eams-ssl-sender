@@ -17,3 +17,12 @@ internal sealed record ActivateIn
     [JsonPropertyName("password")]
     public string Password { get; init; } = string.Empty;
 }
+
+/// <summary>Ссылка приглашения в теле запроса: секрет из письма не попадает в адрес API.</summary>
+internal sealed record ActivationLinkIn
+{
+    [Required]
+    [StringLength(200, MinimumLength = 10)]
+    [JsonPropertyName("token")]
+    public string Token { get; init; } = string.Empty;
+}

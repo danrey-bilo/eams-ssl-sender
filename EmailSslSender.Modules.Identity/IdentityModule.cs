@@ -42,6 +42,9 @@ public static class IdentityModule
         // Предел попыток входа на пару «адрес + почта» — один на процесс.
         services.AddSingleton<SignInAttempts>();
 
+        // Предел кодов на одну расписку второго фактора — тоже один на процесс.
+        services.AddSingleton<ChallengeAttempts>();
+
         // Свои объявления: настройки и таблицы.
         services.AddSingleton<ISettingDeclarationProvider, IdentitySettingDeclarations>();
         services.AddSingleton<IEntityConfigurationProvider, IdentityEntities>();
