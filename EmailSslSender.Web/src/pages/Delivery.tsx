@@ -1,10 +1,12 @@
 import { useMemo, useState } from 'react';
 import { api } from '../lib/api';
+import { isMobile } from '../lib/device';
 import { fmtDate, fmtDateTime } from '../lib/format';
 import { useLoad } from '../lib/hooks';
 import type { KeyManagerStatus, KnownCertificate, MailStatus, Subscription } from '../lib/types';
-import { Check, Dot, Field, Group, PageHead, Spinner, Status, type DotKind } from '../ui/bits';
+import { Check, Dot, Empty, Failed, Field, Group, PageHead, Spinner, Status, type DotKind } from '../ui/bits';
 import { Icon } from '../ui/Icon';
+import { Menu } from '../ui/Menu';
 import { FormModal, Invalid } from '../ui/Modal';
 import { useOverlay } from '../ui/Overlay';
 
@@ -36,7 +38,7 @@ export function DeliveryPage() {
     return map;
   }, [data]);
 
-  if (error) return <div className="card"><p className="error">{error}</p></div>;
+  if (error) return <Failed text={error} />;
   if (!data) return <Spinner />;
 
   const [subscriptions, km, mail, known] = data;
@@ -66,18 +68,39 @@ export function DeliveryPage() {
 
   return (
     <>
-      <PageHead title="Рассылка">{subscriptions.length > 0 && add}</PageHead>
+      <PageHead title="Рассылка" sub="Кому и когда уходят файлы сертификатов">{subscriptions.length > 0 && add}</PageHead>
       <div className="pills">
-        <a className="pill" href="#/keymanager"><Dot kind={kmState[0]} />{kmState[1]}</a>
-        <a className="pill" href="#/mail"><Dot kind={mailState[0]} />{mailState[1]}</a>
+        <a className="pill" href="#/settings/keymanager"><Dot kind={kmState[0]} />{kmState[1]}</a>
+        <a className="pill" href="#/settings/mail"><Dot kind={mailState[0]} />{mailState[1]}</a>
       </div>
 
       {subscriptions.length === 0 ? (
         <div className="card">
-          <div className="empty">
-            <p>Подписок пока нет</p>
-            <p className="small">Подписка — какой сертификат, кому и когда отправлять.</p>
-            {add}
+          <Empty title="Подписок пока нет" hint="Подписка — какой сертификат, кому и когда отправлять.">{add}</Empty>
+        </div>
+      ) : isMobile ? (
+        <div className="card flush">
+          <div className="list">
+            {subscriptions.map(s => {
+              const expires = expiry.get(s.common_name.toLowerCase());
+              return (
+                <div key={s.id} className={'item' + (s.enabled ? '' : ' off')}>
+                  <div className="item-main">
+                    <div className="item-title">{s.common_name}</div>
+                    <div className="item-meta">
+                      {s.recipients[0]}{s.recipients.length > 1 && ' +' + (s.recipients.length - 1)}
+                    </div>
+                    <div className="item-meta">{scheduleText(s)}{expires && ' · до ' + fmtDate(expires)}</div>
+                    <div className="item-status"><LastDelivery s={s} /></div>
+                  </div>
+                  <Menu items={[
+                    { text: 'Отправить сейчас', action: () => send(s) },
+                    { text: 'Изменить', action: () => edit(s) },
+                    { text: 'Удалить', action: () => remove(s), danger: true },
+                  ]} />
+                </div>
+              );
+            })}
           </div>
         </div>
       ) : (
@@ -86,9 +109,9 @@ export function DeliveryPage() {
             <thead>
               <tr>
                 <th>Сертификат</th>
-                <th className="hide-sm">Кому</th>
-                <th className="hide-sm">Файлы</th>
-                <th className="hide-sm">Когда</th>
+                <th>Кому</th>
+                <th>Файлы</th>
+                <th>Когда</th>
                 <th>Последняя отправка</th>
                 <th />
               </tr>
@@ -99,17 +122,17 @@ export function DeliveryPage() {
                 return (
                   <tr key={s.id} className={s.enabled ? '' : 'off'}>
                     <td>
-                      <span>{s.common_name}</span>
+                      <span className="strong">{s.common_name}</span>
                       {expires && <span className="sub">до {fmtDate(expires)}</span>}
                     </td>
-                    <td className="hide-sm" title={s.recipients.join('\n')}>
+                    <td title={s.recipients.join('\n')}>
                       {s.recipients[0]}
                       {s.recipients.length > 1 && <span className="muted"> +{s.recipients.length - 1}</span>}
                     </td>
-                    <td className="hide-sm">
+                    <td>
                       <div className="chips">{s.formats.map(f => <span key={f} className="chip mono">{f}</span>)}</div>
                     </td>
-                    <td className="hide-sm muted">{scheduleText(s)}</td>
+                    <td className="muted">{scheduleText(s)}</td>
                     <td><LastDelivery s={s} /></td>
                     <td className="actions">
                       <button className="icon" title="Отправить сейчас" onClick={() => send(s)}><Icon name="send" /></button>

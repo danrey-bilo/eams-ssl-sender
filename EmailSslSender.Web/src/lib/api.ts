@@ -1,8 +1,13 @@
-// Обращения к API: токен доступа в памяти, обновление пары кукой.
+// Обращения к API: токен доступа в памяти, обновление пары кукой, повтор после кода.
 //
 // ⚠ Токен доступа живёт только в памяти страницы; токен обновления — в куке HttpOnly
 // `__Host-sender-refresh`, до которой сценарий не дотягивается. Перезагрузка страницы
 // восстанавливает сессию обменом куки на новую пару.
+//
+// ⚠ Опасные действия (выгрузка сертификата и ключа, безопасность, люди, подписки, почта)
+// сервер пускает только со свежим кодом второго фактора: отказ `SECOND_FACTOR_REQUIRED`
+// открывает окно кода, и то же действие повторяется само. Код действует несколько минут
+// (по умолчанию 10), и следующие опасные действия за это время его не спрашивают.
 
 import type { Tokens } from './types';
 
@@ -19,7 +24,7 @@ export class ApiError extends Error {
   }
 }
 
-/** Сессия кончилась и показан вход — сообщать об ошибке нечего. */
+/** Действие отменил человек (закрыл окно кода) или сессия кончилась — показывать нечего. */
 export class Cancelled extends Error {}
 
 interface Envelope {
@@ -31,16 +36,18 @@ interface Envelope {
 let token: string | null = null;
 let timer: ReturnType<typeof setTimeout> | undefined;
 let refreshing: Promise<boolean> | null = null;
+let stepping: Promise<boolean> | null = null;
 
 let onSignedOut: (message?: string) => void = () => {};
+let confirmIdentity: (minutes?: number) => Promise<boolean> = async () => false;
 
-/**
- * Кто показывает вход, когда сессия кончилась.
- *
- * ⚠ Второй фактор спрашивается только при входе: действия после входа кода не требуют.
- */
-export function connect(handlers: { signedOut: (message?: string) => void }) {
+/** Кто показывает вход, когда сессия кончилась, и кто спрашивает код перед опасным действием. */
+export function connect(handlers: {
+  signedOut: (message?: string) => void;
+  confirmIdentity: (minutes?: number) => Promise<boolean>;
+}) {
   onSignedOut = handlers.signedOut;
+  confirmIdentity = handlers.confirmIdentity;
 }
 
 export function adopt(tokens: Tokens) {
@@ -93,7 +100,8 @@ export async function publicPost<T>(path: string, body: unknown): Promise<{ ok: 
 
 const SESSION_GONE = ['TOKEN_EXPIRED', 'UNAUTHENTICATED', 'SESSION_REVOKED', 'SESSION_EXPIRED'];
 
-async function request<T>(method: string, path: string, body?: unknown, retry = true): Promise<T> {
+/** Отправить запрос с токеном; удача — ответ как есть, отказ — ApiError или Cancelled. */
+async function send(method: string, path: string, body?: unknown, retry = true, stepUp = true): Promise<Response> {
   const headers: Record<string, string> = {};
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (token) headers.Authorization = 'Bearer ' + token;
@@ -107,14 +115,13 @@ async function request<T>(method: string, path: string, body?: unknown, retry = 
     throw new ApiError(0, 'NETWORK', 'Сервер недоступен.');
   }
 
-  if (r.status === 204 || r.status === 202) return null as T;
-  const data = await r.json().catch(() => null) as (T & Envelope) | null;
-  if (r.ok) return data as T;
+  if (r.ok) return r;
 
+  const data = await r.json().catch(() => null) as Envelope | null;
   const code = data?.code;
 
   if (r.status === 401 && retry && token && (code === 'TOKEN_EXPIRED' || code === 'UNAUTHENTICATED')) {
-    if (await refresh()) return request<T>(method, path, body, false);
+    if (await refresh()) return send(method, path, body, false, stepUp);
   }
 
   if (r.status === 401 && token && code && SESSION_GONE.includes(code)) {
@@ -123,7 +130,32 @@ async function request<T>(method: string, path: string, body?: unknown, retry = 
     throw new Cancelled();
   }
 
+  // ⚠ Опасное действие без свежего кода: спросить код и повторить то же самое. Окно одно на
+  // всех — два запроса, упёршихся одновременно, не откроют два окна.
+  if (r.status === 403 && code === 'SECOND_FACTOR_REQUIRED' && stepUp) {
+    const minutes = typeof data?.details?.window_minutes === 'number' ? data.details.window_minutes : undefined;
+    stepping ??= confirmIdentity(minutes).finally(() => { stepping = null; });
+    if (await stepping) return send(method, path, body, retry, false);
+    throw new Cancelled();
+  }
+
   throw new ApiError(r.status, code, data?.message, data?.details);
+}
+
+async function request<T>(method: string, path: string, body?: unknown, stepUp = true): Promise<T> {
+  const r = await send(method, path, body, true, stepUp);
+  if (r.status === 204 || r.status === 202) return null as T;
+  return await r.json().catch(() => null) as T;
+}
+
+/** Имя файла из Content-Disposition: сперва filename* (UTF-8), затем filename. */
+function fileName(disposition: string | null): string | null {
+  if (!disposition) return null;
+  const star = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(disposition)?.[1];
+  if (star) {
+    try { return decodeURIComponent(star.trim()); } catch { /* ниже — простое имя */ }
+  }
+  return /filename\s*=\s*"?([^";]+)"?/i.exec(disposition)?.[1]?.trim() ?? null;
 }
 
 export const api = {
@@ -132,6 +164,25 @@ export const api = {
   put: <T = null>(path: string, body?: unknown) => request<T>('PUT', path, body ?? {}),
   patch: <T = null>(path: string, body?: unknown) => request<T>('PATCH', path, body ?? {}),
   del: <T = null>(path: string) => request<T>('DELETE', path),
+  /** Подтверждение кодом — без повторного окна, если код не подошёл. */
+  stepUp: (code: string) => request<null>('POST', '/api/me/step-up', { code }, false),
+  /**
+   * Скачать файл ответом на POST: браузер сохраняет его под именем из Content-Disposition.
+   *
+   * ⚠ Через fetch и blob, а не ссылкой: токен доступа живёт в памяти и в адрес не попадает.
+   */
+  download: async (path: string, body: unknown, fallbackName: string) => {
+    const r = await send('POST', path, body);
+    const blob = await r.blob();
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = fileName(r.headers.get('Content-Disposition')) ?? fallbackName;
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  },
 };
 
 /** Текст ошибки; `details.reason` (ответ чужого сервера — SMTP, Key Manager) точнее общего сообщения. */

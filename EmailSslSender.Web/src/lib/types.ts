@@ -11,6 +11,8 @@ export interface Me {
   display_name: string | null;
   must_change_password: boolean;
   must_enroll_two_factor: boolean;
+  /** До какого времени опасные действия не спросят код; null — спросят. */
+  step_up_until?: string | null;
 }
 
 export interface SecondFactorChallenge {
@@ -82,8 +84,21 @@ export interface MailStatus {
 
 export interface Setting {
   key: string;
+  title: string;
+  category: string;
+  type: string;
+  is_security: boolean;
   nullable: boolean;
+  minimum: number | null;
+  maximum: number | null;
+  choices: string[] | null;
   value: unknown;
+  default: unknown;
+}
+
+export interface PrivateKey {
+  private_key: string;
+  passphrase: string | null;
 }
 
 export interface User {

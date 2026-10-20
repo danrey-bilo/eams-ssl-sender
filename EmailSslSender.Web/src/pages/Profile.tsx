@@ -3,7 +3,7 @@ import { api, Cancelled, errorText } from '../lib/api';
 import { agentText, fmtDateTime, passwordRules } from '../lib/format';
 import { useLoad } from '../lib/hooks';
 import type { Me, PasswordPolicy, Session, TwoFactorStatus } from '../lib/types';
-import { ErrorText, Field, PageHead, Spinner, Status } from '../ui/bits';
+import { ErrorText, Failed, Field, PageHead, Spinner, Status } from '../ui/bits';
 import { Icon } from '../ui/Icon';
 import { useOverlay } from '../ui/Overlay';
 
@@ -16,7 +16,7 @@ export function ProfilePage({ onRenamed, onLogout }: { onRenamed: () => void; on
   ]));
   const { run } = useOverlay();
 
-  if (error) return <div className="card"><p className="error">{error}</p></div>;
+  if (error) return <Failed text={error} />;
   if (!data) return <Spinner />;
 
   const [me, sessions, factor, policy] = data;
@@ -45,7 +45,7 @@ export function ProfilePage({ onRenamed, onLogout }: { onRenamed: () => void; on
                     {agentText(s.user_agent)}{s.current && <span className="muted"> · эта</span>}
                     <span className="sub">{s.address ?? ''}</span>
                   </td>
-                  <td className="muted hide-sm">{fmtDateTime(s.last_seen_at)}</td>
+                  <td className="muted">{fmtDateTime(s.last_seen_at)}</td>
                   <td className="actions">
                     {!s.current && (
                       <button className="icon danger" title="Завершить"

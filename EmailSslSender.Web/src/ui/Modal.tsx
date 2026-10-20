@@ -4,8 +4,8 @@ import { Cancelled, errorText } from '../lib/api';
 /**
  * Модальное окно с формой на <dialog>.
  *
- * onSubmit бросает — текст ошибки остаётся в окне, окно не закрывается; Cancelled (сессия
- * кончилась, показан вход) не показывается вовсе.
+ * onSubmit бросает — текст ошибки остаётся в окне, окно не закрывается; Cancelled (человек закрыл
+ * окно кода или сессия кончилась) не показывается вовсе. На телефоне окно — лист снизу (стили).
  */
 export function FormModal({
   title,
@@ -14,6 +14,7 @@ export function FormModal({
   submit = 'Сохранить',
   danger = false,
   cancel = 'Отмена',
+  wide = false,
   onSubmit,
   onClose,
 }: {
@@ -23,6 +24,7 @@ export function FormModal({
   submit?: string;
   danger?: boolean;
   cancel?: string | null;
+  wide?: boolean;
   onSubmit?: () => Promise<unknown> | void;
   onClose: (done: boolean) => void;
 }) {
@@ -51,7 +53,7 @@ export function FormModal({
   };
 
   return (
-    <dialog ref={ref} onCancel={e => { e.preventDefault(); onClose(false); }}>
+    <dialog ref={ref} className={wide ? 'wide' : undefined} onCancel={e => { e.preventDefault(); onClose(false); }}>
       <form noValidate onSubmit={handle}>
         <div>
           <h2>{title}</h2>

@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
 import { api, Cancelled, connect, errorText, forget, refresh } from './lib/api';
+import { isMobile } from './lib/device';
 import { useHashRoute } from './lib/hooks';
 import type { Me, SecondFactorChallenge } from './lib/types';
 import { Enrollment, Login, PasswordChange, SecondFactor } from './pages/Auth';
+import { CertificatesPage } from './pages/Certificates';
 import { DeliveryPage } from './pages/Delivery';
-import { KeyManagerPage } from './pages/KeyManager';
 import { LinkPage } from './pages/LinkPage';
-import { MailPage } from './pages/Mail';
 import { ProfilePage } from './pages/Profile';
+import { SecurityPage } from './pages/Security';
+import { SettingsPage } from './pages/Settings';
 import { UsersPage } from './pages/Users';
 import { Spinner } from './ui/bits';
-import { Brand, Icon } from './ui/Icon';
-import { OverlayProvider } from './ui/Overlay';
+import { Brand, Icon, type IconName } from './ui/Icon';
+import { OverlayProvider, useOverlay } from './ui/Overlay';
+import { StepUpDialog } from './ui/StepUp';
 
 type Screen =
   | { kind: 'loading' }
@@ -21,14 +24,18 @@ type Screen =
   | { kind: 'password' }
   | { kind: 'app'; me: Me };
 
-const NAV: Array<[string, string]> = [
-  ['delivery', 'Рассылка'],
-  ['keymanager', 'Key Manager'],
-  ['mail', 'Почта'],
-  ['users', 'Пользователи'],
+const NAV: Array<[key: string, title: string, icon: IconName]> = [
+  ['delivery', 'Рассылка', 'send'],
+  ['certificates', 'Сертификаты', 'cert'],
+  ['users', 'Пользователи', 'users'],
+  ['settings', 'Настройки', 'settings'],
+  ['security', 'Безопасность', 'lock'],
 ];
 
-const TITLES: Record<string, string> = Object.fromEntries([...NAV, ['profile', 'Профиль']]);
+const TITLES: Record<string, string> = Object.fromEntries([...NAV.map(([k, t]) => [k, t]), ['profile', 'Профиль']]);
+
+/** Старые адреса разделов, которые теперь живут в «Настройках». */
+const MOVED: Record<string, string> = { mail: '#/settings/mail', keymanager: '#/settings/keymanager' };
 
 export function App() {
   // Страницы ссылок из писем живут без сессии и без каркаса панели.
@@ -40,6 +47,7 @@ export function App() {
 
 function Panel() {
   const [screen, setScreen] = useState<Screen>({ kind: 'loading' });
+  const { show } = useOverlay();
 
   /** Куда пускать вошедшего: настройка фактора и смена пароля — раньше всего остального. */
   const enter = useCallback(async () => {
@@ -61,9 +69,12 @@ function Panel() {
   }, []);
 
   useEffect(() => {
-    connect({ signedOut: message => setScreen({ kind: 'login', message }) });
+    connect({
+      signedOut: message => setScreen({ kind: 'login', message }),
+      confirmIdentity: minutes => show(close => <StepUpDialog minutes={minutes} onClose={close} />),
+    });
     void refresh().then(ok => (ok ? enter() : setScreen({ kind: 'login' })));
-  }, [enter]);
+  }, [enter, show]);
 
   switch (screen.kind) {
     case 'loading':
@@ -81,33 +92,83 @@ function Panel() {
   }
 }
 
+function initials(me: Me): string {
+  const source = (me.display_name || me.email).trim();
+  const parts = source.split(/[\s@._-]+/).filter(Boolean);
+  return ((parts[0]?.[0] ?? '') + (parts[1]?.[0] ?? '')).toUpperCase() || '?';
+}
+
 function Shell({ me, onRenamed, onLogout }: { me: Me; onRenamed: () => void; onLogout: () => void }) {
   const route = useHashRoute();
-  const page = route in TITLES ? route : 'delivery';
+  const [first = '', second] = route;
+
+  useEffect(() => {
+    if (MOVED[first]) history.replaceState(null, '', MOVED[first]);
+  }, [first]);
+
+  const page = MOVED[first] ? 'settings' : first in TITLES ? first : 'delivery';
+  const sub = MOVED[first] ? first : second;
 
   useEffect(() => { document.title = TITLES[page] + ' · SSL Sender'; }, [page]);
 
+  const content = (
+    <main key={page}>
+      {page === 'delivery' && <DeliveryPage />}
+      {page === 'certificates' && <CertificatesPage />}
+      {page === 'users' && <UsersPage myId={me.id} />}
+      {page === 'settings' && <SettingsPage section={sub} myEmail={me.email} />}
+      {page === 'security' && <SecurityPage />}
+      {page === 'profile' && <ProfilePage onRenamed={onRenamed} onLogout={onLogout} />}
+    </main>
+  );
+
+  const avatar = (
+    <a href="#/profile" className={'avatar' + (page === 'profile' ? ' active' : '')} title={me.email} aria-label="Профиль">
+      {initials(me)}
+    </a>
+  );
+
+  if (isMobile) {
+    return (
+      <>
+        <header className="top">
+          <Brand />
+          {avatar}
+        </header>
+        {content}
+        <nav className="tabbar" aria-label="Разделы">
+          {NAV.map(([key, title, icon]) => (
+            <a key={key} href={'#/' + key} className={key === page ? 'active' : ''} aria-current={key === page ? 'page' : undefined}>
+              <Icon name={icon} />
+              <span>{title}</span>
+            </a>
+          ))}
+        </nav>
+      </>
+    );
+  }
+
   return (
-    <>
+    <div className="shell">
       <header className="top">
         <Brand />
-        <nav className="nav">
-          {NAV.map(([key, title]) => (
-            <a key={key} href={'#/' + key} className={key === page ? 'active' : ''}>{title}</a>
+        <nav className="nav" aria-label="Разделы">
+          {NAV.map(([key, title, icon]) => (
+            <a key={key} href={'#/' + key} className={key === page ? 'active' : ''} aria-current={key === page ? 'page' : undefined}>
+              <Icon name={icon} />
+              {title}
+            </a>
           ))}
         </nav>
         <div className="who">
-          <a href="#/profile" className={page === 'profile' ? 'active' : ''} title={me.email}>{me.display_name || me.email}</a>
+          <a href="#/profile" className={'who-name' + (page === 'profile' ? ' active' : '')} title={me.email}>
+            <span className="avatar small">{initials(me)}</span>
+            <span>{me.display_name || me.email}</span>
+          </a>
           <button type="button" className="icon" title="Выйти" onClick={onLogout}><Icon name="logout" /></button>
         </div>
       </header>
-      <main key={page}>
-        {page === 'delivery' && <DeliveryPage />}
-        {page === 'keymanager' && <KeyManagerPage />}
-        {page === 'mail' && <MailPage myEmail={me.email} />}
-        {page === 'users' && <UsersPage myId={me.id} />}
-        {page === 'profile' && <ProfilePage onRenamed={onRenamed} onLogout={onLogout} />}
-      </main>
-    </>
+      {content}
+    </div>
   );
 }

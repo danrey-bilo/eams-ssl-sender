@@ -21,9 +21,9 @@ export function useLoad<T>(load: () => Promise<T>, deps: unknown[] = []) {
   return { data, error, reload };
 }
 
-/** Текущий маршрут панели из хэша: `#/mail` → `mail`. */
-export function useHashRoute(): string {
-  const read = () => location.hash.replace(/^#\//, '').split('/')[0] ?? '';
+/** Текущий маршрут панели из хэша: `#/settings/mail` → `['settings', 'mail']`. */
+export function useHashRoute(): string[] {
+  const read = () => location.hash.replace(/^#\//, '').split('/').filter(Boolean);
   const [route, setRoute] = useState(read);
 
   useEffect(() => {

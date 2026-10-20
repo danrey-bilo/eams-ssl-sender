@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { api } from '../lib/api';
+import { isMobile } from '../lib/device';
 import { useLoad } from '../lib/hooks';
 import type { ResetIssued, User, UserCreated, UsersPage } from '../lib/types';
-import { Field, PageHead, Spinner, Status, type DotKind } from '../ui/bits';
+import { Failed, Field, PageHead, Spinner, Status, type DotKind } from '../ui/bits';
 import { Icon } from '../ui/Icon';
-import { Menu } from '../ui/Menu';
+import { Menu, type MenuItem } from '../ui/Menu';
 import { FormModal } from '../ui/Modal';
 import { useOverlay } from '../ui/Overlay';
 
@@ -34,7 +35,7 @@ export function UsersPage({ myId }: { myId: string }) {
   const { data, error, reload } = useLoad(loadAll);
   const { show, confirm, run, showLink, toast } = useOverlay();
 
-  if (error) return <div className="card"><p className="error">{error}</p></div>;
+  if (error) return <Failed text={error} />;
   if (!data) return <Spinner />;
 
   const invite = async () => {
@@ -65,60 +66,83 @@ export function UsersPage({ myId }: { myId: string }) {
     if (await show(close => <RenameDialog user={u} onClose={close} />)) { toast('Сохранено'); reload(); }
   };
 
+  const menu = (u: User): MenuItem[] => {
+    const self = u.id === myId;
+    const base = '/api/users/' + u.id;
+    return [
+      { text: 'Изменить имя', action: () => rename(u) },
+      !u.activated_at && { text: 'Пригласить ещё раз', action: () => link(u, 'invite') },
+      !!u.activated_at && { text: 'Ссылка сброса пароля', action: () => link(u, 'reset-password') },
+      locked(u) && { text: 'Разблокировать', action: () => act(() => api.post(base + '/unlock'), 'Разблокирован') },
+      u.authenticator_enabled && !self && {
+        text: 'Сбросить 2FA',
+        action: () => act(() => api.del(base + '/two-factor'), '2FA сброшена',
+          ['Сбросить 2FA?', 'При следующем входе аутентификатор подключат заново.']),
+      },
+      !self && { text: 'Завершить сессии', action: () => act(() => api.del(base + '/sessions'), 'Сессии завершены') },
+      !self && (u.is_active
+        ? {
+          text: 'Отключить', danger: true,
+          action: () => act(() => api.post(base + '/disable'), 'Отключён',
+            ['Отключить ' + u.email + '?', 'Вход будет закрыт, сессии завершены.']),
+        }
+        : { text: 'Включить', action: () => act(() => api.post(base + '/enable'), 'Включён') }),
+      !self && {
+        text: 'Удалить', danger: true,
+        action: () => act(() => api.del(base), 'Удалён',
+          ['Удалить ' + u.email + '?', 'Учётная запись будет удалена без возможности восстановления.']),
+      },
+    ];
+  };
+
+  const name = (u: User) => (
+    <>
+      <span className="strong">{u.display_name || u.email}{u.id === myId && <span className="muted"> · вы</span>}</span>
+      {u.display_name && <span className="sub">{u.email}</span>}
+    </>
+  );
+
   return (
     <>
-      <PageHead title="Пользователи">
+      <PageHead title="Пользователи" sub="Каждый пользователь — администратор">
         <button className="primary" onClick={invite}><Icon name="plus" />Пригласить</button>
       </PageHead>
       <div className="card flush">
-        <table>
-          <thead>
-            <tr><th>Пользователь</th><th>Статус</th><th className="hide-sm">Вход</th><th /></tr>
-          </thead>
-          <tbody>
+        {isMobile ? (
+          <div className="list">
             {data.map(u => {
               const [kind, label] = userState(u);
-              const self = u.id === myId;
-              const base = '/api/users/' + u.id;
               return (
-                <tr key={u.id} className={u.is_active ? '' : 'off'}>
-                  <td>
-                    <span>{u.display_name || u.email}{self && <span className="muted"> · вы</span>}</span>
-                    {u.display_name && <span className="sub">{u.email}</span>}
-                  </td>
-                  <td><Status kind={kind}>{label}</Status></td>
-                  <td className="hide-sm muted">{u.authenticator_enabled ? '2FA' : '—'}</td>
-                  <td className="actions">
-                    <Menu items={[
-                      { text: 'Изменить имя', action: () => rename(u) },
-                      !u.activated_at && { text: 'Пригласить ещё раз', action: () => link(u, 'invite') },
-                      !!u.activated_at && { text: 'Ссылка сброса пароля', action: () => link(u, 'reset-password') },
-                      locked(u) && { text: 'Разблокировать', action: () => act(() => api.post(base + '/unlock'), 'Разблокирован') },
-                      u.authenticator_enabled && !self && {
-                        text: 'Сбросить 2FA',
-                        action: () => act(() => api.del(base + '/two-factor'), '2FA сброшена',
-                          ['Сбросить 2FA?', 'При следующем входе аутентификатор подключат заново.']),
-                      },
-                      !self && { text: 'Завершить сессии', action: () => act(() => api.del(base + '/sessions'), 'Сессии завершены') },
-                      !self && (u.is_active
-                        ? {
-                          text: 'Отключить', danger: true,
-                          action: () => act(() => api.post(base + '/disable'), 'Отключён',
-                            ['Отключить ' + u.email + '?', 'Вход будет закрыт, сессии завершены.']),
-                        }
-                        : { text: 'Включить', action: () => act(() => api.post(base + '/enable'), 'Включён') }),
-                      !self && {
-                        text: 'Удалить', danger: true,
-                        action: () => act(() => api.del(base), 'Удалён',
-                          ['Удалить ' + u.email + '?', 'Учётная запись будет удалена без возможности восстановления.']),
-                      },
-                    ]} />
-                  </td>
-                </tr>
+                <div key={u.id} className={'item' + (u.is_active ? '' : ' off')}>
+                  <div className="item-main">
+                    <div className="item-title">{name(u)}</div>
+                    <div className="item-status"><Status kind={kind}>{label}</Status>{u.authenticator_enabled && <span className="chip">2FA</span>}</div>
+                  </div>
+                  <Menu items={menu(u)} />
+                </div>
               );
             })}
-          </tbody>
-        </table>
+          </div>
+        ) : (
+          <table>
+            <thead>
+              <tr><th>Пользователь</th><th>Статус</th><th>Второй фактор</th><th /></tr>
+            </thead>
+            <tbody>
+              {data.map(u => {
+                const [kind, label] = userState(u);
+                return (
+                  <tr key={u.id} className={u.is_active ? '' : 'off'}>
+                    <td>{name(u)}</td>
+                    <td><Status kind={kind}>{label}</Status></td>
+                    <td className="muted">{u.authenticator_enabled ? 'Приложение' : '—'}</td>
+                    <td className="actions"><Menu items={menu(u)} /></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
     </>
   );
