@@ -2,8 +2,9 @@
 #
 # Порядок первого запуска (подробно — README.md):
 #   ./scripts/gen-secrets.sh
-#   cp .env.example .env          # и вписать CLOUDFLARE_TUNNEL_TOKEN, если наружу — через туннель
-#   docker compose build
+#   ./scripts/set-tunnel-token.sh # токен Cloudflare Tunnel — в файл секрета, не в .env
+#   cp .env.example .env
+#   docker compose pull           # готовый образ; из исходников — docker compose build
 #   docker compose run --rm api migrate
 #   docker compose run --rm api create-superadmin --email admin@example.com
 #   docker compose up -d
@@ -25,7 +26,9 @@ x-logging: &logging
 
 services:
   api:
-    image: email-ssl-sender-api
+    # Готовый образ из релиза (`docker compose pull`); без доступа к реестру compose соберёт его
+    # из исходников по `build`. Версию закрепляет SENDER_IMAGE в .env.
+    image: ${SENDER_IMAGE:-ghcr.io/danrey-bilo/email_ssl_sender:latest}
     build:
       context: .
       dockerfile: EmailSslSender.Api/Dockerfile
@@ -54,9 +57,13 @@ services:
       - sender_postgres_password
     ports:
       - "127.0.0.1:8001:8001"
+    # default — выход к SMTP и Key Manager Plus; db — к базе; edge — к туннелю.
     networks:
       - default
+      - db
       - edge
+    mem_limit: 1g
+    pids_limit: 512
     logging: *logging
     healthcheck:
       test: ["CMD", "dotnet", "EmailSslSender.Api.dll", "health"]
@@ -70,9 +77,14 @@ services:
 
   # Cloudflare Tunnel: публикует панель и API наружу исходящим соединением, без открытых портов.
   #
-  # ⚠ Токен — в .env (CLOUDFLARE_TUNNEL_TOKEN), а не здесь: этот файл лежит в git, .env — нет.
-  # Служба в профиле `tunnel`; .env.example включает его строкой COMPOSE_PROFILES=tunnel, и тогда
-  # обычный `docker compose up -d` поднимает туннель сам.
+  # ⚠ ⚠ Токен — файлом секрета secrets/cloudflare_tunnel_token (scripts/set-tunnel-token.sh), а не
+  # переменной окружения: переменная видна в `docker inspect`, в /proc/1/environ и в
+  # `cloudflared --help`, а с токеном любой поднимет второй коннектор того же туннеля и получит
+  # часть трафика панели — пароли и коды входа. Служба в профиле `tunnel`; .env.example включает
+  # его строкой COMPOSE_PROFILES=tunnel, и тогда обычный `docker compose up -d` поднимает туннель.
+  #
+  # ⚠ Метрики (и pprof) cloudflared — только на 127.0.0.1 внутри контейнера: по умолчанию они
+  # слушают все адреса, и до них дотянулся бы API из общей сети.
   #
   # ⚠ В Cloudflare (Zero Trust → Networks → Tunnels → Public Hostname) сервис указывается как
   # HTTP `api:8001` — имя службы в сети `edge`, а не адрес сервера.
@@ -83,9 +95,11 @@ services:
     image: cloudflare/cloudflared:latest
     profiles: ["tunnel"]
     restart: unless-stopped
-    command: ["tunnel", "--no-autoupdate", "run"]
+    command: ["tunnel", "--no-autoupdate", "--metrics", "127.0.0.1:20241", "run"]
     environment:
-      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+      TUNNEL_TOKEN_FILE: /run/secrets/cloudflare_tunnel_token
+    secrets:
+      - cloudflare_tunnel_token
     networks:
       - edge
     security_opt:
@@ -93,6 +107,8 @@ services:
     cap_drop:
       - ALL
     read_only: true
+    mem_limit: 256m
+    pids_limit: 128
     logging: *logging
     depends_on:
       api:
@@ -109,6 +125,22 @@ services:
       - sender_postgres_password
     volumes:
       - pgdata:/var/lib/postgresql/data
+    # ⚠ Только внутренняя сеть db: базе не нужен ни интернет, ни туннель. Возможности — ровно те,
+    # что нужны образу postgres, чтобы раздать права каталогу данных и сойти на своего пользователя.
+    networks:
+      - db
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    mem_limit: 1g
+    pids_limit: 256
     logging: *logging
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sender -d sender"]
@@ -121,12 +153,17 @@ secrets:
     file: ./secrets/sender_master_kek
   sender_postgres_password:
     file: ./secrets/sender_postgres_password
+  cloudflare_tunnel_token:
+    file: ./secrets/cloudflare_tunnel_token
 
 volumes:
   pgdata:
 
 networks:
   default:
+  # База и API. internal: из этой сети нет выхода наружу.
+  db:
+    internal: true
   # Сеть туннеля: только cloudflared и API — до базы туннелю дороги нет. Подсеть закреплена,
   # чтобы API мог верить заголовкам именно от неё; занята на сервере — задайте SENDER_TUNNEL_SUBNET.
   edge:

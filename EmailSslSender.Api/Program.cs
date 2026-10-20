@@ -109,6 +109,11 @@ builder.Services.AddRateLimiter(limiter =>
 
 builder.Services.AddOpenApi(options => options.AddDocumentTransformer<ErrorEnvelopeDocument>());
 
+// ⚠ Тело запроса — не больше 256 КБ (по умолчанию Kestrel ждёт до 30 МБ). Самые большие тела
+// здесь — настройки и подписка на двадцать адресов; файлов API не принимает, а анонимные
+// вход и сброс пароля не должны держать память сервера чужими мегабайтами.
+builder.WebHost.ConfigureKestrel(kestrel => kestrel.Limits.MaxRequestBodySize = 256 * 1024);
+
 builder.Services.AddSenderDatabase(ConnectionSecrets.Postgres(builder.Configuration));
 
 builder.Services.AddHealthChecks()
@@ -117,10 +122,12 @@ builder.Services.AddHealthChecks()
 // ⚠ За обратным прокси адрес клиента приходит заголовком, а заголовок подделывается. Доверяем
 // ему только от названных прокси: иначе предел попыток входа обходился бы подстановкой
 // X-Forwarded-For.
+//
+// ⚠ X-Forwarded-Host НЕ принимается: Cloudflare пропускает его от клиента как есть, а имя
+// хоста приложению не нужно — ссылки в письмах строятся только из настройки server.public_url.
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
-    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto
-        | ForwardedHeaders.XForwardedHost;
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
 
     foreach (var proxy in Trusted("ForwardedHeaders:KnownProxies"))
     {
@@ -142,6 +149,7 @@ var app = builder.Build();
 masterKeys.Announce(app.Logger);
 
 app.UseForwardedHeaders();
+app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseMiddleware<RequestIdMiddleware>();
 app.UseMiddleware<ErrorHandlingMiddleware>();
 app.UseRouting();
