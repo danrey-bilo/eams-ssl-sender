@@ -43,6 +43,24 @@ public sealed class RuntimeRoleTests(SenderHost host)
     }
 
     [Fact]
+    public async Task Пароль_роли_хранится_проверочным_значением_и_журнал_миграций_только_для_чтения()
+    {
+        var (роль, пароль) = Новая();
+        await ЗавестиAsync(роль, пароль);
+
+        await using (var владелец = await ВладелецAsync())
+        {
+            (await ЗначениеAsync<string>(владелец, $"SELECT rolpassword FROM pg_authid WHERE rolname = '{роль}'"))
+                .ShouldStartWith("SCRAM-SHA-256$4096:");
+        }
+
+        await using var сервис = await ПодключитьсяAsync(роль, пароль);
+        (await ЗначениеAsync<long>(сервис, "SELECT count(*) FROM \"__EFMigrationsHistory\"")).ShouldBeGreaterThan(0);
+        (await Should.ThrowAsync<PostgresException>(() => ВыполнитьAsync(сервис, "DELETE FROM \"__EFMigrationsHistory\"")))
+            .SqlState.ShouldBe(PostgresErrorCodes.InsufficientPrivilege);
+    }
+
+    [Fact]
     public async Task Таблица_будущей_миграции_доступна_роли_сама()
     {
         var (роль, пароль) = Новая();

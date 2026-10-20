@@ -99,19 +99,14 @@ internal sealed class SystemSecrets(
         var открыто = envelope.OpenText(ключ, new SealedSecret(строка.Sealed), Контекст + key);
         var привязка = BoundSecret.Unpack(открыто);
 
+        // ⚠ ⚠ Секрет без привязки не открывается (ревью безопасности 2026-10-20): привязывает
+        // его команда migrate (BindLegacyAsync), иначе — повторный ввод. «Доверие с первого
+        // раза» отдавало его тому, кто первым подменил адрес сервера из захваченной сессии.
         if (привязка is null)
         {
-            var было = строка.Sealed;
-            var перепечатано = envelope.SealText(ключ, new BoundSecret(target, открыто).Pack(), Контекст + key).Bytes;
-
-            await db.Set<SystemSecret>()
-                .Where(с => с.Key == key && с.Sealed == было)
-                .ExecuteUpdateAsync(set => set.SetProperty(с => с.Sealed, перепечатано), cancellationToken);
-
-            // ⚠ Имя секрета и факт — без адреса и тем более без значения.
-            log.LogWarning("system_secret_bound_on_first_use {Key}", key);
-
-            return открыто;
+            throw new MailConfigurationException(
+                "Пароль SMTP задан до привязки к серверу. Выполните docker compose run --rm migrate — "
+                + "команда привяжет его к текущим настройкам почты — или введите пароль заново.");
         }
 
         if (!привязка.IsFor(target))
@@ -124,6 +119,47 @@ internal sealed class SystemSecrets(
         }
 
         return привязка.Secret;
+    }
+
+    /// <summary>Привязать секрет без привязки к адресу <paramref name="target"/>. Зовёт только <c>migrate</c>.</summary>
+    /// <remarks>
+    /// ⚠ Условным обновлением по прежнему запечатанному, тем же ключом данных: пароль, заданный
+    /// заново между чтением и записью, не затирается, а ротация обёртки перепечатке не мешает.
+    /// </remarks>
+    /// <returns><c>true</c> — привязан сейчас.</returns>
+    public async Task<bool> BindLegacyAsync(string key, string target, CancellationToken cancellationToken = default)
+    {
+        Проверить(key);
+        ArgumentNullException.ThrowIfNull(target);
+
+        var строка = await db.Set<SystemSecret>()
+            .AsNoTracking()
+            .FirstOrDefaultAsync(с => с.Key == key, cancellationToken);
+
+        if (строка is null)
+        {
+            return false;
+        }
+
+        var ключ = new WrappedDataKey(строка.DataKey);
+        var открыто = envelope.OpenText(ключ, new SealedSecret(строка.Sealed), Контекст + key);
+
+        if (BoundSecret.Unpack(открыто) is not null)
+        {
+            return false;
+        }
+
+        var было = строка.Sealed;
+        var перепечатано = envelope.SealText(ключ, new BoundSecret(target, открыто).Pack(), Контекст + key).Bytes;
+
+        var изменено = await db.Set<SystemSecret>()
+            .Where(с => с.Key == key && с.Sealed == было)
+            .ExecuteUpdateAsync(set => set.SetProperty(с => с.Sealed, перепечатано), cancellationToken);
+
+        // ⚠ Имя секрета и факт — без адреса и тем более без значения.
+        log.LogWarning("system_secret_bound_by_migrate {Key}", key);
+
+        return изменено == 1;
     }
 
     /// <summary>Задать секрет для адреса. Повторная запись перекладывает значение, а не плодит строки.</summary>

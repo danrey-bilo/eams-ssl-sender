@@ -55,6 +55,7 @@ public static class MailModule
         // и запечатывание: добавленная через месяц, она означает месяц, в течение которого
         // мастер-ключ нельзя вывести из обращения, и никто об этом не знает.
         services.AddScoped<SystemSecrets>();
+        services.AddScoped<ILegacySecretBinder, SmtpPasswordLegacyBinding>();
         services.AddScoped<IRewrapTarget, SystemSecretsRewrap>();
 
         // ⚠ И ключи данных писем в очереди: без этой цели `rewrap-keys` отчитывался об успехе,

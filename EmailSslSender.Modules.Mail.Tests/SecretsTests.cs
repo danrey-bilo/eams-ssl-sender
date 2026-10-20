@@ -240,11 +240,11 @@ public sealed class SecretsTests(MailDatabase база) : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Старый_пароль_без_привязки_привязывается_к_адресу_первого_использования()
+    public async Task Старый_пароль_без_привязки_открывается_только_после_привязки_командой_migrate()
     {
-        // ⚠ Пароль, запечатанный до привязки, — голая строка. Он обязан продолжить работать у
-        // владельца (доверие с первого раза), но только для того адреса, с которым его впервые
-        // открыли.
+        // ⚠ Пароль, запечатанный до привязки, — голая строка. Во время работы он не открывается
+        // (ревью безопасности 2026-10-20: «доверие с первого раза» отдавало его тому, кто первым
+        // подменил сервер), а migrate привязывает его к текущим настройкам почты.
         await using (var scope = база.Scope())
         {
             var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
@@ -263,6 +263,15 @@ public sealed class SecretsTests(MailDatabase база) : IAsyncLifetime
 
         база.Логи.Строки.Clear();
 
+        (await Should.ThrowAsync<MailConfigurationException>(() => Прочитать())).Message.ShouldContain("migrate");
+
+        await using (var scope = база.Scope())
+        {
+            var (секреты, _) = Слои(scope);
+            (await секреты.BindLegacyAsync(SystemSecretNames.SmtpPassword, Цель, Ct)).ShouldBeTrue();
+            (await секреты.BindLegacyAsync(SystemSecretNames.SmtpPassword, Цель, Ct)).ShouldBeFalse();
+        }
+
         (await Прочитать()).ShouldBe("старый-пароль");
 
         var строка = await Строка();
@@ -274,7 +283,7 @@ public sealed class SecretsTests(MailDatabase база) : IAsyncLifetime
         привязка.Target.ShouldBe(Цель);
         привязка.Secret.ShouldBe("старый-пароль");
 
-        база.Логи.Строки.ShouldContain(с => с.Contains("system_secret_bound_on_first_use", StringComparison.Ordinal));
+        база.Логи.Строки.ShouldContain(с => с.Contains("system_secret_bound_by_migrate", StringComparison.Ordinal));
         база.Логи.Строки.ShouldAllBe(с => !с.Contains("старый-пароль", StringComparison.Ordinal));
 
         await using (var scope = база.Scope())

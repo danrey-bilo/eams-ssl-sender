@@ -117,11 +117,11 @@ public sealed class ApiKeyTests(KeyManagerDatabase база) : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Старый_ключ_без_привязки_привязывается_к_адресу_первого_использования()
+    public async Task Старый_ключ_без_привязки_открывается_только_после_привязки_командой_migrate()
     {
-        // ⚠ Ключ, запечатанный до привязки, — голая строка. Он обязан продолжить работать у
-        // владельца (доверие с первого раза), но только для того адреса, с которым его впервые
-        // открыли.
+        // ⚠ Ключ, запечатанный до привязки, — голая строка. Во время работы он не открывается
+        // вовсе (ревью безопасности 2026-10-20: «доверие с первого раза» отдавало его тому, кто
+        // первым подменил адрес), а migrate привязывает его к адресу из настроек.
         await using (var scope = база.Scope())
         {
             var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
@@ -138,7 +138,13 @@ public sealed class ApiKeyTests(KeyManagerDatabase база) : IAsyncLifetime
 
         await using (var scope = база.Scope())
         {
-            (await scope.ServiceProvider.GetRequiredService<ApiKeyStore>().GetForAsync(Цель, Ct)).ShouldBe(Ключ);
+            var хранилище = scope.ServiceProvider.GetRequiredService<ApiKeyStore>();
+
+            (await Should.ThrowAsync<KeyManagerException>(() => хранилище.GetForAsync(Цель, Ct)))
+                .Message.ShouldContain("migrate");
+            (await хранилище.BindLegacyAsync(Цель, Ct)).ShouldBeTrue();
+            (await хранилище.BindLegacyAsync(Цель, Ct)).ShouldBeFalse("уже привязан — повторно нечего");
+            (await хранилище.GetForAsync(Цель, Ct)).ShouldBe(Ключ);
         }
 
         var строка = await Строка();
@@ -148,7 +154,7 @@ public sealed class ApiKeyTests(KeyManagerDatabase база) : IAsyncLifetime
         привязка.Target.ShouldBe(Цель);
         привязка.Secret.ShouldBe(Ключ);
 
-        база.Логи.Строки.ShouldContain(с => с.Contains("keymanager_api_key_bound_on_first_use", StringComparison.Ordinal));
+        база.Логи.Строки.ShouldContain(с => с.Contains("keymanager_api_key_bound_by_migrate", StringComparison.Ordinal));
         база.Логи.Строки.ShouldAllBe(с => !с.Contains(Ключ, StringComparison.Ordinal));
 
         await using (var scope = база.Scope())

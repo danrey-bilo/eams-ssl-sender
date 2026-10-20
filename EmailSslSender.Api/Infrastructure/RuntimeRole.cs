@@ -1,3 +1,5 @@
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 using Npgsql;
 
@@ -22,6 +24,13 @@ namespace EmailSslSender.Api.Infrastructure;
 /// ⚠ <b>Текст DDL собирает сам PostgreSQL</b> (<c>format</c> с <c>%I</c> и <c>%L</c>):
 /// параметром в <c>CREATE ROLE</c> имя и пароль не передать, а склейка в C# — это ровно та
 /// инъекция, от которой роль и защищает.
+///
+/// ⚠ <b>Пароль уходит проверочным значением SCRAM-SHA-256, а не текстом</b> (ревью безопасности
+/// 2026-10-20): текст команды PostgreSQL пишет в журнал при ошибке или при
+/// <c>log_statement</c>, и открытый пароль роли остался бы там.
+///
+/// ⚠ <b>Журнал миграций роль только читает</b>: старт проверяет по нему схему, а писать в него
+/// может лишь <c>migrate</c>.
 /// </remarks>
 public static partial class RuntimeRole
 {
@@ -113,13 +122,22 @@ public static partial class RuntimeRole
         var команда = (есть ? "ALTER" : "CREATE") + " ROLE %I WITH " + Атрибуты + " PASSWORD %L";
 
         await ВыполнитьСобраннуюAsync(connection, транзакция, $"SELECT format('{команда}', @r, @p)", cancellationToken,
-            ("r", role), ("p", password));
+            ("r", role), ("p", Scram(password)));
 
         foreach (var право in Права)
         {
             await ВыполнитьСобраннуюAsync(
                 connection, транзакция, $"SELECT format('{право}', @r::text, current_database()::text)", cancellationToken,
                 ("r", role));
+        }
+
+        if (await ЗначениеAsync<bool>(
+                connection, транзакция, "SELECT to_regclass('public.\"__EFMigrationsHistory\"') IS NOT NULL", cancellationToken))
+        {
+            await ВыполнитьСобраннуюAsync(
+                connection, транзакция,
+                "SELECT format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.%I FROM %I', '__EFMigrationsHistory', @r::text)",
+                cancellationToken, ("r", role));
         }
 
         // В PostgreSQL 15+ так уже по умолчанию; явно — на случай базы, обновлённой со старой версии.
@@ -161,6 +179,30 @@ public static partial class RuntimeRole
 
         return (T)(await команда.ExecuteScalarAsync(cancellationToken)
             ?? throw new InvalidOperationException("PostgreSQL не вернул значения: " + запрос));
+    }
+
+    /// <summary>
+    /// Проверочное значение SCRAM-SHA-256 в формате PostgreSQL:
+    /// <c>SCRAM-SHA-256$итерации:соль$StoredKey:ServerKey</c> (RFC 5802, RFC 7677).
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Пароль приводится к NFKC — так его нормализует SASLprep на стороне PostgreSQL; для
+    /// паролей из <c>gen-secrets.sh</c> (латиница, цифры, «-», «_») это ничего не меняет.
+    /// </remarks>
+    internal static string Scram(string password)
+    {
+        const int итераций = 4096;
+
+        var соль = RandomNumberGenerator.GetBytes(16);
+        var солёный = Rfc2898DeriveBytes.Pbkdf2(
+            Encoding.UTF8.GetBytes(password.Normalize(NormalizationForm.FormKC)), соль, итераций, HashAlgorithmName.SHA256, 32);
+        var хранимый = SHA256.HashData(HMACSHA256.HashData(солёный, "Client Key"u8));
+        var серверный = HMACSHA256.HashData(солёный, "Server Key"u8);
+
+        CryptographicOperations.ZeroMemory(солёный);
+
+        return $"SCRAM-SHA-256${итераций}:{Convert.ToBase64String(соль)}"
+            + $"${Convert.ToBase64String(хранимый)}:{Convert.ToBase64String(серверный)}";
     }
 
     /// <summary>Имя роли: обычный идентификатор PostgreSQL без кавычек.</summary>

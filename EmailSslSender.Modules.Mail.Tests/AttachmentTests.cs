@@ -173,6 +173,75 @@ public sealed class AttachmentTests(MailDatabase база) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Отмена_после_захвата_не_даёт_письму_уйти()
+    {
+        // Ревью безопасности 2026-10-20: порция захватывается заранее, и отменённое после захвата
+        // письмо с ключом прежде всё равно уходило, а отмена числилась удачной.
+        var (первый, номерПервого) = await ПоставитьСНомером(new MailAttachment("a.key", "application/x-pem-file", Ключ));
+        var (второй, номерВторого) = await ПоставитьСНомером(new MailAttachment("b.key", "application/x-pem-file", Ключ));
+        var отменено = -1;
+        var другой = string.Empty;
+
+        база.Отправитель.ПослеОтправки = () =>
+        {
+            if (отменено >= 0)
+            {
+                return;
+            }
+
+            var ушёл = база.Отправитель.Ушедшие[0].ToAddress;
+            другой = ушёл == первый ? второй : первый;
+            var номер = ушёл == первый ? номерВторого : номерПервого;
+
+            var scope = база.Scope();
+            try
+            {
+                отменено = scope.ServiceProvider.GetRequiredService<IMailQueue>()
+                    .CancelAsync([номер], "подписка удалена", CancellationToken.None).GetAwaiter().GetResult();
+            }
+            finally
+            {
+                scope.DisposeAsync().AsTask().GetAwaiter().GetResult();
+            }
+        };
+
+        (await Разобрать()).ShouldBe(1);
+
+        отменено.ShouldBe(1);
+        база.Отправитель.Ушедшие.ShouldHaveSingleItem();
+        var письмо = await Письмо(другой);
+        письмо.SentAt.ShouldBeNull();
+        письмо.SealedAttachments.ShouldBeNull();
+        письмо.LastError.ShouldBe("Отменено: подписка удалена");
+    }
+
+    [Fact]
+    public async Task Отмена_во_время_отправки_ждёт_и_не_числит_ушедшее_отменённым()
+    {
+        var (адрес, номер) = await ПоставитьСНомером(new MailAttachment("site.key", "application/x-pem-file", Ключ));
+        база.Отправитель.Задержать();
+
+        var разбор = Разобрать();
+        await база.Отправитель.УЗадвижки.Task.WaitAsync(TimeSpan.FromSeconds(10), Ct);
+
+        var отмена = Task.Run(async () =>
+        {
+            await using var scope = база.Scope();
+            return await scope.ServiceProvider.GetRequiredService<IMailQueue>()
+                .CancelAsync([номер], "подписка удалена", CancellationToken.None);
+        }, Ct);
+
+        await Task.Delay(300, Ct);
+        отмена.IsCompleted.ShouldBeFalse("отмена ждёт, пока насос держит письмо");
+
+        база.Отправитель.Отпустить();
+
+        (await разбор).ShouldBe(1);
+        (await отмена).ShouldBe(0, "письмо ушло — отменять было нечего");
+        (await Письмо(адрес)).SentAt.ShouldNotBeNull();
+    }
+
+    [Fact]
     public async Task Отмена_не_трогает_ушедшее_и_мёртвое()
     {
         var (ушло, номерУшло) = await ПоставитьСНомером(new MailAttachment("site.key", "application/x-pem-file", Ключ));

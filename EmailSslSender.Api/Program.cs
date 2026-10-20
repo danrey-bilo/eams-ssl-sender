@@ -85,7 +85,7 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton(rateLimits);
 builder.Services.AddRateLimiter(limiter =>
 {
-    limiter.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+    var поАдресу = PartitionedRateLimiter.Create<HttpContext, string>(context =>
     {
         if (rateLimits.Of(context.Request.Path) is not { } group)
         {
@@ -105,6 +105,23 @@ builder.Services.AddRateLimiter(limiter =>
                 QueueLimit = 0,
             });
     });
+
+    // ⚠ Второе звено — предел на всех клиентов вместе для групп, где запрос считает argon2 без
+    // входа (ревью безопасности 2026-10-20): предел «на адрес» поток со множества адресов не
+    // держит, а память и процессор у сервера одни.
+    var всего = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+        rateLimits.Of(context.Request.Path) is { Total: { } total } group
+            ? RateLimitPartition.GetFixedWindowLimiter(
+                "всего:" + group.Name,
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    PermitLimit = total,
+                    Window = TimeSpan.FromMinutes(1),
+                    QueueLimit = 0,
+                })
+            : RateLimitPartition.GetNoLimiter("прочее"));
+
+    limiter.GlobalLimiter = PartitionedRateLimiter.CreateChained(поАдресу, всего);
 
     limiter.OnRejected = (context, token) => new ValueTask(RateLimitGroups.RejectAsync(
         context.HttpContext,
@@ -290,6 +307,20 @@ static async Task<int> MigrateCommandAsync(WebApplication app)
             await RuntimeRole.EnsureAsync(connection, role, password);
 
             Console.WriteLine($"{Bootstrap.Migrate}: роль сервиса {role} — только чтение и запись строк");
+        }
+
+        // ⚠ Секреты, заданные до привязки к адресу, привязываются здесь, к текущим настройкам:
+        // консоль установки — доверенное место, а во время работы такой секрет не открывается
+        // (ILegacySecretBinder).
+        await using (var scope = app.Services.CreateAsyncScope())
+        {
+            foreach (var binder in scope.ServiceProvider.GetServices<ILegacySecretBinder>())
+            {
+                if (await binder.BindAsync())
+                {
+                    Console.WriteLine($"{Bootstrap.Migrate}: {binder.Name} привязан к текущим настройкам");
+                }
+            }
         }
 
         Console.WriteLine($"{Bootstrap.Migrate}: готово");

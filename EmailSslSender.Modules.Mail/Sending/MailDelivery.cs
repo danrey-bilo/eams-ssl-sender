@@ -31,6 +31,13 @@ namespace EmailSslSender.Modules.Mail.Sending;
 /// ⚠ ⚠ <b><c>try</c> ВНУТРИ цикла, а не вокруг него.</b> Один упавший адрес не должен уносить
 /// пачку. Этот самый дефект уже ловили в рассылке сообщений 2026-08-16: общий <c>except</c>
 /// вокруг цикла терял все кадры разом, а выглядело это как «иногда не доходит».
+///
+/// ⚠ ⚠ <b>Каждое письмо уходит под блокировкой своей строки</b> (ревью безопасности 2026-10-20).
+/// Порция захватывается заранее, и отмена (удалили подписку, убрали получателя, письмо
+/// просрочило сутки) могла прийти уже после захвата: письмо с закрытым ключом всё равно уходило,
+/// а отмена числилась удачной. Теперь перед отправкой строка перечитывается под
+/// <c>FOR UPDATE</c> и держится до отметки об успехе: отменённое не уходит, а отмена, пришедшая
+/// во время отправки, ждёт и видит письмо отправленным — отчёт об отмене не лжёт.
 /// </remarks>
 /// <summary>
 /// Итог одного прохода насоса: сколько взято и сколько ушло.
@@ -139,18 +146,15 @@ internal sealed class MailDelivery(
 
         foreach (var письмо in порция)
         {
+            bool отправлено;
+
             // ⚠ Каждое письмо в СВОЕЙ попытке: одно упавшее не уносит пачку.
             try
             {
                 // Останов пришёл между письмами — следующее не начинаем: оно останется в очереди.
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var ключ = new WrappedDataKey(письмо.DataKey);
-                var тело = envelope.OpenText(ключ, new SealedSecret(письмо.SealedBody), Контекст);
-                var вложения = MailAttachments.Open(envelope, ключ, письмо.SealedAttachments);
-
-                await сессия.SendAsync(
-                    new OutgoingMail(письмо.ToAddress, письмо.Subject, тело, вложения), cancellationToken);
+                отправлено = await ОтправитьПодЗамкомAsync(сессия, письмо, cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -180,32 +184,80 @@ internal sealed class MailDelivery(
                 continue;
             }
 
-            // ⚠ ⚠ Отметка об успехе — ОТДЕЛЬНО от отправки и БЕЗ токена отмены (ревью
-            // 2026-09-15, mail-2). Реле письмо уже приняло. С токеном останов в эти миллисекунды
-            // отменял отметку, `sent_at` оставался пустым, и через attempts² минут письмо уходило
-            // ВТОРОЙ раз. А сбой отметки внутри общего перехвата вёл в «неудачу», и в `last_error`
-            // доставленного письма ложилась ошибка базы.
-            //
-            // ⚠ Окно этим СУЖЕНО, а не закрыто: отмена, пришедшая после DATA и до ответа 250, даёт
-            // исключение у уже принятого письма. Доставка — «хотя бы раз», и обещать «ровно раз»
-            // здесь нечем.
-            //
-            // мутация 2026-09-15: вернул токен отмены в отметку → покраснел
-            // DeliveryTests.Останов_сразу_после_отправки_не_теряет_отметку.
-            try
+            if (отправлено)
             {
-                await ОтметитьУспехAsync(письмо.Id, CancellationToken.None);
                 ушло++;
-            }
-            catch (Exception ошибка)
-            {
-                log.LogError("mail_sent_mark_failed {Kind} {Error}", письмо.Kind, SafeError.Describe(ошибка));
             }
         }
 
         log.LogInformation("mail_delivered {Sent} {Taken}", ушло, порция.Count);
 
         return new MailRun(порция.Count, ушло);
+    }
+
+    /// <summary>
+    /// Отправить письмо, держа его строку: отменённое не уходит, отмена во время отправки ждёт.
+    /// </summary>
+    /// <returns><c>false</c> — письмо отменили после захвата, и оно не отправлялось.</returns>
+    /// <remarks>
+    /// ⚠ ⚠ Отметка об успехе — БЕЗ токена отмены (ревью 2026-09-15, mail-2). Реле письмо уже
+    /// приняло. С токеном останов в эти миллисекунды отменял отметку, `sent_at` оставался пустым,
+    /// и через attempts² минут письмо уходило ВТОРОЙ раз. Сбой самой отметки откатывает её, но
+    /// не отправку: доставка — «хотя бы раз», и обещать «ровно раз» здесь нечем.
+    ///
+    /// мутация 2026-09-15: вернул токен отмены в отметку → покраснел
+    /// DeliveryTests.Останов_сразу_после_отправки_не_теряет_отметку.
+    /// </remarks>
+    private async Task<bool> ОтправитьПодЗамкомAsync(IMailSession сессия, MailOutbox письмо, CancellationToken cancellationToken)
+    {
+        var никогда = MailAttachments.Никогда;
+        var отправлено = false;
+
+        try
+        {
+            await db.InTransactionAsync(
+                async token =>
+                {
+                    // ⚠ Перечитать под замком: отмена ставит next_attempt_at = «никогда».
+                    var живо = await db.Set<MailOutbox>()
+                        .FromSql($"SELECT * FROM mail_outbox WHERE id = {письмо.Id} AND sent_at IS NULL AND next_attempt_at < {никогда} FOR UPDATE")
+                        .AsNoTracking()
+                        .ToListAsync(cancellationToken);
+
+                    if (живо.Count == 0)
+                    {
+                        return false;
+                    }
+
+                    var ключ = new WrappedDataKey(письмо.DataKey);
+                    var тело = envelope.OpenText(ключ, new SealedSecret(живо[0].SealedBody), Контекст);
+                    var вложения = MailAttachments.Open(envelope, ключ, живо[0].SealedAttachments);
+
+                    await сессия.SendAsync(
+                        new OutgoingMail(письмо.ToAddress, письмо.Subject, тело, вложения), cancellationToken);
+
+                    отправлено = true;
+
+                    await ОтметитьУспехAsync(письмо.Id, CancellationToken.None);
+
+                    return true;
+                },
+                CancellationToken.None);
+        }
+        catch (Exception ошибка) when (отправлено)
+        {
+            // Письмо ушло, а отметка не легла: не «неудача» — иначе в last_error доставленного
+            // письма легла бы ошибка базы.
+            log.LogError("mail_sent_mark_failed {Kind} {Error}", письмо.Kind, SafeError.Describe(ошибка));
+            return true;
+        }
+
+        if (!отправлено)
+        {
+            log.LogInformation("mail_cancelled_before_send {Kind}", письмо.Kind);
+        }
+
+        return отправлено;
     }
 
     /// <summary>Отметить успех и стереть вложения: письмо ушло, хранить их больше незачем.</summary>

@@ -268,6 +268,9 @@ internal sealed class ПодставнойОтправитель : IMailSender, 
     /// <summary>Отпустить.</summary>
     public void Отпустить() => Задвижка?.TrySetResult();
 
+    /// <summary>Отправка дошла до задвижки — насос сейчас держит строку письма.</summary>
+    public TaskCompletionSource УЗадвижки { get; private set; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
     /// <summary>Что сделать сразу после «принятого» письма — например, остановить процесс.</summary>
     public Action? ПослеОтправки { get; set; }
 
@@ -281,6 +284,7 @@ internal sealed class ПодставнойОтправитель : IMailSender, 
         Закрытий = 0;
         Отпустить();
         Задвижка = null;
+        УЗадвижки = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     }
 
     /// <summary>Подделка сама себе сессия: считать открытия проще, чем плодить второй тип.</summary>
@@ -302,6 +306,7 @@ internal sealed class ПодставнойОтправитель : IMailSender, 
     {
         if (Задвижка is { } ждём)
         {
+            УЗадвижки.TrySetResult();
             await ждём.Task.WaitAsync(cancellationToken);
         }
 

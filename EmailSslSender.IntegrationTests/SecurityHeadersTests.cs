@@ -21,6 +21,17 @@ public sealed class SecurityHeadersTests(SenderHost host)
     }
 
     [Fact]
+    public async Task Ответ_с_ошибкой_тоже_несёт_заголовки_защиты()
+    {
+        // Обработчик ошибок очищает ответ (Response.Clear) — заголовки обязаны пережить это.
+        var ответ = await host.CreateClient().GetAsync("/api/me", Ct);
+
+        ответ.StatusCode.ShouldBe(System.Net.HttpStatusCode.Unauthorized);
+        ответ.Headers.CacheControl.ShouldNotBeNull().NoStore.ShouldBeTrue();
+        ответ.Headers.GetValues("X-Content-Type-Options").Single().ShouldBe("nosniff");
+    }
+
+    [Fact]
     public async Task HSTS_только_на_ответ_по_HTTPS()
     {
         // Проверка здоровья в контейнере и 127.0.0.1:8001 идут по HTTP — там HSTS не нужен.

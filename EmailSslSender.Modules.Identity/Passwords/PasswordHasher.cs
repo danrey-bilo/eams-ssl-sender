@@ -1,5 +1,7 @@
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
+using EmailSslSender.Shared.Errors;
 using Konscious.Security.Cryptography;
 
 namespace EmailSslSender.Modules.Identity.Passwords;
@@ -34,8 +36,22 @@ internal sealed class PasswordHasher : IPasswordHasher, IDisposable
     /// </remarks>
     public const int MaxPasswordBytes = 1024;
 
+    /// <summary>Больше четырёх хешей разом не считается: 4 × 64 МиБ — потолок памяти на пароли.</summary>
+    internal const int ConcurrencyCeiling = 4;
+
+    /// <summary>
+    /// Сколько проверок может ждать очереди; лишние получают отказ сразу.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ ⚠ Ревью безопасности 2026-10-20: очередь без предела копила задачи анонимных входов со
+    /// случайными адресами, и под потоком время ответа росло для всех — вход становился
+    /// недоступен, хотя ни одна попытка не была верной. Отказ «занято» (429) дешевле ожидания.
+    /// </remarks>
+    internal const int QueueLimit = 32;
+
     private readonly Argon2Profile _profile;
     private readonly SemaphoreSlim _gate;
+    private int _ждут;
 
     /// <summary>
     /// Соль для холостой проверки. Постоянная нарочно — она ничего не защищает.
@@ -58,7 +74,9 @@ internal sealed class PasswordHasher : IPasswordHasher, IDisposable
         _profile = profile ?? Argon2Profile.Current;
         _profile.Validate();
 
-        _gate = new SemaphoreSlim(maxConcurrency ?? Math.Max(2, Environment.ProcessorCount));
+        // ⚠ Не больше потолка и при многоядерном сервере: память на хеши — 64 МиБ каждый, а
+        // контейнер ограничен гигабайтом. Ядра в контейнере .NET считает по квоте cgroup.
+        _gate = new SemaphoreSlim(maxConcurrency ?? Math.Clamp(Environment.ProcessorCount, 2, ConcurrencyCeiling));
     }
 
     public async Task<string> HashAsync(string password, CancellationToken cancellationToken = default)
@@ -191,7 +209,24 @@ internal sealed class PasswordHasher : IPasswordHasher, IDisposable
     private async Task<byte[]> ComputeAsync(
         byte[] password, byte[] salt, Argon2Profile profile, CancellationToken cancellationToken)
     {
-        await _gate.WaitAsync(cancellationToken);
+        if (Interlocked.Increment(ref _ждут) > QueueLimit)
+        {
+            Interlocked.Decrement(ref _ждут);
+
+            throw new AppException(
+                ErrorCodes.RateLimited,
+                "Сервер занят проверкой паролей. Повторите через минуту.",
+                HttpStatusCode.TooManyRequests);
+        }
+
+        try
+        {
+            await _gate.WaitAsync(cancellationToken);
+        }
+        finally
+        {
+            Interlocked.Decrement(ref _ждут);
+        }
 
         try
         {

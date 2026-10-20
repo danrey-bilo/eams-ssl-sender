@@ -25,11 +25,19 @@ namespace EmailSslSender.Api.Infrastructure;
 internal sealed class RateLimitGroups
 {
     /// <summary>Группа пути: имя, предел по адресу и предел на человека, если он есть.</summary>
-    public sealed record Group(string Name, int PerAddress, int? PerUser);
+    /// <param name="Name">Имя группы — часть ключа счётчика.</param>
+    /// <param name="PerAddress">Запросов в минуту с одного адреса (IPv6 — с сети /64).</param>
+    /// <param name="PerUser">Запросов в минуту на учётную запись; <c>null</c> — не считается.</param>
+    /// <param name="Total">
+    /// Предел на всех клиентов вместе. ⚠ Анонимные вход и сброс считают argon2 (64 МиБ на
+    /// хеш): поток со множества адресов иначе съедал бы память и процессор сервера целиком.
+    /// </param>
+    public sealed record Group(string Name, int PerAddress, int? PerUser, int? Total = null);
 
     private readonly Group _вход;
     private readonly Group _переспрос;
     private readonly Group _активация;
+    private readonly Group _проба;
 
     public RateLimitGroups(IConfiguration configuration)
     {
@@ -46,9 +54,17 @@ internal sealed class RateLimitGroups
 
         var множитель = Math.Max(1, configuration.GetValue("RateLimits:AddressFactor", 10));
 
-        _вход = new Group("вход", входПоАдресу, PerUser: null);
+        _вход = new Group(
+            "вход", входПоАдресу, PerUser: null,
+            Total: configuration.GetValue("RateLimits:LoginTotalPerMinute", 300));
         _переспрос = new Group("переспрос", LoginPerMinute * множитель, LoginPerMinute);
-        _активация = new Group("активация", активация, PerUser: null);
+
+        // ⚠ Готовность открыта без входа и каждый раз спрашивает базу (ревью безопасности
+        // 2026-10-20). Проба контейнера ходит раз в полминуты с 127.0.0.1 — предел её не задевает.
+        _проба = new Group("проба", configuration.GetValue("RateLimits:ReadyPerAddressPerMinute", 120), PerUser: null);
+        _активация = new Group(
+            "активация", активация, PerUser: null,
+            Total: configuration.GetValue("RateLimits:ActivationTotalPerMinute", 60));
     }
 
     /// <summary>Попыток входа в минуту на пару «адрес + почта» — для модуля личностей.</summary>
@@ -76,6 +92,11 @@ internal sealed class RateLimitGroups
             || path.StartsWithSegments("/api/me/password", StringComparison.OrdinalIgnoreCase))
         {
             return _переспрос;
+        }
+
+        if (path.StartsWithSegments("/api/ready", StringComparison.OrdinalIgnoreCase))
+        {
+            return _проба;
         }
 
         return path.StartsWithSegments("/api/activation", StringComparison.OrdinalIgnoreCase)

@@ -24,6 +24,21 @@ public sealed class SecurityHeadersMiddleware(RequestDelegate next)
 
     public Task InvokeAsync(HttpContext context)
     {
+        // ⚠ ⚠ В момент отправки, а не на входе (ревью безопасности 2026-10-20): обработчик
+        // ошибок зовёт Response.Clear() и стирал заголовки, поставленные заранее, — ответы с
+        // отказом (в том числе 401 с распиской второго шага) уходили без no-store и HSTS.
+        // Колбэк OnStarting переживает Clear().
+        context.Response.OnStarting(() =>
+        {
+            Apply(context);
+            return Task.CompletedTask;
+        });
+
+        return next(context);
+    }
+
+    private static void Apply(HttpContext context)
+    {
         var headers = context.Response.Headers;
 
         headers.XContentTypeOptions = "nosniff";
@@ -41,7 +56,5 @@ public sealed class SecurityHeadersMiddleware(RequestDelegate next)
         {
             headers.CacheControl = "no-store";
         }
-
-        return next(context);
     }
 }

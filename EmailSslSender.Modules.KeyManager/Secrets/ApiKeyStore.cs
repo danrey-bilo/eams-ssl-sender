@@ -71,10 +71,10 @@ internal sealed class ApiKeyStore(
     /// Открыть ключ API для адреса или <c>null</c>, если он не задан.
     /// </summary>
     /// <remarks>
-    /// ⚠ ⚠ <b>Старый ключ без привязки привязывается к адресу первого использования</b> и
-    /// перепечатывается — доверие с первого раза, иначе обновление сломало бы работающую
-    /// установку. Перепечатка — условным обновлением по прежнему запечатанному: ключ, заданный
-    /// заново между чтением и записью, не затирается.
+    /// ⚠ ⚠ <b>Старый ключ без привязки не открывается</b> (ревью безопасности 2026-10-20): его
+    /// привязывает к текущему адресу команда <c>migrate</c> (<see cref="BindLegacyAsync"/>), а
+    /// иначе — повторный ввод. Прежнее «доверие с первого раза» отдавало ключ тому, кто первым
+    /// подменил адрес из захваченной сессии.
     /// </remarks>
     /// <param name="target">Адрес из <see cref="Target"/> по текущим настройкам.</param>
     /// <param name="cancellationToken">Отмена.</param>
@@ -100,19 +100,9 @@ internal sealed class ApiKeyStore(
 
         if (привязка is null)
         {
-            // ⚠ Тем же ключом данных: ротация перекладывает обёртку, а не сам ключ данных, и
-            // запечатанное им открывается при любой версии обёртки.
-            var перепечатано = envelope.SealText(
-                new WrappedDataKey(ключ), new BoundSecret(target, открыто).Pack(), Контекст).Bytes;
-
-            await db.Set<KeyManagerState>()
-                .Where(с => с.Id == KeyManagerState.SingletonId && с.ApiKey == запечатано)
-                .ExecuteUpdateAsync(set => set.SetProperty(с => с.ApiKey, перепечатано), cancellationToken);
-
-            // ⚠ Без адреса и тем более без ключа: строка о факте, адрес виден в настройках.
-            log.LogWarning("keymanager_api_key_bound_on_first_use");
-
-            return открыто;
+            throw new KeyManagerException(
+                "Ключ API задан до привязки к адресу. Выполните docker compose run --rm migrate — "
+                + "команда привяжет его к текущему адресу Key Manager Plus — или введите ключ заново.");
         }
 
         if (!привязка.IsFor(target))
@@ -124,6 +114,48 @@ internal sealed class ApiKeyStore(
         }
 
         return привязка.Secret;
+    }
+
+    /// <summary>
+    /// Привязать ключ без привязки к адресу <paramref name="target"/>. Зовёт только <c>migrate</c>.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Тем же ключом данных и условным обновлением по прежнему запечатанному: ротация
+    /// перекладывает обёртку, а не ключ данных, а ключ, заданный заново между чтением и
+    /// записью, не затирается.
+    /// </remarks>
+    /// <returns><c>true</c> — привязан сейчас.</returns>
+    public async Task<bool> BindLegacyAsync(string target, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(target);
+
+        var строка = await db.Set<KeyManagerState>()
+            .AsNoTracking()
+            .FirstOrDefaultAsync(с => с.Id == KeyManagerState.SingletonId, cancellationToken);
+
+        if (строка is not { ApiKey: { } запечатано, DataKey: { } ключ })
+        {
+            return false;
+        }
+
+        var открыто = envelope.OpenText(new WrappedDataKey(ключ), new SealedSecret(запечатано), Контекст);
+
+        if (BoundSecret.Unpack(открыто) is not null)
+        {
+            return false;
+        }
+
+        var перепечатано = envelope.SealText(
+            new WrappedDataKey(ключ), new BoundSecret(target, открыто).Pack(), Контекст).Bytes;
+
+        var изменено = await db.Set<KeyManagerState>()
+            .Where(с => с.Id == KeyManagerState.SingletonId && с.ApiKey == запечатано)
+            .ExecuteUpdateAsync(set => set.SetProperty(с => с.ApiKey, перепечатано), cancellationToken);
+
+        // ⚠ Без адреса и тем более без ключа: строка о факте, адрес виден в настройках.
+        log.LogWarning("keymanager_api_key_bound_by_migrate");
+
+        return изменено == 1;
     }
 
     /// <summary>Задан ли ключ — без его открытия.</summary>

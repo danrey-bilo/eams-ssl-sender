@@ -360,6 +360,23 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Новая_отправка_отменяет_прежние_неотправленные_письма()
+    {
+        // Ревью безопасности 2026-10-20: прежде номера первой порции затирались, и потом её уже
+        // не отменяли ни удаление подписки, ни смена получателей.
+        База("site.example.com", "aa01", Год);
+        var id = await Подписка("site.example.com", ["a@example.com"]);
+
+        await Опросить();
+        var первые = (await Прочитать(id)).PendingMailIds.ShouldNotBeNull();
+
+        (await Вручную(id)).Outcome.ShouldBe(DeliveryOutcome.Sent);
+
+        база.Почта.Отменённые.ShouldBe(первые);
+        (await Прочитать(id)).PendingMailIds.ShouldNotBeNull().ShouldNotContain(первые[0]);
+    }
+
+    [Fact]
     public async Task Пароль_ключа_пишется_только_по_просьбе()
     {
         База("a.example.com", "aa01", Год);

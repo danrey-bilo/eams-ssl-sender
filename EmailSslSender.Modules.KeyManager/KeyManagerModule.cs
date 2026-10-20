@@ -52,6 +52,7 @@ public static class KeyManagerModule
 
         // ⚠ Цель ротации регистрируется В ТОМ ЖЕ изменении, что и запечатывание ключа API.
         services.AddScoped<ApiKeyStore>();
+        services.AddScoped<ILegacySecretBinder, ApiKeyLegacyBinding>();
         services.AddScoped<IRewrapTarget, ApiKeyRewrap>();
 
         services.AddScoped<IKeyManagerConnector, KeyManagerConnector>();
