@@ -1,15 +1,17 @@
-# Боевой стек: API и PostgreSQL.
+# Боевой стек: API (с панелью), PostgreSQL и, по желанию, Cloudflare Tunnel.
 #
 # Порядок первого запуска (подробно — README.md):
 #   ./scripts/gen-secrets.sh
+#   cp .env.example .env          # и вписать CLOUDFLARE_TUNNEL_TOKEN, если наружу — через туннель
 #   docker compose build
 #   docker compose run --rm api migrate
 #   docker compose run --rm api create-superadmin --email admin@example.com
 #   docker compose up -d
 #
-# ⚠ Наружу публикуется ТОЛЬКО 127.0.0.1:8001. TLS для клиентов — забота обратного прокси
-# (nginx, Caddy, Traefik) перед ним: кука обновления помечена Secure и по голому HTTP браузер её
-# не сохранит. Публиковать 8001 на все адреса без прокси — значит слать пароли открытым текстом.
+# ⚠ На сервере публикуется ТОЛЬКО 127.0.0.1:8001. Наружу сервис выходит через Cloudflare Tunnel
+# (служба cloudflared ниже: исходящее соединение, открытых портов не нужно) или через свой обратный
+# прокси с TLS. Кука обновления помечена Secure и по голому HTTP браузер её не сохранит;
+# публиковать 8001 на все адреса без TLS — значит слать пароли открытым текстом.
 #
 # ⚠ У секретов НЕТ умолчаний: нет файла — нет старта. Файл, по которому поднимают систему, —
 # это инструкция, и она исполняется буквально; пароль-умолчание здесь стал бы паролем установки.
@@ -36,9 +38,10 @@ services:
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=sender;Username=sender;Maximum Pool Size=40;GSS Encryption Mode=Disable"
       SENDER_POSTGRES_PASSWORD_FILE: /run/secrets/sender_postgres_password
       SENDER_MASTER_KEK_FILE: /run/secrets/sender_master_kek
-      # Сети обратного прокси, которому верим заголовок X-Forwarded-For. Пусто — не верим
-      # никому, и предел попыток входа считается по адресу прокси.
-      ForwardedHeaders__KnownNetworks: ${SENDER_TRUSTED_PROXY_NETWORKS:-}
+      # Сети, которым верим заголовки X-Forwarded-For / -Proto: сеть туннеля (в ней только
+      # cloudflared и сам API) и, если задан, свой обратный прокси. Не верь мы туннелю — все
+      # клиенты выглядели бы одним адресом cloudflared, и предел попыток входа делили бы на всех.
+      ForwardedHeaders__KnownNetworks: ${SENDER_TUNNEL_SUBNET:-172.31.250.0/28},${SENDER_TRUSTED_PROXY_NETWORKS:-}
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -51,6 +54,9 @@ services:
       - sender_postgres_password
     ports:
       - "127.0.0.1:8001:8001"
+    networks:
+      - default
+      - edge
     logging: *logging
     healthcheck:
       test: ["CMD", "dotnet", "EmailSslSender.Api.dll", "health"]
@@ -60,6 +66,36 @@ services:
       start_period: 30s
     depends_on:
       postgres:
+        condition: service_healthy
+
+  # Cloudflare Tunnel: публикует панель и API наружу исходящим соединением, без открытых портов.
+  #
+  # ⚠ Токен — в .env (CLOUDFLARE_TUNNEL_TOKEN), а не здесь: этот файл лежит в git, .env — нет.
+  # Служба в профиле `tunnel`; .env.example включает его строкой COMPOSE_PROFILES=tunnel, и тогда
+  # обычный `docker compose up -d` поднимает туннель сам.
+  #
+  # ⚠ В Cloudflare (Zero Trust → Networks → Tunnels → Public Hostname) сервис указывается как
+  # HTTP `api:8001` — имя службы в сети `edge`, а не адрес сервера.
+  #
+  # Образ — `latest` (решение владельца): обновление — `docker compose pull cloudflared` и
+  # `docker compose up -d`. Самообновление внутри контейнера выключено (`--no-autoupdate`).
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    networks:
+      - edge
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    logging: *logging
+    depends_on:
+      api:
         condition: service_healthy
 
   postgres:
@@ -88,3 +124,12 @@ secrets:
 
 volumes:
   pgdata:
+
+networks:
+  default:
+  # Сеть туннеля: только cloudflared и API — до базы туннелю дороги нет. Подсеть закреплена,
+  # чтобы API мог верить заголовкам именно от неё; занята на сервере — задайте SENDER_TUNNEL_SUBNET.
+  edge:
+    ipam:
+      config:
+        - subnet: ${SENDER_TUNNEL_SUBNET:-172.31.250.0/28}

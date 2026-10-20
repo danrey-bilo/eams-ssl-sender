@@ -93,33 +93,67 @@ Manager Plus** по подпискам. Код учётных записей, т
 > ⚠ Папка `secrets/` в git не попадает. Мастер-ключ храните отдельно от копий базы: без него
 > пароль SMTP и тела писем в очереди не расшифровать, а вместе с ним — расшифровать.
 
-**2. Сборка образа.**
+**2. Туннель Cloudflare.** Наружу сервис выходит через Cloudflare Tunnel: служба
+`cloudflared` в том же `docker compose` держит исходящее соединение с Cloudflare, и открытых
+портов на сервере не нужно. Скопируйте пример и впишите токен туннеля. Токен берётся в Cloudflare:
+Zero Trust → Networks → Tunnels → туннель → Install connector, строка после `--token`.
+
+```bash
+cp .env.example .env
+```
+
+```
+COMPOSE_PROFILES=tunnel
+CLOUDFLARE_TUNNEL_TOKEN=eyJhIjoi...
+```
+
+> ⚠ Токен — только в `.env`: этот файл в git не попадает, а `docker-compose.yml` попадает.
+
+В Cloudflare у туннеля добавьте **Public Hostname**:
+
+| Поле | Значение |
+|---|---|
+| Subdomain / Domain | ваш адрес, например `sender.example.com` |
+| Service → Type | `HTTP` |
+| Service → URL | `api:8001` |
+
+`api:8001` — это имя службы API во внутренней сети compose, а не адрес сервера: `cloudflared`
+стоит в одной сети с API. TLS для браузера даёт Cloudflare. Адрес клиента приложение берёт из
+заголовков туннеля: им верит только сеть `edge`, где есть лишь `cloudflared` и API. Поэтому
+предел попыток входа считается по настоящему адресу человека.
+
+После первого входа в панели задайте **Почта → Адрес сервиса** = `https://sender.example.com`:
+из него собираются ссылки в письмах.
+
+**3. Сборка образа.**
 
 ```bash
 docker compose build
 ```
 
-**3. Схема базы.** Обычный старт на отставшей схеме отказывается работать, поэтому схему
+**4. Схема базы.** Обычный старт на отставшей схеме отказывается работать, поэтому схему
 накатывают только этой командой, в том числе после каждого обновления кода.
 
 ```bash
 docker compose run --rm api migrate
 ```
 
-**4. Первая учётная запись.** Пароль спрашивается скрытым вводом дважды. Для сценариев есть
+**5. Первая учётная запись.** Пароль спрашивается скрытым вводом дважды. Для сценариев есть
 `--password-file путь`, а для имени — `--display-name "Имя"`.
 
 ```bash
 docker compose run --rm api create-superadmin --email admin@example.com
 ```
 
-**5. Запуск.**
+**6. Запуск.** Поднимутся API, база и туннель (`cloudflared` — если в `.env` есть
+`COMPOSE_PROFILES=tunnel`). Туннель жив, когда в его журнале есть
+`Registered tunnel connection` (`docker compose logs cloudflared`).
 
 ```bash
 docker compose up -d
 ```
 
-API слушает только `127.0.0.1:8001`. Проверка:
+На самом сервере API слушает только `127.0.0.1:8001`. Проверка:
 
 ```bash
 curl -s http://127.0.0.1:8001/api/health
@@ -127,8 +161,8 @@ curl -s http://127.0.0.1:8001/api/health
 
 `/api/health` отвечает, что процесс жив. `/api/ready` дополнительно проверяет базу.
 
-**6. Обратный прокси с TLS.** Наружу API выставляют через nginx, Caddy или Traefik с
-сертификатом. Кука обновления — `__Host-sender-refresh` с атрибутами `Secure`, `HttpOnly` и
+**Без туннеля — свой обратный прокси с TLS.** Уберите из `.env` строки туннеля и выставьте API
+наружу через nginx, Caddy или Traefik с сертификатом. Кука обновления — `__Host-sender-refresh` с атрибутами `Secure`, `HttpOnly` и
 `SameSite=Strict`, поэтому по голому HTTP браузер её не сохранит. Пример для Caddy:
 
 ```
@@ -144,6 +178,12 @@ sender.example.com {
 
 ```
 SENDER_TRUSTED_PROXY_NETWORKS=172.18.0.1/32
+```
+
+**Обновление `cloudflared`.** Образ взят как `latest`. Свежую версию подтягивают так:
+
+```bash
+docker compose pull cloudflared && docker compose up -d
 ```
 
 ---
