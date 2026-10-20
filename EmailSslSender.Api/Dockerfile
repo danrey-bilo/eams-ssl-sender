@@ -30,6 +30,7 @@ COPY ["EmailSslSender.Modules.Identity/EmailSslSender.Modules.Identity.csproj", 
 COPY ["EmailSslSender.Modules.Tokens/EmailSslSender.Modules.Tokens.csproj", "EmailSslSender.Modules.Tokens/"]
 COPY ["EmailSslSender.Modules.Settings/EmailSslSender.Modules.Settings.csproj", "EmailSslSender.Modules.Settings/"]
 COPY ["EmailSslSender.Modules.Mail/EmailSslSender.Modules.Mail.csproj", "EmailSslSender.Modules.Mail/"]
+COPY ["EmailSslSender.Modules.KeyManager/EmailSslSender.Modules.KeyManager.csproj", "EmailSslSender.Modules.KeyManager/"]
 RUN dotnet restore "EmailSslSender.Api/EmailSslSender.Api.csproj"
 
 COPY . .

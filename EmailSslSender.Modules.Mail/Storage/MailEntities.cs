@@ -53,6 +53,9 @@ internal sealed class MailEntities : IEntityConfigurationProvider
             строка.Property(п => п.DataKey)
                 .HasColumnName("data_key").HasColumnType("bytea").IsRequired();
 
+            строка.Property(п => п.SealedAttachments)
+                .HasColumnName("attachments").HasColumnType("bytea");
+
             строка.Property(п => п.Kind)
                 .HasColumnName("kind").HasColumnType("text").IsRequired();
 

@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <!-- Даёт библиотеке типы ASP.NET (контроллеры, DI, фоновые службы), не делая её веб-приложением -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Свои тесты видят внутренности модуля, чужие — нет (правило 1). -->
+    <InternalsVisibleTo Include="EmailSslSender.Modules.KeyManager.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <!-- ToTable, HasColumnType, FromSql, ExecuteSql живут в реляционном пакете, а не в ядре -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
+    <!--
+      ⚠ Ссылки на Npgsql здесь нет, как и у остальных модулей: `text[]` и `ON CONFLICT` — это
+      строки схемы и SQL, провайдер подставляет хост.
+    -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- ⚠ Единственная ссылка на проект: почта и настройки — через контракты Shared (правило 1). -->
+    <ProjectReference Include="..\EmailSslSender.Shared\EmailSslSender.Shared.csproj" />
+  </ItemGroup>
+
+</Project>

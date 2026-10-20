@@ -1,6 +1,7 @@
 using EmailSslSender.Api.Infrastructure;
 using EmailSslSender.Modules.Tokens.Tokens;
 using EmailSslSender.Modules.Identity;
+using EmailSslSender.Modules.KeyManager;
 using EmailSslSender.Modules.Mail;
 using EmailSslSender.Modules.Settings;
 using EmailSslSender.Shared.Contracts.Audit;
@@ -99,7 +100,9 @@ public sealed class TokenDatabase : IAsyncLifetime
             .AddIdentityModule()
             .AddTokensModule()
             .AddSettingsModule()
-            .AddMailModule();
+            .AddMailModule()
+            // Таблицы модуля — ради совпадения модели с миграциями хоста; опрос не поднимается.
+            .AddKeyManagerModule();
 
         // ⚠ ПОСЛЕ модулей, и порядок здесь несущий. С этапа 16.5 модуль настроек регистрирует
         // НАСТОЯЩИЙ читатель (база → конфигурация → умолчание), и он выигрывает у подделки,

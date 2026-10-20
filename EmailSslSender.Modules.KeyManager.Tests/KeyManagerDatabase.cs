@@ -1,0 +1,380 @@
+using System.Text;
+using EmailSslSender.Modules.KeyManager.Client;
+using EmailSslSender.Modules.KeyManager.Delivery;
+using EmailSslSender.Modules.KeyManager.Secrets;
+using EmailSslSender.Modules.KeyManager.Storage;
+using EmailSslSender.Shared.Contracts.Audit;
+using EmailSslSender.Shared.Contracts.Authz;
+using EmailSslSender.Shared.Contracts.Data;
+using EmailSslSender.Shared.Contracts.Mail;
+using EmailSslSender.Shared.Contracts.Settings;
+using EmailSslSender.Shared.Crypto;
+using EmailSslSender.Shared.Data;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Testcontainers.PostgreSql;
+
+namespace EmailSslSender.Modules.KeyManager.Tests;
+
+/// <summary>
+/// Настоящий PostgreSQL на прогон, схема модуля над ним и подставные соседи.
+/// </summary>
+/// <remarks>
+/// ⚠ <b>Соседи подставные, база — настоящая.</b> Почта и Key Manager Plus здесь — записные
+/// подделки: доставку проверяют выбор сертификата, сроки и атомарность, а им не нужны ни SMTP, ни
+/// HTTPS. Блокировку строки подписки и <c>ON CONFLICT</c> снимка подделать нельзя — для них и
+/// поднят контейнер.
+/// </remarks>
+public sealed class KeyManagerDatabase : IAsyncLifetime
+{
+    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:16")
+        .WithDatabase("sender")
+        .WithUsername("sender_owner")
+        .WithPassword("тест-не-секрет")
+        .Build();
+
+    private ServiceProvider? _services;
+
+    public IServiceProvider Services => _services
+        ?? throw new InvalidOperationException("Обвязка не поднята");
+
+    /// <summary>Строка подключения — тестам, которым нужно второе соединение мимо контекста.</summary>
+    public string Connection => _postgres.GetConnectionString();
+
+    public ПодвижныеЧасы Часы { get; } = new(new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero));
+
+    public ПодставнаяЛичность Личность { get; } = new();
+
+    public ФиктивныеНастройки Настройки { get; } = new();
+
+    public ЗаписнойЖурнал Логи { get; } = new();
+
+    public ЗаписнойАудит Аудит { get; } = new();
+
+    public ПодставнаяОчередь Почта { get; } = new();
+
+    public ПодвижныйКонверт Конверт { get; } = new();
+
+    internal ПодставнойKmp Kmp { get; } = new();
+
+    public async ValueTask InitializeAsync()
+    {
+        await _postgres.StartAsync();
+
+        var services = new ServiceCollection();
+
+        services.AddLogging(строитель => строитель.AddProvider(Логи));
+        services.AddSingleton<IEntityConfigurationProvider, KeyManagerTables>();
+        services.AddDbContext<SenderDbContext>(options => options.UseNpgsql(_postgres.GetConnectionString()));
+        services.AddSingleton<TimeProvider>(Часы);
+        services.AddSingleton<ICurrentUser>(Личность);
+        services.AddSingleton<ISecretEnvelope>(Конверт);
+        services.AddSingleton<ISettingsReader>(Настройки);
+        services.AddSingleton<IAuditWriter>(Аудит);
+        services.AddSingleton<IMailQueue>(Почта);
+        services.AddSingleton<IKeyManagerConnector>(Kmp);
+
+        services.AddScoped<ApiKeyStore>();
+        services.AddScoped<ApiKeyRewrap>();
+        services.AddScoped<CertificateDelivery>();
+        services.AddScoped<CertificatePolling>();
+
+        _services = services.BuildServiceProvider();
+
+        await using var scope = Scope();
+        await scope.ServiceProvider.GetRequiredService<SenderDbContext>().Database.EnsureCreatedAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_services is not null)
+        {
+            await _services.DisposeAsync();
+        }
+
+        await _postgres.DisposeAsync();
+    }
+
+    public AsyncServiceScope Scope() => Services.CreateAsyncScope();
+
+    /// <summary>Вернуть подделки к исходному — между тестами.</summary>
+    public void Сброс()
+    {
+        Настройки.Значения.Clear();
+        Логи.Строки.Clear();
+        Аудит.Записи.Clear();
+        Почта.Сброс();
+        Kmp.Сброс();
+        Конверт.Вернуть();
+    }
+}
+
+[CollectionDefinition(Name)]
+public sealed class KeyManagerDatabaseCollection : ICollectionFixture<KeyManagerDatabase>
+{
+    public const string Name = "keymanager-database";
+}
+
+/// <summary>Часы, которые двигает тест.</summary>
+public sealed class ПодвижныеЧасы(DateTimeOffset start) : TimeProvider
+{
+    private DateTimeOffset _теперь = start;
+
+    public override DateTimeOffset GetUtcNow() => _теперь;
+
+    public void Вперёд(TimeSpan сколько) => _теперь = _теперь.Add(сколько);
+}
+
+/// <summary>Кто пришёл — задаёт тест.</summary>
+public sealed class ПодставнаяЛичность : ICurrentUser
+{
+    public Guid? Id { get; set; } = Guid.CreateVersion7();
+
+    public AuditActorType ActorType { get; set; } = AuditActorType.User;
+
+    public Guid? SessionId { get; set; }
+}
+
+/// <summary>Настройки, которые задаёт тест; чего не задал — умолчание ключа.</summary>
+public sealed class ФиктивныеНастройки : ISettingsReader
+{
+    public Dictionary<string, object?> Значения { get; } = new(StringComparer.Ordinal);
+
+    public ValueTask<T> GetAsync<T>(SettingKey<T> key, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(key);
+
+        return ValueTask.FromResult(Значения.TryGetValue(key.Name, out var значение) ? (T)значение! : key.Default);
+    }
+}
+
+/// <summary>Журнал, запоминающий строки.</summary>
+public sealed class ЗаписнойЖурнал : ILoggerProvider
+{
+    public List<string> Строки { get; } = [];
+
+    public ILogger CreateLogger(string categoryName) => new Перо(Строки);
+
+    public void Dispose()
+    {
+    }
+
+    private sealed class Перо(List<string> строки) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state)
+            where TState : notnull => null;
+
+        public bool IsEnabled(LogLevel logLevel) => true;
+
+        public void Log<TState>(
+            LogLevel logLevel, EventId eventId, TState state, Exception? exception,
+            Func<TState, Exception?, string> formatter)
+        {
+            ArgumentNullException.ThrowIfNull(formatter);
+
+            lock (строки)
+            {
+                строки.Add(formatter(state, exception));
+            }
+        }
+    }
+}
+
+/// <summary>Журнал действий, запоминающий записи.</summary>
+public sealed class ЗаписнойАудит : IAuditWriter
+{
+    public List<AuditEntry> Записи { get; } = [];
+
+    public void Write(AuditEntry entry)
+    {
+        lock (Записи)
+        {
+            Записи.Add(entry);
+        }
+    }
+}
+
+/// <summary>Одно письмо, принятое подставной очередью.</summary>
+public sealed record ПринятоеПисьмо(
+    string To, string Kind, string Locale, IReadOnlyDictionary<string, string> Values,
+    IReadOnlyList<MailAttachment> Attachments);
+
+/// <summary>
+/// Очередь писем, запоминающая постановки.
+/// </summary>
+/// <remarks>
+/// ⚠ Запоминает постановку сразу, а не с фиксацией: проверки, где фиксация не состоялась, смотрят
+/// на отметку подписки, а не на число писем здесь.
+/// </remarks>
+public sealed class ПодставнаяОчередь : IMailQueue
+{
+    public List<ПринятоеПисьмо> Письма { get; } = [];
+
+    /// <summary>Чем отвечать на постановку.</summary>
+    public MailQueueResult Ответ { get; set; } = MailQueueResult.Queued;
+
+    public void Сброс()
+    {
+        Письма.Clear();
+        Ответ = MailQueueResult.Queued;
+    }
+
+    public Task<bool> CanSendAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(Ответ != MailQueueResult.NotConfigured);
+
+    public Task<MailQueueResult> EnqueueAsync(
+        string toAddress, string kind, string locale, IReadOnlyDictionary<string, string> values,
+        CancellationToken cancellationToken = default) =>
+        EnqueueAsync(toAddress, kind, locale, values, [], cancellationToken);
+
+    public Task<MailQueueResult> EnqueueAsync(
+        string toAddress, string kind, string locale, IReadOnlyDictionary<string, string> values,
+        IReadOnlyList<MailAttachment> attachments, CancellationToken cancellationToken = default)
+    {
+        if (Ответ == MailQueueResult.Queued)
+        {
+            lock (Письма)
+            {
+                Письма.Add(new ПринятоеПисьмо(toAddress, kind, locale, values, attachments));
+            }
+        }
+
+        return Task.FromResult(Ответ);
+    }
+}
+
+/// <summary>
+/// Key Manager Plus в памяти: и соединитель, и клиент.
+/// </summary>
+internal sealed class ПодставнойKmp : IKeyManagerConnector, IKeyManagerClient
+{
+    public List<KmpCertificate> Сертификаты { get; } = [];
+
+    /// <summary>Пароли ключей по серийному номеру.</summary>
+    public Dictionary<string, string?> Пароли { get; } = new(StringComparer.Ordinal);
+
+    public KeyManagerConfiguration Настройки { get; set; } = Готово;
+
+    /// <summary>На каком типе файла отказывать.</summary>
+    public string? ПадатьНаФормате { get; set; }
+
+    /// <summary>Отказывать ли в списке.</summary>
+    public bool СписокПадает { get; set; }
+
+    public int Выгрузок => _выгрузок;
+
+    public int Списков => _списков;
+
+    /// <summary>Задвижка: пока взведена, выгрузка ждёт.</summary>
+    public TaskCompletionSource? Задвижка { get; private set; }
+
+    /// <summary>Сигнал «выгрузка началась» — для проверок одновременности.</summary>
+    public TaskCompletionSource ВыгрузкаНачалась { get; private set; } = Новый();
+
+    private int _выгрузок;
+    private int _списков;
+
+    public static KeyManagerConfiguration Готово { get; } = new(true, "https://kmp.example.test:6565", null, true);
+
+    public void Задержать() => Задвижка = Новый();
+
+    public void Отпустить() => Задвижка?.TrySetResult();
+
+    public void Сброс()
+    {
+        Сертификаты.Clear();
+        Пароли.Clear();
+        Настройки = Готово;
+        ПадатьНаФормате = null;
+        СписокПадает = false;
+        _выгрузок = 0;
+        _списков = 0;
+        Отпустить();
+        Задвижка = null;
+        ВыгрузкаНачалась = Новый();
+    }
+
+    public Task<KeyManagerConfiguration> ReadAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult(Настройки);
+
+    public Task<IKeyManagerClient> OpenAsync(CancellationToken cancellationToken = default) =>
+        Task.FromResult<IKeyManagerClient>(this);
+
+    public Task<IReadOnlyList<KmpCertificate>> ListAsync(CancellationToken cancellationToken = default)
+    {
+        Interlocked.Increment(ref _списков);
+
+        return СписокПадает
+            ? throw new KeyManagerException("Key Manager Plus недоступен (подставной отказ).")
+            : Task.FromResult<IReadOnlyList<KmpCertificate>>([.. Сертификаты]);
+    }
+
+    public async Task<KmpFile> DownloadAsync(
+        string commonName, string serialNumber, string format, CancellationToken cancellationToken = default)
+    {
+        Interlocked.Increment(ref _выгрузок);
+        ВыгрузкаНачалась.TrySetResult();
+
+        if (Задвижка is { } ждём)
+        {
+            await ждём.Task.WaitAsync(cancellationToken);
+        }
+
+        if (string.Equals(format, ПадатьНаФормате, StringComparison.Ordinal))
+        {
+            throw new KeyManagerException($"Key Manager Plus отказал в выгрузке {format} (подставной отказ).");
+        }
+
+        return new KmpFile(
+            KeyManagerClient.ИмяПоУмолчанию(commonName, format),
+            CertificateFormats.ContentType(format),
+            Encoding.ASCII.GetBytes($"{format}:{serialNumber}"));
+    }
+
+    public Task<string?> PassphraseAsync(
+        string commonName, string serialNumber, CancellationToken cancellationToken = default) =>
+        Task.FromResult(Пароли.GetValueOrDefault(serialNumber));
+
+    public void Dispose()
+    {
+        // Подделка живёт всю коллекцию: «закрытие» после прохода её не трогает.
+    }
+
+    private static TaskCompletionSource Новый() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+}
+
+/// <summary>Конверт, у которого можно подменить кольцо мастер-ключей — для проверки ротации.</summary>
+public sealed class ПодвижныйКонверт : ISecretEnvelope
+{
+    private static readonly byte[] Первый = [.. Enumerable.Repeat((byte)0x11, MasterKeyRing.KeyBytes)];
+    private static readonly byte[] Второй = [.. Enumerable.Repeat((byte)0x22, MasterKeyRing.KeyBytes)];
+
+    private ISecretEnvelope _текущий = Кольцо(1);
+
+    public void Повернуть() => _текущий = Кольцо(2);
+
+    public void Вернуть() => _текущий = Кольцо(1);
+
+    public WrappedDataKey CreateDataKey(int generation = 1) => _текущий.CreateDataKey(generation);
+
+    public SealedSecret Seal(WrappedDataKey key, ReadOnlySpan<byte> plaintext, string context) =>
+        _текущий.Seal(key, plaintext, context);
+
+    public byte[] Open(WrappedDataKey key, SealedSecret secret, string context) => _текущий.Open(key, secret, context);
+
+    public SealedSecret SealText(WrappedDataKey key, string plaintext, string context) =>
+        _текущий.SealText(key, plaintext, context);
+
+    public string OpenText(WrappedDataKey key, SealedSecret secret, string context) =>
+        _текущий.OpenText(key, secret, context);
+
+    public bool NeedsRewrap(WrappedDataKey key) => _текущий.NeedsRewrap(key);
+
+    public WrappedDataKey Rewrap(WrappedDataKey key) => _текущий.Rewrap(key);
+
+    private static SecretEnvelope Кольцо(int версий) => new(MasterKeyRing.FromKeys(
+        версий == 1
+            ? new Dictionary<int, byte[]> { [1] = Первый }
+            : new Dictionary<int, byte[]> { [1] = Первый, [2] = Второй }));
+}

@@ -20,14 +20,19 @@ internal sealed class MailTemplates
 {
     private readonly Dictionary<(string Kind, string Locale), MailTemplate> _byKey;
 
+    /// <summary>Виды, с которых владелец снял предел частоты.</summary>
+    private readonly HashSet<string> _безПредела;
+
     public MailTemplates(IEnumerable<IMailTemplateProvider> providers)
     {
         ArgumentNullException.ThrowIfNull(providers);
 
+        var поставщики = providers.ToList();
+
         _byKey = [];
         var споры = new List<string>();
 
-        foreach (var текст in providers.SelectMany(п => п.Templates))
+        foreach (var текст in поставщики.SelectMany(п => п.Templates))
         {
             if (!MailLocales.All.Contains(текст.Locale, StringComparer.Ordinal))
             {
@@ -73,10 +78,28 @@ internal sealed class MailTemplates
         }
 
         Kinds = [.. _byKey.Keys.Select(к => к.Kind).Distinct(StringComparer.Ordinal).Order(StringComparer.Ordinal)];
+
+        // ⚠ Вид без предела обязан быть ОБЪЯВЛЕН шаблонами. Опечатка здесь иначе ничего бы не
+        // сломала и ничего бы не сделала — а снятие защиты, которое молча не состоялось, так же
+        // плохо, как снятое молча.
+        _безПредела = new HashSet<string>(
+            поставщики.SelectMany(п => п.UnthrottledKinds), StringComparer.Ordinal);
+
+        var незнакомые = _безПредела.Where(вид => !Knows(вид)).Order(StringComparer.Ordinal).ToList();
+
+        if (незнакомые.Count > 0)
+        {
+            throw new InvalidOperationException(
+                "Предел частоты снят с видов писем, которых не объявил ни один модуль: "
+                + string.Join(", ", незнакомые) + ".");
+        }
     }
 
     /// <summary>Все объявленные виды писем.</summary>
     public IReadOnlyList<string> Kinds { get; }
+
+    /// <summary>Действует ли на вид предел <c>mail.rate_per_hour</c>.</summary>
+    public bool IsThrottled(string kind) => !_безПредела.Contains(kind);
 
     /// <summary>Есть ли такой вид.</summary>
     public bool Knows(string kind) => Kinds.Contains(kind, StringComparer.Ordinal);

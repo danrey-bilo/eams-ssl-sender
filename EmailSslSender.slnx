@@ -6,6 +6,7 @@
     <Project Path="EmailSslSender.Modules.Tokens/EmailSslSender.Modules.Tokens.csproj" />
     <Project Path="EmailSslSender.Modules.Settings/EmailSslSender.Modules.Settings.csproj" />
     <Project Path="EmailSslSender.Modules.Mail/EmailSslSender.Modules.Mail.csproj" />
+    <Project Path="EmailSslSender.Modules.KeyManager/EmailSslSender.Modules.KeyManager.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="EmailSslSender.Shared.Tests/EmailSslSender.Shared.Tests.csproj" />
@@ -13,6 +14,7 @@
     <Project Path="EmailSslSender.Modules.Tokens.Tests/EmailSslSender.Modules.Tokens.Tests.csproj" />
     <Project Path="EmailSslSender.Modules.Settings.Tests/EmailSslSender.Modules.Settings.Tests.csproj" />
     <Project Path="EmailSslSender.Modules.Mail.Tests/EmailSslSender.Modules.Mail.Tests.csproj" />
+    <Project Path="EmailSslSender.Modules.KeyManager.Tests/EmailSslSender.Modules.KeyManager.Tests.csproj" />
     <Project Path="EmailSslSender.IntegrationTests/EmailSslSender.IntegrationTests.csproj" />
   </Folder>
 </Solution>

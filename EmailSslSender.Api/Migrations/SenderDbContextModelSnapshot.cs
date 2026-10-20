@@ -210,6 +210,175 @@ namespace EmailSslSender.Api.Migrations
                     b.ToTable("user_two_factor", (string)null);
                 });
 
+            modelBuilder.Entity("EmailSslSender.Modules.KeyManager.Domain.CertificateSubscription", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .HasColumnType("uuid")
+                        .HasColumnName("id");
+
+                    b.Property<string>("CommonName")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("common_name");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("created_at")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<Guid?>("CreatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("created_by");
+
+                    b.Property<bool>("Enabled")
+                        .HasColumnType("boolean")
+                        .HasColumnName("enabled");
+
+                    b.PrimitiveCollection<string[]>("Formats")
+                        .IsRequired()
+                        .HasColumnType("text[]")
+                        .HasColumnName("formats");
+
+                    b.Property<bool>("IncludePassphrase")
+                        .HasColumnType("boolean")
+                        .HasColumnName("include_passphrase");
+
+                    b.Property<int?>("IntervalDays")
+                        .HasColumnType("integer")
+                        .HasColumnName("interval_days");
+
+                    b.Property<DateTimeOffset?>("LastAttemptAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("last_attempt_at");
+
+                    b.Property<string>("LastError")
+                        .HasColumnType("text")
+                        .HasColumnName("last_error");
+
+                    b.Property<DateTimeOffset?>("LastSentAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("last_sent_at");
+
+                    b.Property<string>("LastSentSerial")
+                        .HasColumnType("text")
+                        .HasColumnName("last_sent_serial");
+
+                    b.Property<string>("Locale")
+                        .IsRequired()
+                        .HasColumnType("text")
+                        .HasColumnName("locale");
+
+                    b.Property<bool>("OnChange")
+                        .HasColumnType("boolean")
+                        .HasColumnName("on_change");
+
+                    b.PrimitiveCollection<string[]>("Recipients")
+                        .IsRequired()
+                        .HasColumnType("text[]")
+                        .HasColumnName("recipients");
+
+                    b.Property<DateTimeOffset>("UpdatedAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("updated_at")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_certificate_subscriptions");
+
+                    b.HasIndex("CommonName")
+                        .HasDatabaseName("ix_certificate_subscriptions_common_name");
+
+                    b.ToTable("certificate_subscriptions", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_certificate_subscriptions_formats", "cardinality(formats) >= 1");
+
+                            t.HasCheckConstraint("ck_certificate_subscriptions_interval", "interval_days IS NULL OR interval_days BETWEEN 1 AND 365");
+
+                            t.HasCheckConstraint("ck_certificate_subscriptions_recipients", "cardinality(recipients) >= 1");
+                        });
+                });
+
+            modelBuilder.Entity("EmailSslSender.Modules.KeyManager.Domain.KeyManagerState", b =>
+                {
+                    b.Property<short>("Id")
+                        .HasColumnType("smallint")
+                        .HasColumnName("id");
+
+                    b.Property<byte[]>("ApiKey")
+                        .HasColumnType("bytea")
+                        .HasColumnName("api_key");
+
+                    b.Property<byte[]>("DataKey")
+                        .HasColumnType("bytea")
+                        .HasColumnName("data_key");
+
+                    b.Property<DateTimeOffset?>("LastPollAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("last_poll_at");
+
+                    b.Property<int?>("LastPollCount")
+                        .HasColumnType("integer")
+                        .HasColumnName("last_poll_count");
+
+                    b.Property<string>("LastPollError")
+                        .HasColumnType("text")
+                        .HasColumnName("last_poll_error");
+
+                    b.Property<DateTimeOffset?>("UpdatedAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("updated_at");
+
+                    b.Property<Guid?>("UpdatedBy")
+                        .HasColumnType("uuid")
+                        .HasColumnName("updated_by");
+
+                    b.HasKey("Id")
+                        .HasName("pk_keymanager_state");
+
+                    b.ToTable("keymanager_state", null, t =>
+                        {
+                            t.HasCheckConstraint("ck_keymanager_state_singleton", "id = 1");
+                        });
+                });
+
+            modelBuilder.Entity("EmailSslSender.Modules.KeyManager.Domain.KnownCertificate", b =>
+                {
+                    b.Property<string>("CommonName")
+                        .HasColumnType("text")
+                        .HasColumnName("common_name");
+
+                    b.Property<string>("SerialNumber")
+                        .HasColumnType("text")
+                        .HasColumnName("serial_number");
+
+                    b.Property<DateOnly?>("ExpiresOn")
+                        .HasColumnType("date")
+                        .HasColumnName("expires_on");
+
+                    b.Property<DateTimeOffset>("FirstSeenAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("first_seen_at")
+                        .HasDefaultValueSql("now()");
+
+                    b.Property<DateTimeOffset>("LastSeenAt")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("last_seen_at")
+                        .HasDefaultValueSql("now()");
+
+                    b.HasKey("CommonName", "SerialNumber")
+                        .HasName("pk_keymanager_certificates");
+
+                    b.ToTable("keymanager_certificates", (string)null);
+                });
+
             modelBuilder.Entity("EmailSslSender.Modules.Mail.Domain.MailOutbox", b =>
                 {
                     b.Property<Guid>("Id")
@@ -247,6 +416,10 @@ namespace EmailSslSender.Api.Migrations
                         .HasColumnType("timestamptz")
                         .HasColumnName("next_attempt_at")
                         .HasDefaultValueSql("now()");
+
+                    b.Property<byte[]>("SealedAttachments")
+                        .HasColumnType("bytea")
+                        .HasColumnName("attachments");
 
                     b.Property<byte[]>("SealedBody")
                         .IsRequired()

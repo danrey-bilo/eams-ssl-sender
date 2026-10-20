@@ -91,7 +91,7 @@ internal sealed class MailDelivery(
             LIMIT {1}
             FOR UPDATE SKIP LOCKED
         )
-        RETURNING id, to_address, subject, body, data_key, kind, created_at,
+        RETURNING id, to_address, subject, body, data_key, attachments, kind, created_at,
                   next_attempt_at, attempts, sent_at, last_error
         """;
 
@@ -145,11 +145,12 @@ internal sealed class MailDelivery(
                 // Останов пришёл между письмами — следующее не начинаем: оно останется в очереди.
                 cancellationToken.ThrowIfCancellationRequested();
 
-                var тело = envelope.OpenText(
-                    new WrappedDataKey(письмо.DataKey), new SealedSecret(письмо.SealedBody), Контекст);
+                var ключ = new WrappedDataKey(письмо.DataKey);
+                var тело = envelope.OpenText(ключ, new SealedSecret(письмо.SealedBody), Контекст);
+                var вложения = MailAttachments.Open(envelope, ключ, письмо.SealedAttachments);
 
                 await сессия.SendAsync(
-                    new OutgoingMail(письмо.ToAddress, письмо.Subject, тело), cancellationToken);
+                    new OutgoingMail(письмо.ToAddress, письмо.Subject, тело, вложения), cancellationToken);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
             {
@@ -168,7 +169,8 @@ internal sealed class MailDelivery(
                     письмо.Attempts,
                     описание);
 
-                await ОтметитьНеудачуAsync(письмо.Id, описание, CancellationToken.None);
+                await ОтметитьНеудачуAsync(
+                    письмо.Id, описание, письмо.Attempts >= политика.MaxAttempts, CancellationToken.None);
 
                 continue;
             }
@@ -201,13 +203,15 @@ internal sealed class MailDelivery(
         return new MailRun(порция.Count, ушло);
     }
 
+    /// <summary>Отметить успех и стереть вложения: письмо ушло, хранить их больше незачем.</summary>
     private async Task ОтметитьУспехAsync(Guid id, CancellationToken cancellationToken) =>
         await db.Set<MailOutbox>()
             .Where(письмо => письмо.Id == id)
             .ExecuteUpdateAsync(
                 set => set
                     .SetProperty(письмо => письмо.SentAt, clock.GetUtcNow())
-                    .SetProperty(письмо => письмо.LastError, (string?)null),
+                    .SetProperty(письмо => письмо.LastError, (string?)null)
+                    .SetProperty(письмо => письмо.SealedAttachments, (byte[]?)null),
                 cancellationToken);
 
     /// <summary>
@@ -222,15 +226,23 @@ internal sealed class MailDelivery(
     /// цикла и уносил порцию — остальные письма уже захвачены с attempts+1 и в этом проходе не
     /// уходили вовсе. Вызывающий передаёт `CancellationToken.None` по той же причине, что у успеха: попытка уже
     /// потрачена, и строка с причиной — ответ администратору.
+    ///
+    /// ⚠ <b>Последняя попытка стирает вложения.</b> Мёртвое письмо остаётся навсегда, а уборка его не
+    /// трогает; закрытый ключ сертификата лежал бы в нём вечно.
     /// </remarks>
-    private async Task ОтметитьНеудачуAsync(Guid id, string описание, CancellationToken cancellationToken)
+    private async Task ОтметитьНеудачуAsync(
+        Guid id, string описание, bool последняя, CancellationToken cancellationToken)
     {
         try
         {
             await db.Set<MailOutbox>()
                 .Where(письмо => письмо.Id == id)
                 .ExecuteUpdateAsync(
-                    set => set.SetProperty(письмо => письмо.LastError, описание),
+                    set => set
+                        .SetProperty(письмо => письмо.LastError, описание)
+                        .SetProperty(
+                            письмо => письмо.SealedAttachments,
+                            письмо => последняя ? null : письмо.SealedAttachments),
                     cancellationToken);
         }
         catch (Exception ошибка)

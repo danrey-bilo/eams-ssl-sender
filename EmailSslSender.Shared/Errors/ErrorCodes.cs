@@ -197,4 +197,20 @@ public static class ErrorCodes
     /// право, которое ничего не изменит.
     /// </remarks>
     public const string SettingLevelForbidden = "SETTING_LEVEL_FORBIDDEN";
+
+    // --- Key Manager Plus --------------------------------------------------------------
+
+    /// <summary>Не заданы адрес Key Manager Plus или ключ API.</summary>
+    /// <remarks>⚠ <c>409</c> по той же причине, что <see cref="MailNotConfigured"/>.</remarks>
+    public const string KeyManagerNotConfigured = "KEYMANAGER_NOT_CONFIGURED";
+
+    /// <summary>Key Manager Plus не ответил или ответил отказом: <c>details.reason</c>.</summary>
+    /// <remarks>⚠ <c>409</c>, а не <c>502</c> — по той же причине, что <see cref="MailSendFailed"/>.</remarks>
+    public const string KeyManagerUnavailable = "KEYMANAGER_UNAVAILABLE";
+
+    /// <summary>Сертификата с таким Common Name в Key Manager Plus нет.</summary>
+    public const string KeyManagerCertificateNotFound = "KEYMANAGER_CERTIFICATE_NOT_FOUND";
+
+    /// <summary>Эту подписку прямо сейчас отправляет другой запрос или фоновый опрос.</summary>
+    public const string DeliveryInProgress = "DELIVERY_IN_PROGRESS";
 }

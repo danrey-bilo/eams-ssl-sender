@@ -47,15 +47,25 @@ internal sealed class MailQueue(
     public async Task<bool> CanSendAsync(CancellationToken cancellationToken = default) =>
         (await MailPolicy.ReadAsync(settings, cancellationToken)).Configured;
 
+    public Task<MailQueueResult> EnqueueAsync(
+        string toAddress,
+        string kind,
+        string locale,
+        IReadOnlyDictionary<string, string> values,
+        CancellationToken cancellationToken = default) =>
+        EnqueueAsync(toAddress, kind, locale, values, [], cancellationToken);
+
     public async Task<MailQueueResult> EnqueueAsync(
         string toAddress,
         string kind,
         string locale,
         IReadOnlyDictionary<string, string> values,
+        IReadOnlyList<MailAttachment> attachments,
         CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(toAddress);
         ArgumentNullException.ThrowIfNull(values);
+        ArgumentNullException.ThrowIfNull(attachments);
 
         var политика = await MailPolicy.ReadAsync(settings, cancellationToken);
 
@@ -65,7 +75,8 @@ internal sealed class MailQueue(
             return MailQueueResult.NotConfigured;
         }
 
-        if (await ЗаПределомAsync(toAddress, kind, политика.RatePerHour, cancellationToken))
+        if (templates.IsThrottled(kind)
+            && await ЗаПределомAsync(toAddress, kind, политика.RatePerHour, cancellationToken))
         {
             log.LogWarning("mail_rate_limited {Kind} {Limit}", kind, политика.RatePerHour);
             return MailQueueResult.RateLimited;
@@ -81,6 +92,7 @@ internal sealed class MailQueue(
             Subject = тема,
             SealedBody = envelope.SealText(ключ, тело, Контекст).Bytes,
             DataKey = ключ.Bytes,
+            SealedAttachments = MailAttachments.Seal(envelope, ключ, attachments),
             Kind = kind,
             CreatedAt = clock.GetUtcNow(),
             NextAttemptAt = clock.GetUtcNow(),

@@ -67,4 +67,36 @@ public interface IMailQueue
         string locale,
         IReadOnlyDictionary<string, string> values,
         CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Поставить письмо с вложениями в очередь.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ <b>Вложения запечатаны в очереди так же, как тело</b>, и стираются из неё, как только
+    /// письмо ушло или исчерпало попытки: в них бывает закрытый ключ сертификата, и лежать в базе
+    /// до уборки ему незачем.
+    /// </remarks>
+    /// <param name="toAddress">Кому. Один адрес: рассылка это N вызовов.</param>
+    /// <param name="kind">Вид письма из справочника.</param>
+    /// <param name="locale">Язык получателя: <c>uk</c>, <c>ru</c> или <c>en</c>.</param>
+    /// <param name="values">Что подставить в шаблон.</param>
+    /// <param name="attachments">Файлы письма. Пустой список — обычное письмо.</param>
+    /// <param name="cancellationToken">Отмена.</param>
+    Task<MailQueueResult> EnqueueAsync(
+        string toAddress,
+        string kind,
+        string locale,
+        IReadOnlyDictionary<string, string> values,
+        IReadOnlyList<MailAttachment> attachments,
+        CancellationToken cancellationToken = default);
+}
+
+/// <summary>Один файл письма.</summary>
+/// <param name="FileName">Имя файла у получателя. Путь отбрасывается.</param>
+/// <param name="ContentType">Тип содержимого; неразборчивый становится <c>application/octet-stream</c>.</param>
+/// <param name="Content">Байты файла.</param>
+public sealed record MailAttachment(string FileName, string ContentType, byte[] Content)
+{
+    /// <summary>Содержимое не печатается: во вложении бывает закрытый ключ.</summary>
+    public override string ToString() => $"{FileName} ({ContentType}, {Content.Length} байт)";
 }

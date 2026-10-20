@@ -7,6 +7,7 @@ using System.Text.Unicode;
 using System.Threading.RateLimiting;
 using EmailSslSender.Api.Infrastructure;
 using EmailSslSender.Modules.Identity;
+using EmailSslSender.Modules.KeyManager;
 using EmailSslSender.Modules.Mail;
 using EmailSslSender.Modules.Settings;
 using EmailSslSender.Modules.Tokens;
@@ -58,6 +59,7 @@ builder.Services
     .AddTokensModule()
     .AddSettingsModule()
     .AddMailModule(options => options.RunMaintenance = true)
+    .AddKeyManagerModule(options => options.RunPoller = true)
     .UseErrorEnvelope();
 
 // Мастер-ключ: без него нет старта (разбор у MasterKeyFile). Им обёрнуты ключи данных пароля

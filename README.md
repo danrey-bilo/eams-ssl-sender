@@ -1,9 +1,9 @@
 # Email SSL Sender
 
-Готовый серверный каркас из трёх частей: **учётные записи, вход с двухфакторной
-аутентификацией и отправка почты по SMTP через SSL/TLS** с очередью. Код перенесён из EAMS
-(модули личностей, токенов, настроек и почты) вместе с тестами. Всё про хранилища, роли,
-права, устройства и журнал-таблицу из него убрано.
+Готовый серверный каркас: **учётные записи, вход с двухфакторной аутентификацией, отправка
+почты по SMTP через SSL/TLS** с очередью и **рассылка SSL-сертификатов из ManageEngine Key
+Manager Plus** по подпискам. Код учётных записей, токенов, настроек и почты перенесён из EAMS
+вместе с тестами. Всё про хранилища, роли, права, устройства и журнал-таблицу из него убрано.
 
 Стек: .NET 10, ASP.NET Core, PostgreSQL 16, EF Core, MailKit. Запускается в Docker.
 
@@ -16,14 +16,15 @@
 3. [Запуск на сервере](#запуск-на-сервере)
 4. [Первый вход и подключение аутентификатора](#первый-вход-и-подключение-аутентификатора)
 5. [Настройка почты по SSL](#настройка-почты-по-ssl)
-6. [Учётные записи](#учётные-записи)
-7. [Справочник API](#справочник-api)
-8. [Настройки](#настройки)
-9. [Своё письмо из кода](#своё-письмо-из-кода)
-10. [Свой эндпоинт](#свой-эндпоинт)
-11. [Разработка и тесты](#разработка-и-тесты)
-12. [Обслуживание](#обслуживание)
-13. [Что учесть](#что-учесть)
+6. [Сертификаты из Key Manager Plus](#сертификаты-из-key-manager-plus)
+7. [Учётные записи](#учётные-записи)
+8. [Справочник API](#справочник-api)
+9. [Настройки](#настройки)
+10. [Своё письмо из кода](#своё-письмо-из-кода)
+11. [Свой эндпоинт](#свой-эндпоинт)
+12. [Разработка и тесты](#разработка-и-тесты)
+13. [Обслуживание](#обслуживание)
+14. [Что учесть](#что-учесть)
 
 ---
 
@@ -36,11 +37,13 @@
 | `EmailSslSender.Modules.Identity` | Учётные записи, пароли (Argon2id), вход, TOTP, коды письмом, приглашения, сброс пароля, блокировка после неудачных попыток | `Eams.Modules.Identity` |
 | `EmailSslSender.Modules.Tokens` | Сессии: непрозрачные токены доступа и обновления, ротация, обнаружение кражи, отметка переподтверждения | `Eams.Modules.ApiTokens` |
 | `EmailSslSender.Modules.Settings` | Настройки установки в базе (`system_settings`), справочник с границами и умолчаниями | `Eams.Modules.Settings` |
-| `EmailSslSender.Modules.Mail` | SMTP через MailKit, очередь писем в базе, пределы частоты, шаблоны на трёх языках, зашифрованный пароль SMTP | `Eams.Modules.Mail` |
-| `*.Tests`, `EmailSslSender.IntegrationTests` | Около 530 тестов: модульные и живые на PostgreSQL в Testcontainers | тесты тех же модулей |
+| `EmailSslSender.Modules.Mail` | SMTP через MailKit, очередь писем в базе, вложения, пределы частоты, шаблоны на трёх языках, зашифрованный пароль SMTP | `Eams.Modules.Mail` |
+| `EmailSslSender.Modules.KeyManager` | Опрос ManageEngine Key Manager Plus, подписки на сертификаты, рассылка файлов сертификата письмом | — |
+| `*.Tests`, `EmailSslSender.IntegrationTests` | Около 600 тестов: модульные и живые на PostgreSQL в Testcontainers | тесты тех же модулей |
 
 Модули подключаются в [Program.cs](EmailSslSender.Api/Program.cs) цепочкой
-`AddIdentityModule()` → `AddTokensModule()` → `AddSettingsModule()` → `AddMailModule()`.
+`AddIdentityModule()` → `AddTokensModule()` → `AddSettingsModule()` → `AddMailModule()` →
+`AddKeyManagerModule()`.
 Модуль не трогает хост: он объявляет свои таблицы, настройки и шаблоны писем через интерфейсы
 из `EmailSslSender.Shared`.
 
@@ -277,6 +280,93 @@ curl -s $API/api/mail -H "Authorization: Bearer $TOKEN"
 
 ---
 
+## Сертификаты из Key Manager Plus
+
+Сервис опрашивает ManageEngine Key Manager Plus (проверено по документации REST API для 7.1.1,
+build 7110) и рассылает файлы SSL-сертификатов по **подпискам**: какой сертификат (Common Name),
+кому, в каких файлах и когда.
+
+**Когда уходит письмо.**
+
+- **Сертификат обновился.** Вебхуков и истории у API Key Manager Plus нет, поэтому обновление
+  определяется опросом раз в `keymanager.poll_minutes`. Если у того же Common Name появился новый
+  серийный номер (продление, в том числе автоматическое, или перевыпуск), сертификат уходит
+  один раз. Если в Key Manager Plus лежат и старый, и новый, берётся тот, что действует дольше.
+- **По расписанию.** `interval_days` повторяет отправку раз в N дней.
+- **Сразу после заведения подписки.** Опрос будится, и текущий сертификат уходит в течение
+  секунд.
+- **Вручную:** `POST /api/certificate-subscriptions/{id}/send`.
+
+> ⚠ **Письмо несёт закрытый ключ** (тип `KEY`, а также `PKCS` и `JKS`). Любой, кто прочтёт ящик
+> получателя или пересланное письмо, получит ключ. В очереди вложения лежат запечатанными и
+> стираются, как только письмо ушло или исчерпало попытки. Подписки правятся только со свежим
+> вторым фактором. Шлите ключ только тем, кому он действительно нужен.
+
+**1. Ключ API.** В Key Manager Plus откройте **Settings → General Settings → API Key** и нажмите
+**Generate**. Ключ привязан к хосту, на котором его создали. У нас он хранится запечатанным
+мастер-ключом и обратно не отдаётся. Пустая строка снимает ключ.
+
+```bash
+curl -s -X PUT $API/api/keymanager/api-key -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"api_key":"3E014D78-E603-413A-AC24-6392F0001283"}'
+```
+
+**2. Адрес и проверка TLS.** Нужен адрес `https://` с портом (по умолчанию у Key Manager Plus —
+6565). Ключ едет в заголовке `AUTHTOKEN`, поэтому открытый HTTP отвергается. Если у сервера
+самоподписанный сертификат, закрепите его отпечаток SHA-256. Тогда принимается ровно этот
+сертификат и никакой другой:
+
+```bash
+openssl s_client -connect kmp.example.local:6565 </dev/null 2>/dev/null | openssl x509 -noout -fingerprint -sha256
+```
+
+```bash
+curl -s -X PATCH $API/api/settings/system -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"values":{"keymanager.base_url":"https://kmp.example.local:6565","keymanager.server_sha256":"AB:CD:..."}}'
+```
+
+Если сертификат выдан своим удостоверяющим центром, отпечаток не нужен. Передайте корневой
+сертификат контейнеру через `SSL_CERT_FILE`, как для SMTP.
+
+**3. Проверка связи** работает и до включения интеграции. Ответ — число сертификатов, которые
+видит Key Manager Plus. При отказе приходит `409 KEYMANAGER_UNAVAILABLE`, а в `details.reason`
+лежит причина: ключ не принят, TLS не согласован, сервер недоступен.
+
+```bash
+curl -s -X POST $API/api/keymanager/test -H "Authorization: Bearer $TOKEN"
+```
+
+**4. Включить опрос:**
+
+```bash
+curl -s -X PATCH $API/api/settings/system -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"values":{"keymanager.enabled":true,"keymanager.poll_minutes":15}}'
+```
+
+**5. Подписка.** Обязательны только `common_name` и `recipients`. Остальные поля:
+
+| Поле | По умолчанию | Что задаёт |
+|---|---|---|
+| `formats` | `["PEM","KEY"]` | Типы файлов из Key Manager Plus: `CER`, `CRT`, `DER`, `P7B`, `PKCS`, `JKS`, `PEM`, `KEY` |
+| `on_change` | `true` | Слать при новом серийном номере |
+| `interval_days` | нет | Повторять раз в N дней (1–365). В `PATCH` значение `0` снимает расписание |
+| `include_passphrase` | `false` | Писать в письмо пароль закрытого ключа из Key Manager Plus |
+| `locale` | `ru` | Язык письма: `ru`, `uk`, `en` |
+| `enabled` | `true` | Отключённую подписку опрос не шлёт; вручную её отправить можно |
+
+```bash
+curl -s -X POST $API/api/certificate-subscriptions -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"common_name":"*.example.com","recipients":["admin1@example.com","admin2@example.com"],"formats":["PEM","KEY"],"interval_days":30}'
+```
+
+Каждый адрес получает своё письмо. В подписке видны `last_sent_serial`, `last_sent_at` и
+`last_error`; ошибка показывает, почему сертификат не ушёл. Состояние опроса —
+`GET /api/keymanager`. Сертификаты, которые видел опрос, и когда каждый замечен впервые —
+`GET /api/keymanager/certificates`.
+
+**Что сверить на своём Key Manager Plus.** Документация не описывает, в каком виде
+`getCertificate` отдаёт файлы. Клиент берёт ответ как есть, а JSON вместо файла считает отказом
+и перечисляет ключи ответа. После первой ручной отправки откройте вложения и убедитесь, что это
+то, что нужно. Если нет, по тексту `last_error` клиент дописывается.
+
+---
+
 ## Учётные записи
 
 Все действия ниже требуют свежего второго фактора.
@@ -367,6 +457,16 @@ curl -s "$API/api/users?limit=50" -H "Authorization: Bearer $TOKEN"
 | GET | `/api/mail` | | Состояние почты и очереди |
 | PUT | `/api/mail/password` | Ф | Пароль SMTP: `password` |
 | POST | `/api/mail/test` | Ф | Проверочное письмо: `to`, `locale` (`ru`, `uk`, `en`) |
+| GET | `/api/keymanager` | | Состояние Key Manager Plus: включено, ключ задан, последний опрос |
+| PUT | `/api/keymanager/api-key` | Ф | Ключ API Key Manager Plus: `api_key` |
+| POST | `/api/keymanager/test` | Ф | Проверить связь: число сертификатов или `409` с причиной |
+| POST | `/api/keymanager/poll` | | Опросить сейчас |
+| GET | `/api/keymanager/certificates` | | Сертификаты, которые видел опрос |
+| GET | `/api/certificate-subscriptions`, `/{id}` | | Подписки на сертификаты |
+| POST | `/api/certificate-subscriptions` | Ф | Завести: `common_name`, `recipients`, `formats`, `on_change`, `interval_days`, `include_passphrase`, `locale`, `enabled` |
+| PATCH | `/api/certificate-subscriptions/{id}` | Ф | Изменить те же поля |
+| DELETE | `/api/certificate-subscriptions/{id}` | Ф | Удалить |
+| POST | `/api/certificate-subscriptions/{id}/send` | Ф | Отправить текущий сертификат сейчас |
 | GET | `/api/health`, `/api/ready` | П | Жив ли процесс / готова ли база |
 
 В режиме разработки документ OpenAPI доступен по `/openapi/v1.json`. В бою этого маршрута
@@ -396,6 +496,10 @@ curl -s "$API/api/users?limit=50" -H "Authorization: Bearer $TOKEN"
 | `PASSWORD_POLICY_VIOLATION` | 400 | Пароль не по правилам, подробности в `details` |
 | `MAIL_NOT_CONFIGURED` | 409 | Почта не настроена |
 | `MAIL_SEND_FAILED` | 409 | Почтовый сервер отказал: `details.reason` |
+| `KEYMANAGER_NOT_CONFIGURED` | 409 | Не заданы адрес Key Manager Plus или ключ API |
+| `KEYMANAGER_UNAVAILABLE` | 409 | Key Manager Plus не ответил или отказал: `details.reason` |
+| `KEYMANAGER_CERTIFICATE_NOT_FOUND` | 409 | Сертификата с таким Common Name в Key Manager Plus нет |
+| `DELIVERY_IN_PROGRESS` | 409 | Эту подписку прямо сейчас отправляет опрос |
 | `RATE_LIMITED` | 429 | Слишком часто |
 | `VALIDATION_ERROR` | 400 | Тело запроса не прошло проверку |
 
@@ -421,6 +525,10 @@ curl -s "$API/api/users?limit=50" -H "Authorization: Bearer $TOKEN"
 | `mail.rate_per_hour` | `5` | Писем в час на адрес и вид |
 | `mail.max_attempts` | `5` | Попыток доставки |
 | `server.public_url` | `https://sender.example.com` | Внешний адрес для ссылок в письмах |
+| `keymanager.enabled` | `false` | Опрашивать ли Key Manager Plus и рассылать ли сертификаты |
+| `keymanager.base_url` | — | Адрес Key Manager Plus, только `https://`, например `https://kmp.example.local:6565` |
+| `keymanager.poll_minutes` | `15` | Как часто опрашивать (1–1440 минут) |
+| `keymanager.server_sha256` | — | Отпечаток SHA-256 самоподписанного сертификата Key Manager Plus |
 | `auth.second_factor` | `email` | Унаследована из EAMS и при обязательном аутентификаторе на вход не влияет: кто подтвердил приложение, входит с ним, а письмо выбирает себе сам (`PUT /api/me/two-factor`). Выключить фактор нельзя |
 | `auth.two_factor_challenge_minutes` | `5` | Сколько живёт расписка между паролем и кодом |
 | `auth.password_min_length` и `auth.password_require_*` | — | Политика паролей |

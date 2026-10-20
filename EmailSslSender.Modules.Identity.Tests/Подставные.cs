@@ -46,6 +46,16 @@ public sealed class БезПочты : IMailQueue
         return Task.FromResult(Исход);
     }
 
+    /// <summary>Модуль личностей вложений не шлёт; перегрузка — ради полноты контракта.</summary>
+    public Task<MailQueueResult> EnqueueAsync(
+        string toAddress,
+        string kind,
+        string locale,
+        IReadOnlyDictionary<string, string> values,
+        IReadOnlyList<MailAttachment> attachments,
+        CancellationToken cancellationToken = default) =>
+        EnqueueAsync(toAddress, kind, locale, values, cancellationToken);
+
     /// <summary>Последнее письмо на этот адрес. <c>null</c> — не слали.</summary>
     public Письмо? Последнее(string адрес) =>
         Отправленные.FindLast(письмо => string.Equals(письмо.To, адрес, StringComparison.OrdinalIgnoreCase));

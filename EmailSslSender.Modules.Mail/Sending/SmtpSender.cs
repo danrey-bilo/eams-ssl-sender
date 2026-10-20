@@ -1,5 +1,6 @@
 using System.Text;
 using EmailSslSender.Modules.Mail.Secrets;
+using EmailSslSender.Shared.Contracts.Mail;
 using EmailSslSender.Shared.Errors;
 using MailKit.Net.Smtp;
 using MailKit.Security;
@@ -9,7 +10,8 @@ using MimeKit.Text;
 namespace EmailSslSender.Modules.Mail.Sending;
 
 /// <summary>Одно письмо, готовое к отправке.</summary>
-internal readonly record struct OutgoingMail(string ToAddress, string Subject, string Body);
+internal readonly record struct OutgoingMail(
+    string ToAddress, string Subject, string Body, IReadOnlyList<MailAttachment>? Attachments = null);
 
 /// <summary>
 /// Кто умеет открыть транспорт для отправки.
@@ -248,14 +250,37 @@ internal sealed class SmtpSession(MailPolicy policy, string host, SystemSecrets 
         // RFC 3834: без этого автоответчик получателя отвечает нашему ящику.
         сообщение.Headers.Add("Auto-Submitted", "auto-generated");
 
-        сообщение.Body = new TextPart(TextFormat.Plain)
+        var текст = new TextPart(TextFormat.Plain)
         {
             Text = mail.Body,
             ContentTransferEncoding = ContentEncoding.Base64,
         };
 
+        if (mail.Attachments is not { Count: > 0 } вложения)
+        {
+            сообщение.Body = текст;
+            return сообщение;
+        }
+
+        var смесь = new Multipart("mixed") { текст };
+
+        foreach (var файл in вложения)
+        {
+            смесь.Add(new MimePart(ContentType.Parse(MailAttachments.Тип(файл.ContentType)))
+            {
+                Content = new MimeContent(new MemoryStream(файл.Content, writable: false)),
+                ContentDisposition = new ContentDisposition(ContentDisposition.Attachment),
+                ContentTransferEncoding = ContentEncoding.Base64,
+                FileName = MailAttachments.Имя(файл.FileName),
+            });
+        }
+
+        сообщение.Body = смесь;
         return сообщение;
     }
+
+    /// <summary>Собрать сообщение — для проверки состава письма без сервера.</summary>
+    internal static MimeMessage СобратьДляПроверки(MailPolicy policy, OutgoingMail mail) => Собрать(policy, mail);
 
     /// <summary>
     /// Режим защиты соединения из настройки.

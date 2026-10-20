@@ -101,6 +101,7 @@ public sealed class MailDatabase : IAsyncLifetime
 
         // Справочник писем и очередь — как в хосте.
         services.AddSingleton<IMailTemplateProvider, MailOwnTemplates>();
+        services.AddSingleton<IMailTemplateProvider, ПисьмаБезПредела>();
         services.AddSingleton<MailTemplates>();
         services.AddSingleton<ISettingsReader>(Настройки);
         services.AddSingleton<MailWakeup>();

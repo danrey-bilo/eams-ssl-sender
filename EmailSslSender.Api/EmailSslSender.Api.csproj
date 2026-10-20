@@ -22,6 +22,7 @@
     <ProjectReference Include="..\EmailSslSender.Modules.Tokens\EmailSslSender.Modules.Tokens.csproj" />
     <ProjectReference Include="..\EmailSslSender.Modules.Settings\EmailSslSender.Modules.Settings.csproj" />
     <ProjectReference Include="..\EmailSslSender.Modules.Mail\EmailSslSender.Modules.Mail.csproj" />
+    <ProjectReference Include="..\EmailSslSender.Modules.KeyManager\EmailSslSender.Modules.KeyManager.csproj" />
     <ProjectReference Include="..\EmailSslSender.Shared\EmailSslSender.Shared.csproj" />
   </ItemGroup>
 
