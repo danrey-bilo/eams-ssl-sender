@@ -11,3 +11,8 @@ TestResults/
 /secrets/
 /backups/
 .env
+
+# Веб-панель: зависимости и сборка. wwwroot хоста целиком собирается из EmailSslSender.Web
+# (`npm run build`), в образе — своей стадией Dockerfile.
+node_modules/
+/EmailSslSender.Api/wwwroot/

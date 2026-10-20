@@ -14,6 +14,15 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0-noble-chiseled-extra AS base
 WORKDIR /app
 EXPOSE 8001
 
+# Веб-панель (React + TypeScript): собирается своей стадией, в образ уезжает только результат.
+# Сначала манифесты — слой `npm ci` переиспользуется, пока зависимости не менялись.
+FROM node:22-alpine AS web
+WORKDIR /web
+COPY ["EmailSslSender.Web/package.json", "EmailSslSender.Web/package-lock.json", "./"]
+RUN npm ci --no-audit --no-fund
+COPY ["EmailSslSender.Web/", "./"]
+RUN PANEL_OUT_DIR=/web/dist npm run build
+
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 ARG BUILD_CONFIGURATION=Release
 WORKDIR /src
@@ -40,6 +49,7 @@ RUN dotnet publish "EmailSslSender.Api/EmailSslSender.Api.csproj" \
 FROM base AS final
 WORKDIR /app
 COPY --from=build /publish .
+COPY --from=web /web/dist ./wwwroot
 # Непривилегированный пользователь из базового образа.
 USER $APP_UID
 ENTRYPOINT ["dotnet", "EmailSslSender.Api.dll"]

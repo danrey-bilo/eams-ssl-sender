@@ -164,11 +164,8 @@ app.MapHealthChecks("/api/ready", new HealthCheckOptions { ResponseWriter = Writ
     .WithMetadata(new PublicEndpointAttribute(
         "готовность опрашивает оркестратор до того, как появится хоть один пользователь"));
 
-// Страницы, на которые ведут ссылки из писем: приглашение и сброс пароля. Токен едет во
-// фрагменте адреса (`#token=…`) — он не уходит на сервер с запросом страницы и не оседает в
-// логах прокси. Разбор — в самих страницах.
-MapPage("/activate", "activate.html", "ссылка из приглашения: человек ещё не может войти");
-MapPage("/password-reset", "password-reset.html", "ссылка из письма сброса: человек не вошёл");
+// Веб-панель и страницы ссылок из писем — React-приложение из wwwroot (разбор у PanelFiles).
+app.MapPanel();
 
 if (Bootstrap.IsCommand(args))
 {
@@ -184,11 +181,6 @@ await app.RequireCurrentSchemaAsync();
 await app.RunAsync();
 
 return 0;
-
-void MapPage(string route, string file, string reason) =>
-    app.MapGet(route, () => Results.File(
-            Path.Combine(app.Environment.ContentRootPath, "wwwroot", file), "text/html; charset=utf-8"))
-        .WithMetadata(new PublicEndpointAttribute(reason));
 
 static async Task<int> RunCommandAsync(WebApplication app, string[] args)
 {

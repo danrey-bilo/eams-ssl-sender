@@ -20,6 +20,9 @@
 **/backups
 TestResults
 **/obj
+**/node_modules
+EmailSslSender.Api/wwwroot
+EmailSslSender.Web/dist
 **/secrets.dev.yaml
 **/values.dev.yaml
 LICENSE

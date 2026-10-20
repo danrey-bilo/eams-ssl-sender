@@ -55,6 +55,8 @@ public sealed class МаршрутыВнеMVC(SenderHost host)
         шаблоны.ShouldContain("/api/ready");
         шаблоны.ShouldContain("/activate");
         шаблоны.ShouldContain("/password-reset");
+        шаблоны.ShouldContain("/");
+        шаблоны.ShouldContain("/assets/{file}");
     }
 
     private IReadOnlyList<Endpoint> ВнеMvc() =>
