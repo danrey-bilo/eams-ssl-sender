@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using EmailSslSender.Modules.KeyManager.Client;
 using EmailSslSender.Modules.KeyManager.Contracts;
+using EmailSslSender.Modules.KeyManager.Delivery;
 using EmailSslSender.Modules.KeyManager.Domain;
 using EmailSslSender.Shared.Contracts.Audit;
 using EmailSslSender.Shared.Data;
@@ -197,7 +198,7 @@ internal sealed class CertificateExport(
     /// <c>GET /api/keymanager/certificates</c>, а в Key Manager Plus уходят значения из снимка.
     /// </remarks>
     private async Task<KnownCertificate> ИзСнимкаAsync(string имя, string серийный, CancellationToken cancellationToken) =>
-        await db.Set<KnownCertificate>()
+        await CertificateSnapshots.Current(db)
             .AsNoTracking()
             .FirstOrDefaultAsync(с => с.CommonName == имя && с.SerialNumber == серийный, cancellationToken)
         ?? throw new AppException(

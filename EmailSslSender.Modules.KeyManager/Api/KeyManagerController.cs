@@ -183,7 +183,7 @@ internal sealed class KeyManagerController(
     /// <summary>Сертификаты, которые видел опрос: по Common Name, замеченные позже — первыми.</summary>
     [HttpGet("certificates")]
     public async Task<IReadOnlyList<KnownCertificateOut>> Certificates(CancellationToken cancellationToken) =>
-        await db.Set<KnownCertificate>()
+        await CertificateSnapshots.Current(db)
             .AsNoTracking()
             .OrderBy(с => с.CommonName)
             .ThenByDescending(с => с.FirstSeenAt)

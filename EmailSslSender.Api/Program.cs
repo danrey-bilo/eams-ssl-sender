@@ -284,6 +284,46 @@ static async Task<int> RunCommandAsync(WebApplication app, string[] args)
     }
 }
 
+// Учётные записи из переменных окружения — для установки через Portainer, где нет консоли.
+//
+// ⚠ ⚠ В образе нет оболочки, и Portainer не может ни спросить пароль, ни выполнить
+// create-superadmin / reset-access. Служба migrate выполняется при каждом развёртывании стека:
+// - SENDER_INIT_ADMIN_EMAIL + SENDER_INIT_ADMIN_PASSWORD — первый администратор, ТОЛЬКО если
+//   учётных записей ещё нет вовсе; иначе пропуск;
+// - SENDER_RESET_ACCESS_EMAIL + SENDER_RESET_ACCESS_PASSWORD — то же, что reset-access. Повторяется
+//   при каждом развёртывании, пока переменные заданы: после входа их убирают из стека.
+static async Task StartupAccountsAsync(WebApplication app)
+{
+    var config = app.Configuration;
+
+    if (config["SENDER_INIT_ADMIN_EMAIL"] is { Length: > 0 } первый
+        && config["SENDER_INIT_ADMIN_PASSWORD"] is { Length: > 0 } парольПервого)
+    {
+        if (await IdentityModule.AnyUserAsync(app.Services))
+        {
+            Console.WriteLine(
+                $"{Bootstrap.Migrate}: SENDER_INIT_ADMIN_* пропущены — учётные записи уже есть. Уберите их из .env.");
+        }
+        else
+        {
+            await IdentityModule.BootstrapSuperuserAsync(app.Services, первый, null, парольПервого);
+            Console.WriteLine(
+                $"{Bootstrap.Migrate}: заведён первый администратор {первый}. При первом входе — "
+                + "подключить приложение-аутентификатор. Уберите SENDER_INIT_ADMIN_PASSWORD из .env.");
+        }
+    }
+
+    if (config["SENDER_RESET_ACCESS_EMAIL"] is { Length: > 0 } кому
+        && config["SENDER_RESET_ACCESS_PASSWORD"] is { Length: > 0 } новый)
+    {
+        var итог = await IdentityModule.ResetAccessAsync(app.Services, кому, новый);
+        Console.WriteLine(Bootstrap.ResetAccessSummary(итог));
+        Console.WriteLine(
+            $"{Bootstrap.Migrate}: ⚠ уберите SENDER_RESET_ACCESS_* из .env и обновите стек — пока они "
+            + "заданы, доступ сбрасывается при каждом развёртывании.");
+    }
+}
+
 static async Task<int> MigrateCommandAsync(WebApplication app)
 {
     try
@@ -334,8 +374,15 @@ static async Task<int> MigrateCommandAsync(WebApplication app)
             }
         }
 
+        await StartupAccountsAsync(app);
+
         Console.WriteLine($"{Bootstrap.Migrate}: готово");
         return 0;
+    }
+    catch (AppException error)
+    {
+        await Console.Error.WriteLineAsync($"Ошибка: {error.Message}");
+        return 1;
     }
     catch (Npgsql.PostgresException error) when (error.SqlState == Npgsql.PostgresErrorCodes.InsufficientPrivilege)
     {

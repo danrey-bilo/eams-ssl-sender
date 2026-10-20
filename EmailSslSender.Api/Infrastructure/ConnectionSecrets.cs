@@ -29,6 +29,16 @@ public static class ConnectionSecrets
     /// <summary>Переменная с путём к файлу пароля базы.</summary>
     public const string PostgresPasswordFile = "SENDER_POSTGRES_PASSWORD_FILE";
 
+    /// <summary>
+    /// Пароль базы прямо в переменной — для установки через Portainer, где файлов секретов нет.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Запасной путь: файл (<see cref="PostgresPasswordFile"/>), если задан, главнее. Переменная
+    /// видна в <c>docker inspect</c>; Portainer хранит её в своей базе — доступ к Portainer равен
+    /// доступу к паролю.
+    /// </remarks>
+    public const string PostgresPassword = "SENDER_POSTGRES_PASSWORD";
+
 
 
 
@@ -44,7 +54,10 @@ public static class ConnectionSecrets
                 + "задаёт docker-compose; пароль при этом приезжает отдельным файлом секрета, "
                 + $"путь к нему — в {PostgresPasswordFile}.");
 
-        if (Прочитать(configuration, PostgresPasswordFile) is not { } пароль)
+        var пароль = Прочитать(configuration, PostgresPasswordFile)
+            ?? (string.IsNullOrEmpty(configuration[PostgresPassword]) ? null : configuration[PostgresPassword]);
+
+        if (пароль is null)
         {
             return строка;
         }

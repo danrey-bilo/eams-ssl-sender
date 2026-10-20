@@ -360,6 +360,42 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Список_только_из_последнего_опроса_а_пропавшие_за_месяц_забываются()
+    {
+        // Владелец: панель показывает только то, что есть в Key Manager Plus сейчас, — без
+        // примерных и пропавших сертификатов.
+        База("site.example.com", "aa01", Год);
+        База("old.example.com", "0b0c", Год);
+        await Опросить();
+
+        база.Kmp.Сертификаты.RemoveAll(с => с.CommonName == "old.example.com");
+        база.Часы.Вперёд(TimeSpan.FromHours(1));
+        await Опросить();
+
+        (await Текущие()).ShouldBe(["site.example.com"]);
+        (await ВсеВСнимке()).ShouldContain("old.example.com", "месяца ещё не прошло — пара помнится");
+
+        база.Часы.Вперёд(CertificateSnapshots.Хранить + TimeSpan.FromDays(1));
+        await Опросить();
+
+        (await ВсеВСнимке()).ShouldBe(["site.example.com"]);
+    }
+
+    private async Task<string[]> Текущие()
+    {
+        await using var scope = база.Scope();
+        var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+        return [.. await CertificateSnapshots.Current(db).Select(с => с.CommonName).Distinct().ToListAsync(Ct)];
+    }
+
+    private async Task<string[]> ВсеВСнимке()
+    {
+        await using var scope = база.Scope();
+        var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+        return [.. await db.Set<KnownCertificate>().Select(с => с.CommonName).Distinct().ToListAsync(Ct)];
+    }
+
+    [Fact]
     public async Task Новая_отправка_отменяет_прежние_неотправленные_письма()
     {
         // Ревью безопасности 2026-10-20: прежде номера первой порции затирались, и потом её уже

@@ -24,12 +24,13 @@
 ## Содержание
 
 1. [Требования](#требования)
-2. [Установка](#установка)
-3. [Настройка в панели](#настройка-в-панели)
-4. [Безопасность](#безопасность)
-5. [Обновление](#обновление)
-6. [Резервные копии и восстановление доступа](#резервные-копии-и-восстановление-доступа)
-7. [Справочник](#справочник)
+2. [Установка через Portainer](#установка-через-portainer)
+3. [Установка из командной строки](#установка)
+4. [Настройка в панели](#настройка-в-панели)
+5. [Безопасность](#безопасность)
+6. [Обновление](#обновление)
+7. [Резервные копии и восстановление доступа](#резервные-копии-и-восстановление-доступа)
+8. [Справочник](#справочник)
 
 ---
 
@@ -37,7 +38,7 @@
 
 | Что | Зачем |
 |---|---|
-| Сервер Linux с Docker Engine и Compose v2 | Сервис, база и туннель в контейнерах |
+| Сервер Linux с Docker Engine и Compose v2 или Portainer | Сервис, база и туннель в контейнерах |
 | Домен в Cloudflare | Публикация панели через Cloudflare Tunnel (или свой обратный прокси с TLS) |
 | Почтовый ящик с доступом по SMTP | С него уходят письма |
 | Key Manager Plus 7.1.1+ и ключ его REST API | Откуда берутся сертификаты |
@@ -47,26 +48,60 @@
 
 ---
 
+## Установка через Portainer
+
+Архив **`email-ssl-sender-vX.Y.Z.zip`** со страницы [Releases](../../releases) — всё для стека:
+
+| Файл | Что это |
+|---|---|
+| `docker-compose.yml` | Стек: база, миграции, сервис, Cloudflare Tunnel |
+| `.env.example` | Переменные: секреты, токен туннеля, первый администратор — с подсказками |
+| `email-ssl-sender-image-vX.Y.Z.tar` | Образ сервиса |
+| `README.md` | Эти шаги подробно |
+
+1. **Images → Import** → `email-ssl-sender-image-vX.Y.Z.tar`.
+2. Заполните `.env.example`: `SENDER_MASTER_KEK` (`openssl rand -base64 32`), `POSTGRES_PASSWORD` и
+   `SENDER_APP_PASSWORD` (`openssl rand -hex 24`, разные), `CLOUDFLARE_TUNNEL_TOKEN`,
+   `SENDER_INIT_ADMIN_EMAIL` и `SENDER_INIT_ADMIN_PASSWORD`.
+3. **Stacks → Add stack** → Name `email-ssl-sender` → **Upload** → `docker-compose.yml` →
+   **Load variables from .env file** → **Deploy the stack**.
+4. В Cloudflare у туннеля: **Public Hostname** → `HTTP` `api:8001`. Включите Cloudflare Access
+   (шаг 5 ниже).
+5. Войдите администратором, подключите приложение-аутентификатор; в переменных стека очистите
+   `SENDER_INIT_ADMIN_PASSWORD` → **Update the stack**.
+
+Миграции выполняет служба `migrate` при каждом развёртывании — она же заводит первого
+администратора и сбрасывает доступ (`SENDER_RESET_ACCESS_*`), потому что консоли в Portainer нет.
+Обновление: импорт нового образа → новый `SENDER_IMAGE` → **Update the stack**. Подробно —
+[deploy/portainer/README.md](deploy/portainer/README.md).
+
+> ⚠ Секреты в Portainer хранятся переменными стека: доступ к Portainer равен доступу к ним.
+> Сохраните копию `SENDER_MASTER_KEK` отдельно.
+
+---
+
 ## Установка
 
-**1. Файлы установки.** Скачайте `email-ssl-sender-deploy-vX.Y.Z.zip` со страницы
+Из командной строки, с секретами в файлах (Docker Compose v2 на сервере).
+
+**1. Файлы установки.** Скачайте `email-ssl-sender-cli-vX.Y.Z.zip` со страницы
 [Releases](../../releases) и распакуйте на сервере.
 
 ```bash
-unzip email-ssl-sender-deploy-v*.zip && cd email-ssl-sender
+unzip email-ssl-sender-cli-v*.zip && cd email-ssl-sender
 ```
 
-**2. Образ.** Войдите в реестр GitHub (токен с правом `read:packages`) и скачайте образ:
+**2. Образ.** Из файла главного архива релиза (`email-ssl-sender-vX.Y.Z.zip`):
+
+```bash
+docker load -i email-ssl-sender-image-vX.Y.Z.tar
+```
+
+Или из реестра GitHub (токен с правом `read:packages`):
 
 ```bash
 echo ТОКЕН | docker login ghcr.io -u ЛОГИН_GITHUB --password-stdin
 docker compose pull api
-```
-
-Без доступа к ghcr.io образ загружается из файла того же релиза:
-
-```bash
-docker load -i email-ssl-sender-image-vX.Y.Z.tar.gz
 ```
 
 **3. Секреты.** Скрипт создаёт мастер-ключ шифрования и пароль базы в `secrets/`. Существующие

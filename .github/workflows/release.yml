@@ -3,9 +3,9 @@
 #   git tag v1.0.0 && git push origin v1.0.0
 #
 # Образ: ghcr.io/<владелец>/<репозиторий>:X.Y.Z, :X.Y и :latest. К релизу прикладываются:
-#   - email-ssl-sender-deploy-vX.Y.Z.zip — docker-compose.yml, .env.example, scripts/*.sh;
-#   - email-ssl-sender-image-vX.Y.Z.tar.gz — тот же образ для сервера без доступа к ghcr.io
-#     (`docker load -i …`).
+#   - email-ssl-sender-vX.Y.Z.zip — для Portainer: docker-compose.yml, .env.example, образ (.tar)
+#     и README.md с шагами установки;
+#   - email-ssl-sender-cli-vX.Y.Z.zip — для командной строки: секреты файлами, scripts/*.sh.
 name: release
 
 on:
@@ -73,21 +73,31 @@ jobs:
           IMAGE: ${{ steps.v.outputs.image }}
         run: |
           docker pull "$IMAGE:$VERSION"
-          docker save "$IMAGE:$VERSION" | gzip -9 > "email-ssl-sender-image-$TAG.tar.gz"
 
-          mkdir -p "bundle/email-ssl-sender/scripts"
-          # В архиве установки образ закреплён на версии релиза, а не на latest.
+          # Главный архив — для Portainer (и для docker compose с .env): стек, переменные, образ и
+          # инструкция. Образ и стек закреплены на версии релиза, а не на latest.
+          PKG="email-ssl-sender-$TAG"
+          mkdir -p "pkg/$PKG"
+          docker save "$IMAGE:$VERSION" -o "pkg/$PKG/email-ssl-sender-image-$TAG.tar"
+          sed "s|\${SENDER_IMAGE:-[^}]*}|\${SENDER_IMAGE:-$IMAGE:$VERSION}|" deploy/portainer/docker-compose.yml \
+            > "pkg/$PKG/docker-compose.yml"
+          sed "s|^SENDER_IMAGE=.*|SENDER_IMAGE=$IMAGE:$VERSION|" deploy/portainer/.env.example > "pkg/$PKG/.env.example"
+          sed -e "s|vX\.Y\.Z|$TAG|g" -e "s|:X\.Y\.Z|:$VERSION|g" deploy/portainer/README.md > "pkg/$PKG/README.md"
+          (cd pkg && zip -qr "../$PKG.zip" "$PKG")
+
+          # Вариант для командной строки — секреты файлами, скрипты установки.
+          mkdir -p "cli/email-ssl-sender/scripts"
           sed "s|\${SENDER_IMAGE:-[^}]*}|\${SENDER_IMAGE:-$IMAGE:$VERSION}|" docker-compose.yml \
-            > "bundle/email-ssl-sender/docker-compose.yml"
-          cp .env.example "bundle/email-ssl-sender/.env.example"
-          cp scripts/gen-secrets.sh scripts/set-tunnel-token.sh scripts/reset-access.sh "bundle/email-ssl-sender/scripts/"
-          chmod +x bundle/email-ssl-sender/scripts/*.sh
-          (cd bundle && zip -qr "../email-ssl-sender-deploy-$TAG.zip" email-ssl-sender)
+            > "cli/email-ssl-sender/docker-compose.yml"
+          cp .env.example "cli/email-ssl-sender/.env.example"
+          cp scripts/gen-secrets.sh scripts/set-tunnel-token.sh scripts/reset-access.sh "cli/email-ssl-sender/scripts/"
+          chmod +x cli/email-ssl-sender/scripts/*.sh
+          (cd cli && zip -qr "../email-ssl-sender-cli-$TAG.zip" email-ssl-sender)
 
           sed -e "s|{TAG}|$TAG|g" -e "s|{VERSION}|$VERSION|g" -e "s|{IMAGE}|$IMAGE|g" \
             -e "s|{REPOSITORY}|$GITHUB_REPOSITORY|g" .github/release-notes.md > notes.md
 
-          sha256sum "email-ssl-sender-deploy-$TAG.zip" "email-ssl-sender-image-$TAG.tar.gz" > SHA256SUMS
+          sha256sum "$PKG.zip" "email-ssl-sender-cli-$TAG.zip" > SHA256SUMS
 
       - name: Страница релиза
         env:
@@ -98,6 +108,6 @@ jobs:
             --title "Email SSL Sender $TAG" \
             --notes-file notes.md \
             --verify-tag \
-            "email-ssl-sender-deploy-$TAG.zip" \
-            "email-ssl-sender-image-$TAG.tar.gz" \
+            "email-ssl-sender-$TAG.zip" \
+            "email-ssl-sender-cli-$TAG.zip" \
             SHA256SUMS

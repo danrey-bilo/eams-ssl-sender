@@ -43,10 +43,6 @@ function Expiry({ ymd }: { ymd: string | null }) {
   );
 }
 
-/** Сертификат виден в последнем опросе — иначе в Key Manager Plus его уже нет. */
-const isCurrent = (c: KnownCertificate, lastPoll: string | null) =>
-  !lastPoll || new Date(c.last_seen_at).getTime() >= new Date(lastPoll).getTime() - 60_000;
-
 export function CertificatesPage() {
   const { data, error, reload } = useLoad(() => Promise.all([
     api.get<KeyManagerStatus>('/api/keymanager'),
@@ -55,16 +51,13 @@ export function CertificatesPage() {
   const { show, run, toast } = useOverlay();
   const [query, setQuery] = useState('');
 
+  // ⚠ Сервер отдаёт только то, что пришло в последнем опросе: пропавших и чужих здесь нет.
   const rows = useMemo(() => {
     if (!data) return [];
-    const [km, known] = data;
     const q = query.trim().toLowerCase();
-    return known
+    return data[1]
       .filter(c => !q || c.common_name.toLowerCase().includes(q) || c.serial_number.toLowerCase().includes(q))
-      .map(c => ({ ...c, current: isCurrent(c, km.last_poll_at) }))
-      .sort((a, b) => Number(b.current) - Number(a.current)
-        || a.common_name.localeCompare(b.common_name)
-        || (b.expires_on ?? '').localeCompare(a.expires_on ?? ''));
+      .sort((a, b) => a.common_name.localeCompare(b.common_name) || (b.expires_on ?? '').localeCompare(a.expires_on ?? ''));
   }, [data, query]);
 
   if (error) return <Failed text={error} />;
@@ -96,7 +89,7 @@ export function CertificatesPage() {
     ? <>Key Manager Plus · опрос {fmtDateTime(km.last_poll_at)}{km.last_poll_error ? ' · ошибка' : ''}</>
     : <>Key Manager Plus не подключён — <a href="#/settings/keymanager">настроить</a></>;
 
-  const actions = (c: KnownCertificate & { current: boolean }) => c.current && (
+  const actions = (c: KnownCertificate) => (
     <div className="row-actions">
       <button onClick={() => download(c)} title="Скачать файл"><Icon name="download" />Скачать</button>
       <button onClick={() => reveal(c)} title="Показать закрытый ключ"><Icon name="key" />Ключ</button>
@@ -126,12 +119,11 @@ export function CertificatesPage() {
           {rows.length > 0 && isMobile && (
             <div className="list">
               {rows.map(c => (
-                <div key={c.common_name + c.serial_number} className={'item' + (c.current ? '' : ' off')}>
+                <div key={c.common_name + c.serial_number} className="item">
                   <div className="item-main">
                     <div className="item-title">{c.common_name}</div>
                     <div className="item-meta"><Expiry ymd={c.expires_on} /></div>
                     <div className="item-meta mono">{c.serial_number}</div>
-                    {!c.current && <div className="item-meta">нет в Key Manager Plus</div>}
                   </div>
                   {actions(c)}
                 </div>
@@ -145,13 +137,13 @@ export function CertificatesPage() {
               </thead>
               <tbody>
                 {rows.map(c => (
-                  <tr key={c.common_name + c.serial_number} className={c.current ? '' : 'off'}>
+                  <tr key={c.common_name + c.serial_number}>
                     <td>
                       <span className="strong">{c.common_name}</span>
                       <span className="sub mono">{c.serial_number}</span>
                     </td>
                     <td><Expiry ymd={c.expires_on} /></td>
-                    <td className="muted">{c.current ? fmtDateTime(c.first_seen_at) : 'нет в Key Manager Plus'}</td>
+                    <td className="muted">{fmtDateTime(c.first_seen_at)}</td>
                     <td className="actions">{actions(c)}</td>
                   </tr>
                 ))}

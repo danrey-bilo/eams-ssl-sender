@@ -40,6 +40,9 @@ public static partial class RuntimeRole
     /// <summary>Переменная с путём к файлу пароля роли сервиса.</summary>
     public const string PasswordFileVariable = "SENDER_APP_PASSWORD_FILE";
 
+    /// <summary>Пароль роли прямо в переменной — для Portainer; файл, если задан, главнее.</summary>
+    public const string PasswordVariable = "SENDER_APP_PASSWORD";
+
     /// <summary>Атрибуты роли: вход и ничего сверх.</summary>
     private const string Атрибуты = "LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS INHERIT";
 
@@ -77,9 +80,10 @@ public static partial class RuntimeRole
         }
 
         var пароль = ConnectionSecrets.ReadSecretFile(configuration, PasswordFileVariable)
+            ?? (string.IsNullOrEmpty(configuration[PasswordVariable]) ? null : configuration[PasswordVariable])
             ?? throw new InvalidOperationException(
-                $"Задана роль сервиса {RoleVariable}={роль}, но нет пароля: {PasswordFileVariable} должен "
-                + "указывать на файл секрета (./scripts/gen-secrets.sh создаёт secrets/sender_app_password).");
+                $"Задана роль сервиса {RoleVariable}={роль}, но нет пароля: задайте {PasswordFileVariable} "
+                + $"(файл секрета, ./scripts/gen-secrets.sh) или {PasswordVariable} (установка через Portainer).");
 
         return (роль, пароль);
     }

@@ -1,35 +1,24 @@
-Образ: `{IMAGE}:{VERSION}` (также `:latest`)
+Образ: `{IMAGE}:{VERSION}`
 
-## Установка
+## Установка через Portainer
 
-1. Скачайте `email-ssl-sender-deploy-{TAG}.zip` и распакуйте на сервере.
-2. Войдите в реестр (нужен токен GitHub с правом `read:packages`):
-   ```bash
-   echo ТОКЕН | docker login ghcr.io -u ВАШ_ЛОГИН --password-stdin
-   ```
-   Нет доступа к ghcr.io — загрузите образ из файла релиза:
-   ```bash
-   docker load -i email-ssl-sender-image-{TAG}.tar.gz
-   ```
-3. Дальше — по шагам из [инструкции](https://github.com/{REPOSITORY}#установка):
-   ```bash
-   cd email-ssl-sender
-   ./scripts/gen-secrets.sh
-   cp .env.example .env
-   ./scripts/set-tunnel-token.sh   # токен Cloudflare Tunnel
-   docker compose pull api         # не нужно, если образ загружен из файла
-   docker compose run --rm migrate
-   docker compose run --rm api create-superadmin --email admin@example.com
-   docker compose up -d
-   ```
+1. Скачайте **`email-ssl-sender-{TAG}.zip`** и распакуйте. В нём: `docker-compose.yml`,
+   `.env.example`, образ `email-ssl-sender-image-{TAG}.tar` и `README.md` с подробностями.
+2. **Portainer → Images → Import** → `email-ssl-sender-image-{TAG}.tar`.
+3. Заполните `.env.example`: мастер-ключ, два пароля базы, токен Cloudflare Tunnel, первый
+   администратор (команды генерации — в самом файле).
+4. **Stacks → Add stack** → **Upload** → `docker-compose.yml` → **Load variables from .env file**
+   → **Deploy the stack**.
+5. В Cloudflare у туннеля: Public Hostname → `HTTP` `api:8001`.
 
 ## Обновление
 
-```bash
-./scripts/gen-secrets.sh
-docker compose pull
-docker compose run --rm migrate
-docker compose up -d
-```
+**Images → Import** нового образа → в переменных стека `SENDER_IMAGE={IMAGE}:{VERSION}` →
+**Update the stack**. Миграции выполнятся сами.
 
-Контрольные суммы файлов — в `SHA256SUMS`.
+## Командная строка
+
+`email-ssl-sender-cli-{TAG}.zip` — вариант с секретами в файлах:
+[инструкция](https://github.com/{REPOSITORY}#установка).
+
+Контрольные суммы — в `SHA256SUMS`.

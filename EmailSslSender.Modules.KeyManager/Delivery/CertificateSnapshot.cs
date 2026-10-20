@@ -47,6 +47,29 @@ internal sealed class CertificateSnapshot(
 /// </summary>
 internal sealed class CertificateSnapshots(SenderDbContext db, TimeProvider clock)
 {
+    /// <summary>
+    /// Сколько хранить пару, которой больше нет в Key Manager Plus.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Не ноль: снимок помнит, когда пару увидели впервые, и по этому выбирается текущий
+    /// сертификат. Пропавшая на один опрос пара (сбой списка у Key Manager Plus) вернулась бы
+    /// «новой». Месяц без появления — пары в Key Manager Plus действительно нет.
+    /// </remarks>
+    internal static readonly TimeSpan Хранить = TimeSpan.FromDays(30);
+
+    /// <summary>
+    /// Только пары из последнего удачного опроса — то, что есть в Key Manager Plus сейчас.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Опрос пишет всем увиденным парам одно и то же время одной транзакцией, поэтому
+    /// «последний опрос» — это наибольшее <c>last_seen_at</c>. Пары, которых в нём не было, —
+    /// удалённые из Key Manager Plus или чужие (заглушка, старая установка): их не показывают и
+    /// не выгружают.
+    /// </remarks>
+    public static IQueryable<KnownCertificate> Current(SenderDbContext db) =>
+        db.Set<KnownCertificate>().Where(с =>
+            с.LastSeenAt >= db.Set<KnownCertificate>().Max(в => в.LastSeenAt));
+
     /// <exception cref="KeyManagerException">Key Manager Plus не ответил или отказал.</exception>
     public async Task<CertificateSnapshot> TakeAsync(IKeyManagerClient client, CancellationToken cancellationToken = default)
     {
@@ -83,6 +106,12 @@ internal sealed class CertificateSnapshots(SenderDbContext db, TimeProvider cloc
         db.InTransactionAsync(
             async token =>
             {
+                // Пары, которых в Key Manager Plus нет уже месяц, забываются (разбор у Хранить).
+                var давно = когда - Хранить;
+                await db.Set<KnownCertificate>()
+                    .Where(с => с.LastSeenAt < давно)
+                    .ExecuteDeleteAsync(token);
+
                 foreach (var с in список.DistinctBy(с => (с.CommonName, с.SerialNumber)))
                 {
                     await db.Database.ExecuteSqlAsync(

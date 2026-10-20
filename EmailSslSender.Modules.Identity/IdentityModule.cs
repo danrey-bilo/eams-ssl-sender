@@ -15,6 +15,9 @@ using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using EmailSslSender.Modules.Identity.Passwords;
+using EmailSslSender.Modules.Identity.Domain;
+using EmailSslSender.Shared.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace EmailSslSender.Modules.Identity;
 
@@ -160,6 +163,15 @@ public static class IdentityModule
         await scope.ServiceProvider.GetRequiredService<TwoFactorService>()
             .ResetSuperuserForConsoleAsync(user.Id, cancellationToken);
         return user.Id;
+    }
+
+    /// <summary>Есть ли в базе хоть одна учётная запись (включая удалённые — установка не новая).</summary>
+    public static async Task<bool> AnyUserAsync(IServiceProvider services, CancellationToken cancellationToken = default)
+    {
+        await using var scope = services.CreateAsyncScope();
+
+        return await scope.ServiceProvider.GetRequiredService<SenderDbContext>()
+            .Set<User>().AnyAsync(cancellationToken);
     }
 
     /// <summary>
