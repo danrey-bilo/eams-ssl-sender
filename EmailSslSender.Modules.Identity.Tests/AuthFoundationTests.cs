@@ -74,8 +74,13 @@ public sealed class AuthFoundationTests(IdentityDatabase database) : IAsyncLifet
         }
     }
 
+    /// <remarks>
+    /// ⚠ Учётная запись с отметкой «фактор подтверждён», но без аутентификатора — ровно то, что
+    /// остаётся после его отключения. Код из ящика даёт ей только сессию настройки (ревью
+    /// безопасности 2026-10-20): иначе ящик один — сброс пароля и код — давал бы полный доступ.
+    /// </remarks>
     [Fact]
-    public async Task Код_почтой_завершает_вход_а_отключение_SMTP_не_ослабляет_следующий()
+    public async Task Код_почтой_даёт_только_сессию_настройки_а_отключение_SMTP_не_ослабляет_следующий()
     {
         var user = await ConfiguredUserAsync();
         database.Почта.Настроена = true;
@@ -87,7 +92,7 @@ public sealed class AuthFoundationTests(IdentityDatabase database) : IAsyncLifet
         await using var scope = database.Scope();
         var signIn = scope.ServiceProvider.GetRequiredService<SignInService>();
         var outcome = await signIn.CompleteTwoFactorAsync(challenge, code, new RequestOrigin(null, "test"), cancellationToken: Ct);
-        (await ResolveAsync(outcome.Pair.Access)).MustEnrollTwoFactor.ShouldBeFalse();
+        (await ResolveAsync(outcome.Pair.Access)).MustEnrollTwoFactor.ShouldBeTrue("без аутентификатора — только настройка");
         (await Should.ThrowAsync<AppException>(() => signIn.CompleteTwoFactorAsync(challenge, code,
             new RequestOrigin(null, "test"), cancellationToken: Ct))).Code.ShouldBe(ErrorCodes.SessionExpired);
         database.Почта.Настроена = false;
@@ -95,27 +100,26 @@ public sealed class AuthFoundationTests(IdentityDatabase database) : IAsyncLifet
         (await Should.ThrowAsync<AppException>(() => SignInAsync(user.Email))).Code.ShouldBe(ErrorCodes.TwoFactorUnavailable);
     }
 
+    /// <summary>
+    /// Сессию настройки не завершить ничем, кроме подключения аутентификатора.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Ревью безопасности 2026-10-20: код письмом прежде ставил отметку фактора на сессию
+    /// настройки, и почтовый ящик один давал полный доступ.
+    /// </remarks>
     [Fact]
-    public async Task Код_действия_не_подходит_другой_сессии_того_же_человека()
+    public async Task Сессию_настройки_не_подтвердить_без_аутентификатора()
     {
         var user = await UserAsync();
-        var first = await SignInAsync(user.Email);
-        var second = await SignInAsync(user.Email);
-        database.Почта.Настроена = true;
-        database.Почта.Исход = MailQueueResult.Queued;
-        database.Actor.Become(user.Id, first.Pair.TokenId);
-        await using (var scope = database.Scope())
-            await scope.ServiceProvider.GetRequiredService<StepUpService>().SendEmailAsync(Ct);
-        var code = database.Почта.Последнее(user.Email)!.Values["code"];
-        database.Actor.Become(user.Id, second.Pair.TokenId);
+        var session = await SignInAsync(user.Email);
+        (await ResolveAsync(session.Pair.Access)).MustEnrollTwoFactor.ShouldBeTrue();
+
+        database.Actor.Become(user.Id, session.Pair.TokenId);
         await using (var scope = database.Scope())
             (await Should.ThrowAsync<AppException>(() => scope.ServiceProvider.GetRequiredService<StepUpService>()
-                .ConfirmAsync(code, Ct))).Code.ShouldBe(ErrorCodes.TwoFactorInvalid);
-        database.Actor.Become(user.Id, first.Pair.TokenId);
-        await using (var scope = database.Scope())
-            await scope.ServiceProvider.GetRequiredService<StepUpService>().ConfirmAsync(code, Ct);
-        (await ResolveAsync(first.Pair.Access)).MustEnrollTwoFactor.ShouldBeFalse();
-        (await ResolveAsync(second.Pair.Access)).MustEnrollTwoFactor.ShouldBeTrue();
+                .ConfirmAsync("123456", Ct))).Code.ShouldBe(ErrorCodes.TwoFactorEnrollmentRequired);
+
+        (await ResolveAsync(session.Pair.Access)).MustEnrollTwoFactor.ShouldBeTrue();
     }
 
     [Fact]

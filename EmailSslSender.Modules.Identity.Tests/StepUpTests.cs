@@ -203,7 +203,9 @@ public sealed class StepUpTests(IdentityDatabase database)
         var отказ = await Should.ThrowAsync<AppException>(() =>
             ПодтвердитьAsync(new Вошедший(id, почта, токен, ""), код: "123456", время: false));
 
-        отказ.Code.ShouldBe(ErrorCodes.TwoFactorInvalid);
+        // Отказ по существу — «подключите аутентификатор», а не «код не тот»: код письмом сессию
+        // не подтверждает (ревью безопасности 2026-10-20).
+        отказ.Code.ShouldBe(ErrorCodes.TwoFactorEnrollmentRequired);
     }
 
     [Fact]

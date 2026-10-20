@@ -499,8 +499,7 @@ curl -s "$API/api/users?limit=50" -H "Authorization: Bearer $TOKEN"
 | POST | `/api/me/two-factor/totp/setup` | Н | Завести секрет TOTP |
 | POST | `/api/me/two-factor/totp/confirm` | Н | Подтвердить секрет кодом |
 | POST | `/api/me/two-factor/totp/disable` | | Отключить приложение (только если работают коды письмом): `password` |
-| POST | `/api/me/step-up` | Н | Подтвердить фактор на этой сессии кодом (завершает сессию настройки): `code` |
-| POST | `/api/me/step-up/email` | Н | Прислать такой код письмом |
+| POST | `/api/me/step-up` | Н | Подтвердить сессию кодом из аутентификатора: `code` (код письмом не принимается) |
 | GET | `/api/me/sessions` | | Мои сессии |
 | DELETE | `/api/me/sessions/{id}` | | Закрыть свою сессию |
 | GET | `/api/users` | | Список учётных записей |

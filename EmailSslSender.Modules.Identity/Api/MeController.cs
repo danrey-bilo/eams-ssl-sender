@@ -293,16 +293,6 @@ internal sealed class MeController(
         [FromBody] StepUpIn body, CancellationToken cancellationToken) =>
         new(await stepUp.ConfirmAsync(body.Code, cancellationToken));
 
-    /// <summary>Прислать письмом код подтверждения личности для текущей сессии.</summary>
-    [HttpPost("step-up/email")]
-    [AllowWhilePasswordChangeRequired("код письмом не мешает обязательной смене пароля")]
-    [AllowWhileTwoFactorEnrollmentRequired("код завершает обязательную настройку этой сессии")]
-    public async Task<IActionResult> SendStepUpEmail(CancellationToken cancellationToken)
-    {
-        await stepUp.SendEmailAsync(cancellationToken);
-        return NoContent();
-    }
-
     /// <summary>
     /// Сменить себе пароль.
     /// </summary>

@@ -28,6 +28,11 @@ namespace EmailSslSender.Modules.Identity.TwoFactor;
 /// второй фактор спрашивается только при входе. Отметка нужна, чтобы отличать полноценную
 /// сессию от сессии настройки; этим сервисом её ставят, когда сессию настройки завершают кодом.
 ///
+/// ⚠ ⚠ <b>Только код аутентификатора</b> (ревью безопасности 2026-10-20). Код письмом прежде
+/// завершал сессию настройки — и почтовый ящик один (сброс пароля, код входа, код сессии)
+/// давал полный доступ без аутентификатора. Без подключённого приложения сессию не подтвердить
+/// ничем: её завершает подключение аутентификатора (<see cref="TwoFactorService.ConfirmAsync"/>).
+///
 /// ⚠ <b>Код расходуется в любом случае.</b> Принятый шаг записывается
 /// <see cref="TwoFactorService.VerifyAsync"/> до всего прочего, и это верно: код одноразов
 /// по своей природе, а «отметка не легла, попробуйте тем же кодом» означало бы, что
@@ -35,8 +40,6 @@ namespace EmailSslSender.Modules.Identity.TwoFactor;
 /// </remarks>
 internal sealed class StepUpService(
     TwoFactorService factors,
-    LoginCodes codes,
-    SecondFactorPolicy methods,
     IStepUpMarker marker,
     ICurrentUser current,
     IAuditWriter audit,
@@ -89,6 +92,16 @@ internal sealed class StepUpService(
             ?? throw new AppException(
                 ErrorCodes.UserInactive, "Учётная запись отключена", HttpStatusCode.Unauthorized);
 
+        // ⚠ ⚠ Без аутентификатора подтверждать нечем — и попытка не занимается: это не догадка,
+        // а отказ по существу (разбор в примечании к классу).
+        if (!await factors.ConfirmedAsync(кто, cancellationToken))
+        {
+            throw new AppException(
+                ErrorCodes.TwoFactorEnrollmentRequired,
+                "Подключите приложение-аутентификатор: код письмом сессию не подтверждает.",
+                HttpStatusCode.Forbidden);
+        }
+
         // ⚠ ⚠ Попытка занимается ДО проверки кода, одним условным обновлением (ревью 2026-10-20,
         // разбор у LoginFailures): прежде блокировка читалась из загруженной строки, и
         // одновременные запросы из захваченной сессии получали каждый свою догадку. Не заняли —
@@ -104,11 +117,7 @@ internal sealed class StepUpService(
         // ⚠ Код расходуется и без транзакции: принятый шаг записывается условным обновлением,
         // которое фиксируется само.
         //
-        // ⚠ ⚠ Проверяется ровно один способ, как и на входе (ревью 2026-10-20): у владельца
-        // аутентификатора — только его код, письмо его не заменяет (SecondFactorPolicy).
-        var принят = await factors.ConfirmedAsync(кто, cancellationToken)
-            ? await factors.VerifyAsync(кто, code, cancellationToken)
-            : await codes.VerifyAsync(кто, code, cancellationToken, токен.ToString("N"), Purposes.StepUpCode);
+        var принят = await factors.VerifyAsync(кто, code, cancellationToken);
 
         if (!принят)
         {
@@ -166,24 +175,6 @@ internal sealed class StepUpService(
     /// откат, и подбор кода на живой сессии следа в журнале не оставлял (в тестах это было не
     /// видно: подменный журнал запоминает вызов, а не зафиксированную строку).
     /// </remarks>
-    /// <summary>Код действия действует только в предъявленной сессии и отдельно от входа.</summary>
-    public async Task SendEmailAsync(CancellationToken cancellationToken = default)
-    {
-        var owner = current.Id ?? throw Отказ();
-        var session = current.SessionId ?? throw Отказ();
-        var user = await users.FindAsync(owner, cancellationToken) ?? throw Отказ();
-        if (!user.IsActive || user.LockedUntil > clock.GetUtcNow()) throw Отказ();
-        if (!(await methods.AvailableAsync(user, cancellationToken)).Contains(SecondFactorMethods.Email))
-        {
-            throw new AppException(ErrorCodes.MailNotConfigured, "Почта недоступна. Используйте приложение.", HttpStatusCode.ServiceUnavailable);
-        }
-        await db.InTransactionAsync(async token =>
-        {
-            SignInService.EnsureMail(await codes.IssueAsync(user, token, session.ToString("N"), Purposes.StepUpCode));
-            await db.SaveChangesAsync(token);
-        }, cancellationToken);
-    }
-
     private async Task ОтказатьAsync(Guid кто, Guid токен, string причина, CancellationToken cancellationToken)
     {
         audit.Write(Строка(кто, токен, AuditResult.Deny, причина));
