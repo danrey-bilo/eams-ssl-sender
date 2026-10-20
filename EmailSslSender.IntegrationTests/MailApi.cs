@@ -12,13 +12,13 @@ namespace EmailSslSender.IntegrationTests;
 /// Почта: состояние, пароль SMTP, проверочное письмо.
 /// </summary>
 /// <remarks>
-/// ⚠ ⚠ <b>Пароль и проверка закрыты <c>settings.security.manage</c>, а не <c>settings.manage</c>,
-/// и это проверяется отдельно.</b> Тот, кто меняет адрес SMTP-сервера, направляет письма сброса
-/// на свой релей и собирает одноразовые ссылки всех, кто попросит восстановление.
+/// ⚠ ⚠ <b>Пароль SMTP требует свежего второго фактора, и это проверяется отдельно</b> (решение
+/// владельца 2026-10-20). Тот, кто меняет SMTP, направляет письма сброса на свой релей и собирает
+/// одноразовые ссылки всех, кто попросит восстановление.
 ///
 /// ⚠ <b>Проверочное письмо — зонд наружу из-под сервера:</b> оно устанавливает исходящее
-/// соединение на произвольный хост и порт из настроек и показывает ответ. Тем же правом и по
-/// той же причине.
+/// соединение на хост и порт из настроек и показывает ответ. Свежего кода оно не спрашивает:
+/// хост и порт — настройки защиты, и сменить их без свежего кода нельзя.
 /// </remarks>
 [Collection(SenderHost.Collection)]
 public sealed class MailApi(SenderHost host)
@@ -174,6 +174,40 @@ public sealed class MailApi(SenderHost host)
             await Снять();
             host.Settings.Values.Clear();
         }
+    }
+
+    /// <summary>
+    /// Пароль SMTP без свежего кода не меняется; проверочное письмо кода не спрашивает.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ ⚠ Решение владельца 2026-10-20: сменивший SMTP направляет письма сброса и коды входа на
+    /// свой релей. Проверочное письмо уходит на уже настроенный сервер — его отказ здесь «не
+    /// указано куда», а не 403.
+    /// </remarks>
+    [Fact]
+    public async Task Пароль_SMTP_без_свежего_кода_отвергается_а_проверка_нет()
+    {
+        Войти();
+        host.User.StepUpAt = DateTimeOffset.UtcNow.AddMinutes(-11);
+
+        try
+        {
+            var ответ = await host.CreateClient().PutAsJsonAsync(Пароль, new { password = "очень-секретный-пароль" }, Ct);
+
+            ответ.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+            (await Код(ответ)).ShouldBe("SECOND_FACTOR_REQUIRED");
+            (await ответ.Content.ReadAsStringAsync(Ct)).ShouldNotContain("очень-секретный-пароль");
+
+            var проверка = await host.CreateClient().PostAsJsonAsync(Проверка, new { to = "" }, Ct);
+
+            проверка.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        }
+        finally
+        {
+            host.User.StepUpAt = DateTimeOffset.UtcNow;
+        }
+
+        (await Состоянием())["password_set"]!.GetValue<bool>().ShouldBeFalse("пароль лёг, хотя в коде отказали");
     }
 
     [Fact]

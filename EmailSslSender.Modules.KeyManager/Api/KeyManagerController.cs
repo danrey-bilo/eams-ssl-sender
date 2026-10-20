@@ -42,9 +42,13 @@ internal sealed record KnownCertificateOut(
 /// Связь с Key Manager Plus: состояние, ключ API, проверка, опрос, снимок сертификатов.
 /// </summary>
 /// <remarks>
-/// ⚠ Ключ API отдаёт любые сертификаты вместе с закрытыми ключами и наружу не возвращается
-/// никогда. Проверка ходит на адрес из настроек и показывает ответ — то есть является зондом
-/// наружу из-под сервера; доступна, как и всё, только вошедшему.
+/// ⚠ ⚠ <b>Ключ API требует свежего второго фактора</b> (<c>[RequireRecentSecondFactor]</c>,
+/// решение владельца 2026-10-20): он отдаёт любые сертификаты вместе с закрытыми ключами и наружу
+/// не возвращается никогда.
+///
+/// ⚠ Проверка ходит на адрес из настроек и показывает ответ — то есть является зондом наружу
+/// из-под сервера; доступна, как и всё, только вошедшему. Ключа она не показывает, и ключ уходит
+/// только на адрес, для которого его ввели (<see cref="ApiKeyStore"/>).
 /// </remarks>
 [ApiController]
 [Route("api/keymanager")]
@@ -83,6 +87,7 @@ internal sealed class KeyManagerController(
     /// ⚠ В журнал идёт факт, а не значение.
     /// </remarks>
     [HttpPut("api-key")]
+    [RequireRecentSecondFactor]
     public async Task<IActionResult> SetApiKey([FromBody] ApiKeyIn body, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(body);

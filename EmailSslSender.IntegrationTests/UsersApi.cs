@@ -171,6 +171,62 @@ public sealed class UsersApi(SenderHost host)
         (await Envelope(response)).Code.ShouldBe("ACTIVATION_TOKEN_INVALID");
     }
 
+    // --- свежий второй фактор -----------------------------------------------------------------
+
+    /// <summary>
+    /// Всё, что меняет доступ, без свежего кода отвергается; правка имени и чтение — нет.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ ⚠ Решение владельца 2026-10-20. Номер учётной записи случайный: отказ обязан случиться в
+    /// фильтре, до разбора ресурса, — иначе по 404 и 403 перебором выяснялось бы, кто существует.
+    /// </remarks>
+    [Fact]
+    public async Task Действия_над_доступом_без_свежего_кода_отвергаются()
+    {
+        SignIn("user.manage");
+        host.User.StepUpAt = DateTimeOffset.UtcNow.AddMinutes(-11);
+
+        try
+        {
+            var кто = $"/api/users/{Guid.CreateVersion7()}";
+            var действия = new (HttpMethod Метод, string Путь)[]
+            {
+                (HttpMethod.Post, "/api/users"),
+                (HttpMethod.Post, $"{кто}/invite"),
+                (HttpMethod.Post, $"{кто}/reset-password"),
+                (HttpMethod.Post, $"{кто}/disable"),
+                (HttpMethod.Post, $"{кто}/enable"),
+                (HttpMethod.Post, $"{кто}/unlock"),
+                (HttpMethod.Delete, кто),
+                (HttpMethod.Delete, $"{кто}/two-factor"),
+                (HttpMethod.Delete, $"{кто}/sessions"),
+            };
+
+            foreach (var (метод, путь) in действия)
+            {
+                using var запрос = new HttpRequestMessage(метод, путь)
+                {
+                    Content = JsonContent.Create(new { email = Email() }),
+                };
+
+                var ответ = await Client().SendAsync(запрос, Ct);
+
+                ответ.StatusCode.ShouldBe(HttpStatusCode.Forbidden, $"{метод} {путь}");
+                (await Envelope(ответ)).Code.ShouldBe(ErrorCodes.SecondFactorRequired, $"{метод} {путь}");
+            }
+
+            // Правка имени доступа не даёт и кода не спрашивает: здесь 404 — такого человека нет.
+            (await Client().PatchAsJsonAsync(кто, new { display_name = "Имя" }, Ct))
+                .StatusCode.ShouldBe(HttpStatusCode.NotFound);
+            (await Client().GetAsync("/api/users", Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        }
+        finally
+        {
+            // Давняя отметка не должна достаться соседям по коллекции.
+            host.User.StepUpAt = DateTimeOffset.UtcNow;
+        }
+    }
+
     // --- инварианты по HTTP -----------------------------------------------------------------
 
     [Fact]

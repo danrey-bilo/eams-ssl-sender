@@ -78,6 +78,12 @@ public static class IdentityModule
         // Переподтверждение личности: код проверяем мы, отметку хранит модуль токенов.
         services.AddScoped<StepUpService>();
 
+        // ⚠ Свежесть второго фактора спрашивают фильтр хоста и модуль настроек — через контракт;
+        // окно `auth.step_up_minutes` наше, поэтому и ответ наш. Один экземпляр на запрос под
+        // двумя именами: свой экран (`/api/me`) берёт из него же `step_up_until`.
+        services.AddScoped<StepUpFreshness>();
+        services.AddScoped<IStepUpFreshness>(sp => sp.GetRequiredService<StepUpFreshness>());
+
         // ⚠ Перекладывание обёрток при смене мастер-ключа. Найти запечатанное умеет только
         // владелец таблицы — общая крипта знает, КАК переложить, но не знает, ГДЕ лежит.
         services.AddScoped<IRewrapTarget, TwoFactorRewrap>();

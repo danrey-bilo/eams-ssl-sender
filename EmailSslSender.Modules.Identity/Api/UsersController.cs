@@ -20,6 +20,13 @@ namespace EmailSslSender.Modules.Identity.Api;
 ///
 /// Проверок прав здесь нет — их делает конвейер по атрибутам. Контроллер остаётся тонким
 /// швом HTTP: разобрать запрос, позвать службу, отдать ответ.
+///
+/// ⚠ ⚠ <b>Всё, что меняет доступ, требует свежего второго фактора</b>
+/// (<see cref="RequireRecentSecondFactorAttribute"/>, решение владельца 2026-10-20): приглашение,
+/// ссылка сброса, отключение и включение, разблокировка, удаление, снятие фактора, закрытие сессий.
+/// Каждая учётная запись здесь — администратор, раздающий закрытые ключи; угнанная вкладка,
+/// заводящая себе соседа или снимающая чужой фактор, — это ключи навсегда. Правка имени и флага
+/// «сменить пароль» (<c>PATCH</c>) кода не спрашивает: доступа она не даёт.
 /// </remarks>
 [ApiController]
 [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
@@ -68,6 +75,7 @@ internal sealed class UsersController(
 
     /// <summary>Завести учётную запись.</summary>
     [HttpPost]
+    [RequireRecentSecondFactor]
     public async Task<ActionResult<UserCreatedOut>> Create(
         [FromBody] UserIn body, CancellationToken cancellationToken)
     {
@@ -101,6 +109,7 @@ internal sealed class UsersController(
     /// то же самое больше <b>не</b> делается — разбор у парного действия ниже.
     /// </remarks>
     [HttpPost("{id:guid}/disable")]
+    [RequireRecentSecondFactor]
     public async Task<UserOut> Disable(Guid id, CancellationToken cancellationToken) =>
         UserOut.From(await users.DisableAsync(id, cancellationToken));
 
@@ -110,11 +119,13 @@ internal sealed class UsersController(
     /// профиля и ищется в журнале своим именем.
     /// </remarks>
     [HttpPost("{id:guid}/enable")]
+    [RequireRecentSecondFactor]
     public async Task<UserOut> Enable(Guid id, CancellationToken cancellationToken) =>
         UserOut.From(await users.EnableAsync(id, cancellationToken));
 
     /// <summary>Удалить.</summary>
     [HttpDelete("{id:guid}")]
+    [RequireRecentSecondFactor]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
     {
         await users.DeleteAsync(id, cancellationToken);
@@ -128,6 +139,7 @@ internal sealed class UsersController(
     /// пятнадцать минут незачем.
     /// </remarks>
     [HttpPost("{id:guid}/unlock")]
+    [RequireRecentSecondFactor]
     public async Task<UserOut> Unlock(Guid id, CancellationToken cancellationToken) =>
         UserOut.From(await users.UnlockAsync(id, cancellationToken));
 
@@ -140,11 +152,12 @@ internal sealed class UsersController(
     /// только консольная команда <c>reset-superadmin-2fa</c>.
     ///
     /// ⚠ <b>Действие опасное:</b> оно <b>снимает защиту</b>, а знай снимающий ещё и чужой
-    /// пароль — вход открыт.
+    /// пароль — вход открыт. Поэтому требует свежего второго фактора самого снимающего.
     ///
     /// Сессии снимаемого закрываются: фактор снимают, когда телефон потерян или украден.
     /// </remarks>
     [HttpDelete("{id:guid}/two-factor")]
+    [RequireRecentSecondFactor]
     public async Task<IActionResult> ResetTwoFactor(Guid id, CancellationToken cancellationToken)
     {
         await factors.ResetForAsync(id, cancellationToken);
@@ -157,6 +170,7 @@ internal sealed class UsersController(
     /// единственным способом выгнать человека было отключить его целиком.
     /// </remarks>
     [HttpDelete("{id:guid}/sessions")]
+    [RequireRecentSecondFactor]
     public async Task<RevokedOut> RevokeSessions(Guid id, CancellationToken cancellationToken) =>
         new(await users.RevokeSessionsAsync(id, cancellationToken));
 
@@ -172,6 +186,7 @@ internal sealed class UsersController(
     /// адресу — чужую учётную запись.
     /// </remarks>
     [HttpPost("{id:guid}/reset-password")]
+    [RequireRecentSecondFactor]
     public async Task<ResetIssuedOut> ResetPassword(Guid id, CancellationToken cancellationToken)
     {
         var reset = await users.IssuePasswordResetAsync(id, cancellationToken);
@@ -188,6 +203,7 @@ internal sealed class UsersController(
     /// ответе один раз. Прежнее приглашение при этом гасится.
     /// </remarks>
     [HttpPost("{id:guid}/invite")]
+    [RequireRecentSecondFactor]
     public async Task<UserCreatedOut> Invite(Guid id, CancellationToken cancellationToken)
     {
         var invitation = await users.ResendInvitationAsync(id, cancellationToken);

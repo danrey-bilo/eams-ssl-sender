@@ -8,8 +8,9 @@ namespace EmailSslSender.IntegrationTests;
 /// Key Manager Plus через API: ключ API, проверка связи, подписки.
 /// </summary>
 /// <remarks>
-/// ⚠ Подписка рассылает закрытые ключи на записанные в ней адреса, ключ API отдаёт их все разом.
-/// Защищает их вход со вторым фактором; повторного кода на действиях нет.
+/// ⚠ ⚠ <b>Подписки и ключ API требуют свежего второго фактора, и это проверяется отдельно</b>
+/// (решение владельца 2026-10-20). Подписка рассылает закрытые ключи на записанные в ней адреса:
+/// дописавший свой адрес получает ключ следующим опросом. Ключ API отдаёт их все разом.
 /// </remarks>
 [Collection(SenderHost.Collection)]
 public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
@@ -68,16 +69,41 @@ public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
             .GetValue<bool>().ShouldBeFalse();
     }
 
+    /// <summary>
+    /// Без свежего кода не проходит ничего, что отдаёт ключи или решает, кому они уйдут.
+    /// </summary>
+    /// <remarks>
+    /// Отказ — до разбора ресурса: подписки с таким номером нет, а ответ всё равно 403, а не 404.
+    /// Чтение и проверка связи кода не спрашивают.
+    /// </remarks>
     [Fact]
-    public async Task Ключ_и_подписки_не_требуют_повторного_кода()
+    public async Task Ключ_и_подписки_без_свежего_фактора_отвергаются()
     {
-        // Второй фактор — только при входе: код десятиминутной давности ничему не мешает.
-        host.User.StepUpAt = DateTimeOffset.UtcNow.AddMinutes(-10);
+        host.User.StepUpAt = DateTimeOffset.UtcNow.AddMinutes(-11);
+        var клиент = host.CreateClient();
+        var чужая = $"{Подписки}/{Guid.NewGuid()}";
+
+        await ОтказФактора(await клиент.PutAsJsonAsync(КлючApi, new { api_key = Ключ }, Ct));
+        await ОтказФактора(await клиент.PostAsJsonAsync(Подписки, Черновик(), Ct));
+        await ОтказФактора(await клиент.PatchAsJsonAsync(чужая, new { interval_days = 7 }, Ct));
+        await ОтказФактора(await клиент.DeleteAsync(чужая, Ct));
+        await ОтказФактора(await клиент.PostAsync($"{чужая}/send", null, Ct));
+
+        // Чтение свежего фактора не требует, проверка связи — тоже.
+        (await клиент.GetAsync(Подписки, Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await клиент.GetAsync(Состояние, Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await клиент.GetAsync("/api/keymanager/certificates", Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await Код(await клиент.PostAsync(Проверка, null, Ct))).ShouldBe("KEYMANAGER_NOT_CONFIGURED");
+    }
+
+    [Fact]
+    public async Task Свежий_код_пропускает_ключ_и_подписки()
+    {
+        host.User.StepUpAt = DateTimeOffset.UtcNow.AddMinutes(-9);
         var клиент = host.CreateClient();
 
         (await клиент.PutAsJsonAsync(КлючApi, new { api_key = Ключ }, Ct)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
         (await клиент.PostAsJsonAsync(Подписки, Черновик(), Ct)).StatusCode.ShouldBe(HttpStatusCode.Created);
-        (await клиент.GetAsync(Подписки, Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
     }
 
     [Fact]
@@ -204,6 +230,15 @@ public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
 
     private static List<string> Строки(JsonNode? массив) =>
         [.. массив!.AsArray().Select(з => з!.GetValue<string>())];
+
+    private static async Task ОтказФактора(HttpResponseMessage ответ)
+    {
+        ответ.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+
+        var конверт = JsonNode.Parse(await ответ.Content.ReadAsStringAsync(Ct))!;
+        конверт["code"]!.GetValue<string>().ShouldBe("SECOND_FACTOR_REQUIRED");
+        конверт["details"]!["window_minutes"]!.GetValue<int>().ShouldBe(10);
+    }
 
     private static async Task<string> Код(HttpResponseMessage ответ) =>
         JsonNode.Parse(await ответ.Content.ReadAsStringAsync(Ct))!["code"]!.GetValue<string>();

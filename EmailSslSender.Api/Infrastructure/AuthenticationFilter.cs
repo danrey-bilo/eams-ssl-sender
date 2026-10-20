@@ -7,11 +7,11 @@ using Microsoft.AspNetCore.Mvc.Filters;
 namespace EmailSslSender.Api.Infrastructure;
 
 /// <summary>
-/// Единственная дверь к каждому действию: вошёл ли и не ограничен ли.
+/// Единственная дверь к каждому действию: вошёл ли, не ограничен ли, свеж ли второй фактор.
 /// </summary>
 /// <remarks>
 /// ⚠ ⚠ <b>Перенесён из EAMS (<c>PermissionFilter</c>) без проверки прав</b> — ролей и прав в
-/// этой установке нет, каждая учётная запись — администратор. Остались два вопроса, и порядок
+/// этой установке нет, каждая учётная запись — администратор. Остались три вопроса, и порядок
 /// их несущий:
 ///
 /// <list type="number">
@@ -20,17 +20,19 @@ namespace EmailSslSender.Api.Infrastructure;
 /// <item><b>Ограничения личности</b> — смена пароля и подключение второго фактора. Пока они
 /// действуют, открыто только помеченное <see cref="AllowWhilePasswordChangeRequiredAttribute"/>
 /// и <see cref="AllowWhileTwoFactorEnrollmentRequiredAttribute"/>.</item>
+/// <item><b>Свежий второй фактор</b> на действиях с <see cref="RequireRecentSecondFactorAttribute"/>:
+/// код из приложения, подтверждённый в ЭТОЙ сессии за последние <c>auth.step_up_minutes</c>
+/// минут (решение владельца 2026-10-20, заменившее «код только при входе»). Отвечает
+/// <see cref="IStepUpFreshness"/> модуля личностей: окно — его настройка.</item>
 /// </list>
-///
-/// ⚠ <b>Свежего второго фактора действия не требуют</b> (решение владельца, 2026-10-20): код
-/// спрашивается только при входе, дальше сессия сама по себе даёт всё.
 /// </remarks>
-internal sealed class AuthenticationFilter(ICurrentUser user) : IAsyncAuthorizationFilter
+internal sealed class AuthenticationFilter(ICurrentUser user, IStepUpFreshness freshness) : IAsyncAuthorizationFilter
 {
     private sealed record Объявление(
         bool Открыт,
         bool ПриСменеПароля,
-        bool ПриВключенииФактора);
+        bool ПриВключенииФактора,
+        bool СвежийФактор);
 
     /// <summary>
     /// Разобранные пометки действий.
@@ -46,6 +48,7 @@ internal sealed class AuthenticationFilter(ICurrentUser user) : IAsyncAuthorizat
         var открыт = false;
         var приСменеПароля = false;
         var приВключенииФактора = false;
+        var свежийФактор = false;
 
         foreach (var пометка in descriptor.EndpointMetadata)
         {
@@ -60,15 +63,18 @@ internal sealed class AuthenticationFilter(ICurrentUser user) : IAsyncAuthorizat
                 case AllowWhileTwoFactorEnrollmentRequiredAttribute:
                     приВключенииФактора = true;
                     break;
+                case RequireRecentSecondFactorAttribute:
+                    свежийФактор = true;
+                    break;
                 default:
                     break;
             }
         }
 
-        return new Объявление(открыт, приСменеПароля, приВключенииФактора);
+        return new Объявление(открыт, приСменеПароля, приВключенииФактора, свежийФактор);
     }
 
-    public Task OnAuthorizationAsync(AuthorizationFilterContext context)
+    public async Task OnAuthorizationAsync(AuthorizationFilterContext context)
     {
         ArgumentNullException.ThrowIfNull(context);
 
@@ -76,7 +82,7 @@ internal sealed class AuthenticationFilter(ICurrentUser user) : IAsyncAuthorizat
 
         if (объявлено.Открыт)
         {
-            return Task.CompletedTask;
+            return;
         }
 
         // мутация 2026-10-20: условие ослаблено до никогда-не-истины → покраснели
@@ -109,6 +115,15 @@ internal sealed class AuthenticationFilter(ICurrentUser user) : IAsyncAuthorizat
                 System.Net.HttpStatusCode.Forbidden);
         }
 
-        return Task.CompletedTask;
+        // ⚠ Свежесть — ПОСЛЕДНЕЙ: сессии настройки и сессии с временным паролем код не поможет,
+        // и спросить его у них значило бы послать человека не туда. Отметка берётся с ТОКЕНА
+        // этой сессии, а не с человека: код в одной вкладке не открывает опасное в остальных.
+        //
+        // мутация 2026-10-20: убрал этот вызов → покраснели отказы без свежего кода в
+        // AuthFoundationApi, KeyManagerApi, UsersApi и MailApi.
+        if (объявлено.СвежийФактор)
+        {
+            await freshness.RequireAsync(context.HttpContext.RequestAborted);
+        }
     }
 }
