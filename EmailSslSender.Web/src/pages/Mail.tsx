@@ -9,6 +9,9 @@ import { useOverlay } from '../ui/Overlay';
 
 const SECURITY: Array<[string, string]> = [['tls', 'SSL/TLS'], ['starttls', 'STARTTLS'], ['none', 'Без шифрования']];
 
+/** Сервер SMTP — имя: «https://mail.example.com/» сводится к «mail.example.com». */
+const hostName = (value: string) => value.trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').replace(/\/+$/, '');
+
 export function MailPage({ myEmail }: { myEmail: string }) {
   const { data, error, reload } = useLoad(() => Promise.all([api.get<MailStatus>('/api/mail'), loadSettings()]));
   const { show, toast, run, confirm } = useOverlay();
@@ -77,7 +80,7 @@ function SmtpForm({ mail, settings, onSaved, onDropPassword }: {
     try {
       await saveSettings(settings, {
         'mail.enabled': enabled,
-        'mail.smtp_host': host.trim(),
+        'mail.smtp_host': hostName(host),
         'mail.smtp_port': port ? Number(port) : '',
         'mail.smtp_security': security,
         'mail.smtp_username': user.trim(),
@@ -86,6 +89,7 @@ function SmtpForm({ mail, settings, onSaved, onDropPassword }: {
         'server.public_url': publicUrl.trim(),
       });
       if (password) await api.put('/api/mail/password', { password });
+      setHost(hostName(host));
       setPassword('');
       toast('Сохранено');
       onSaved();

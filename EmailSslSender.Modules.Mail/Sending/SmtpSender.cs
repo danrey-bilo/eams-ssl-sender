@@ -181,6 +181,14 @@ internal sealed class SmtpSession(MailPolicy policy, string host, SystemSecrets 
 
     private async Task ПодключитьсяИВойтиAsync(CancellationToken cancellationToken)
     {
+        // ⚠ Здесь, а не в `Open`: отказ в `Open` уронил бы порцию мимо цикла писем. «https://…» и
+        // «host:465» MailKit искал бы в DNS целиком и отвечал бы невнятным «хост не найден».
+        if (Uri.CheckHostName(host) == UriHostNameType.Unknown)
+        {
+            throw new InvalidOperationException(
+                $"Сервер SMTP — только имя, без схемы и порта (smtp.example.com), а задано «{host}».");
+        }
+
         await _клиент.ConnectAsync(host, policy.Port, Защита(policy.Security), cancellationToken);
 
         // ⚠ Реле в той же сети авторизации не требует, и требовать её значило бы запретить

@@ -81,6 +81,25 @@ public sealed class SmtpSessionTests(MailDatabase база)
         сервер.Подключений.ShouldBe(1);
         сервер.Принято.ShouldBe(2);
     }
+
+    [Theory]
+    [InlineData("https://mail.example.com")]
+    [InlineData("mail.example.com:465")]
+    [InlineData("mail.example.com/")]
+    public async Task Адрес_вместо_имени_сервера_отказ_с_понятным_текстом(string хост)
+    {
+        await using var scope = база.Scope();
+
+        var отправитель = new SmtpSender(scope.ServiceProvider.GetRequiredService<SystemSecrets>());
+        var политика = new MailPolicy(true, хост, 465, "tls", null, "EAMS", "vault@example.com", 100, 5);
+
+        await using var сессия = отправитель.Open(политика);
+
+        var ошибка = await Should.ThrowAsync<InvalidOperationException>(
+            () => сессия.SendAsync(new OutgoingMail("a@example.com", "тема", "тело"), Ct));
+
+        ошибка.Message.ShouldContain("только имя");
+    }
 }
 
 /// <summary>
