@@ -75,23 +75,33 @@ internal sealed class KeyManagerController(
     }
 
     /// <summary>Задать или снять ключ API (Settings → General Settings → API Key в Key Manager Plus).</summary>
-    /// <remarks>⚠ В журнал идёт факт, а не значение.</remarks>
+    /// <remarks>
+    /// ⚠ ⚠ <b>Ключ привязывается к адресу и отпечатку, заданным на момент ввода</b>
+    /// (<c>keymanager.base_url</c>, <c>keymanager.server_sha256</c>): сначала они, потом ключ.
+    /// Сменили адрес или отпечаток — ключ вводится заново, иначе проверка и опрос отказывают.
+    ///
+    /// ⚠ В журнал идёт факт, а не значение.
+    /// </remarks>
     [HttpPut("api-key")]
     public async Task<IActionResult> SetApiKey([FromBody] ApiKeyIn body, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(body);
 
+        var настройки = await connector.ReadAsync(cancellationToken);
+
         await db.InTransactionAsync(
             async token =>
             {
-                await apiKey.PutAsync(body.ApiKey, token);
+                await apiKey.PutAsync(
+                    body.ApiKey, ApiKeyStore.Target(настройки.BaseUrl, настройки.ServerSha256), token);
 
                 audit.Write(new AuditEntry(
                     KeyManagerActions.ApiKeySet,
                     Changes: new Dictionary<string, object?>(StringComparer.Ordinal)
                     {
                         ["set"] = !string.IsNullOrWhiteSpace(body.ApiKey),
-                    }));
+                    },
+                    LogChanges: true));
 
                 await db.SaveChangesAsync(token);
             },
@@ -106,6 +116,9 @@ internal sealed class KeyManagerController(
     /// <remarks>
     /// ⚠ Работает и при выключенной интеграции: проверяют как раз до того, как включить.
     /// Отказ — <c>409 KEYMANAGER_UNAVAILABLE</c> с текстом в <c>details.reason</c>.
+    ///
+    /// ⚠ ⚠ Ключ API уходит только на адрес и отпечаток, для которых его ввели: подменённый адрес
+    /// получает отказ «введите ключ заново» без единого запроса к нему.
     /// </remarks>
     [HttpPost("test")]
     public async Task<KeyManagerTestOut> Test(CancellationToken cancellationToken)

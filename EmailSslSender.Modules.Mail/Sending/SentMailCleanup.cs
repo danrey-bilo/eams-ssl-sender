@@ -23,18 +23,33 @@ namespace EmailSslSender.Modules.Mail.Sending;
 /// ⚠ <b>Единственное необратимое действие модуля.</b> Отсюда минутная отсрочка после старта:
 /// процесс, поднявшийся с неверной настройкой и тут же снесённый, не должен успеть удалить
 /// ничего.
+///
+/// ⚠ ⚠ <b>Проход — раз в час, а не раз в сутки</b>: он же стирает вложения писем, не ушедших за
+/// <see cref="СрокВложений"/>. Закрытый ключ в очереди живёт не дольше суток с часом, даже если
+/// почта выключена или сервер не отвечает. Удаление отправленного от частоты не меняется — оно
+/// смотрит на свой срок.
 /// </remarks>
 internal sealed class SentMailCleanup(
     IServiceScopeFactory scopes,
     TimeProvider clock,
     ILogger<SentMailCleanup> log) : BackgroundService
 {
-    private static readonly TimeSpan Интервал = TimeSpan.FromHours(24);
+    private static readonly TimeSpan Интервал = TimeSpan.FromHours(1);
 
     private static readonly TimeSpan ОтсрочкаСтарта = TimeSpan.FromMinutes(1);
 
     /// <summary>Сколько держим отправленное.</summary>
     internal static readonly TimeSpan Срок = TimeSpan.FromDays(14);
+
+    /// <summary>
+    /// Сколько вложения ждут отправки, прежде чем стереться.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Сутки: насос с пятью попытками сдаётся меньше чем за час, и письмо, не ушедшее за сутки,
+    /// ждёт уже не повтора, а починки (или включения) почты. Закрытому ключу столько ждать в базе
+    /// незачем: после починки его отправят заново, по праву, действующему на тот день.
+    /// </remarks>
+    internal static readonly TimeSpan СрокВложений = TimeSpan.FromHours(24);
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -94,6 +109,38 @@ internal sealed class SentMailCleanup(
                 cancellationToken);
     }
 
+    /// <summary>
+    /// Стереть вложения писем, не ушедших за <see cref="СрокВложений"/>, и объявить их мёртвыми.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ ⚠ <b>Насос их не сотрёт</b>: при выключенной или ненастроенной почте он не берёт ничего,
+    /// а с поднятым <c>mail.max_attempts</c> пробует неделями. Закрытый ключ, поставленный в
+    /// очередь, лежал бы в базе, пока кто-нибудь не починит почту, — и ушёл бы тогда по праву
+    /// давно минувшего дня. Срок «никогда» — чтобы без файлов письмо не ушло; причина — чтобы
+    /// администратор увидел, почему.
+    /// </remarks>
+    public static Task<int> ForgetStaleAttachmentsAsync(
+        SenderDbContext db, TimeProvider clock, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(db);
+        ArgumentNullException.ThrowIfNull(clock);
+
+        var порог = clock.GetUtcNow() - СрокВложений;
+        const string причина =
+            "Не отправлено за сутки: вложения стёрты, письмо не уйдёт. Почините почту и отправьте заново.";
+
+        return db.Set<MailOutbox>()
+            .Where(письмо => письмо.SentAt == null && письмо.SealedAttachments != null && письмо.CreatedAt < порог)
+            .ExecuteUpdateAsync(
+                set => set
+                    .SetProperty(письмо => письмо.SealedAttachments, (byte[]?)null)
+                    .SetProperty(письмо => письмо.NextAttemptAt, MailAttachments.Никогда)
+                    .SetProperty(
+                        письмо => письмо.LastError,
+                        письмо => письмо.LastError == null ? причина : причина + " Последняя ошибка: " + письмо.LastError),
+                cancellationToken);
+    }
+
     private async Task УбратьAsync(CancellationToken cancellationToken)
     {
         try
@@ -106,12 +153,18 @@ internal sealed class SentMailCleanup(
             var политика = await MailPolicy.ReadAsync(
                 scope.ServiceProvider.GetRequiredService<Shared.Contracts.Settings.ISettingsReader>(), cancellationToken);
             var стёрто = await ForgetDeadAttachmentsAsync(db, политика.MaxAttempts, cancellationToken);
+            var просрочено = await ForgetStaleAttachmentsAsync(db, clock, cancellationToken);
 
-            // ⚠ Пустой проход молчит: суточное расписание, пишущее «снесено 0», за год даёт
-            // триста шестьдесят пять строк ни о чём.
+            // ⚠ Пустой проход молчит: часовое расписание, пишущее «снесено 0», за год даёт
+            // восемь тысяч строк ни о чём.
             if (снесено > 0 || стёрто > 0)
             {
                 log.LogInformation("mail_cleanup {Removed} {AttachmentsForgotten}", снесено, стёрто);
+            }
+
+            if (просрочено > 0)
+            {
+                log.LogWarning("mail_attachments_expired {Letters}", просрочено);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)

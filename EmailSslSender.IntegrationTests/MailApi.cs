@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
+using System.Text.RegularExpressions;
 using EmailSslSender.Shared.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -105,6 +106,77 @@ public sealed class MailApi(SenderHost host)
     }
 
     [Fact]
+    public async Task Пароль_не_уходит_на_сменившийся_сервер()
+    {
+        // ⚠ ⚠ Сценарий перехваченной сессии: пароль вводили для настоящего сервера, а сервер в
+        // настройках переставили на свой. Отказ — до соединения, с просьбой ввести пароль заново.
+        Войти();
+
+        try
+        {
+            ПочтаСВходом("127.0.0.1");
+            await Задать("очень-секретный-пароль");
+
+            host.Settings.Values["mail.smtp_host"] = "127.0.0.2";
+
+            var ответ = await host.CreateClient().PostAsJsonAsync(Проверка, new { to = "кто@example.com" }, Ct);
+
+            ответ.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+            (await Код(ответ)).ShouldBe("MAIL_SEND_FAILED");
+
+            var причина = await Причина(ответ);
+            причина.ShouldContain("Введите пароль SMTP заново");
+            причина.ShouldNotContain("очень-секретный-пароль");
+
+            // Свой сервер — пароль открывается, и отказ уже сетевой (порт заведомо пуст).
+            host.Settings.Values["mail.smtp_host"] = "127.0.0.1";
+
+            var свой = await host.CreateClient().PostAsJsonAsync(Проверка, new { to = "кто@example.com" }, Ct);
+
+            свой.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+            (await Причина(свой)).ShouldNotContain("заново");
+        }
+        finally
+        {
+            await Снять();
+            host.Settings.Values.Clear();
+        }
+    }
+
+    [Fact]
+    public async Task Чужой_отказ_приезжает_типом_а_не_текстом()
+    {
+        // ⚠ Внутри попытки открывается пароль из базы: отказ криптографии (а с ним Npgsql и что
+        // угодно ещё) не должен уезжать наружу своим сообщением — только цепочкой типов.
+        Войти();
+
+        try
+        {
+            ПочтаСВходом("127.0.0.1");
+            await Задать("пароль");
+
+            await using (var scope = host.Services.CreateAsyncScope())
+            {
+                await scope.ServiceProvider.GetRequiredService<SenderDbContext>().Database.ExecuteSqlRawAsync(
+                    "UPDATE system_secrets SET sealed = sealed || '\\x00'::bytea WHERE key = 'smtp_password'", Ct);
+            }
+
+            var ответ = await host.CreateClient().PostAsJsonAsync(Проверка, new { to = "кто@example.com" }, Ct);
+
+            ответ.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+            var причина = await Причина(ответ);
+
+            Regex.IsMatch(причина, "^[A-Za-z]+Exception( → [A-Za-z]+Exception)*$")
+                .ShouldBeTrue($"наружу уехал текст, а не цепочка типов: «{причина}»");
+        }
+        finally
+        {
+            await Снять();
+            host.Settings.Values.Clear();
+        }
+    }
+
+    [Fact]
     public async Task Проверочное_письмо_без_адреса_отвергается()
     {
         await using var _ = await SystemSettingsFixture.НачатьAsync(host);
@@ -162,6 +234,21 @@ public sealed class MailApi(SenderHost host)
 
     private async Task<string> Код(HttpResponseMessage ответ) =>
         JsonNode.Parse(await ответ.Content.ReadAsStringAsync(Ct))!["code"]!.GetValue<string>();
+
+    private static async Task<string> Причина(HttpResponseMessage ответ) =>
+        JsonNode.Parse(await ответ.Content.ReadAsStringAsync(Ct))!["details"]!["reason"]!.GetValue<string>();
+
+    /// <summary>Почта со входом по паролю на заведомо пустой порт — на подставных настройках.</summary>
+    private void ПочтаСВходом(string сервер)
+    {
+        host.Settings.Values.Clear();
+        host.Settings.Values["mail.enabled"] = true;
+        host.Settings.Values["mail.smtp_host"] = сервер;
+        host.Settings.Values["mail.smtp_port"] = 1;
+        host.Settings.Values["mail.smtp_security"] = "starttls";
+        host.Settings.Values["mail.smtp_username"] = "robot";
+        host.Settings.Values["mail.from_address"] = "vault@example.com";
+    }
 
     /// <summary>Строки журнала по событию пароля — прирост считается ими.</summary>
     private async Task<List<string>> Записи()

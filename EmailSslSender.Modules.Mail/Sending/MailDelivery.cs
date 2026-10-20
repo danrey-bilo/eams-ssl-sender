@@ -161,7 +161,12 @@ internal sealed class MailDelivery(
             {
                 // ⚠ В строку и в лог уходит ОПИСАНИЕ, а не исключение объектом: текст ошибки
                 // SMTP может содержать адрес и учётную запись (правило 14, `SafeError`).
-                var описание = SafeError.Describe(ошибка);
+                //
+                // ⚠ Свой отказ модуля — текстом: он составлен без секретов и без адресов, а
+                // «введите пароль SMTP заново» говорит администратору больше, чем имя типа.
+                var описание = ошибка is MailConfigurationException
+                    ? ошибка.Message
+                    : SafeError.Describe(ошибка);
 
                 log.LogWarning(
                     "mail_attempt_failed {Kind} {Attempt} {Error}",

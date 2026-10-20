@@ -241,8 +241,8 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
         HttpRequestError.NameResolutionError => "имя сервера не разрешается",
         HttpRequestError.ConnectionError => "соединение не устанавливается",
         HttpRequestError.SecureConnectionError =>
-            "TLS не согласован — сертификат сервера не прошёл проверку; для самоподписанного задайте "
-            + "keymanager.server_sha256",
+            "TLS не согласован — сертификат сервера не прошёл проверку (цепочка, имя, отзыв или "
+            + "закреплённый отпечаток); для самоподписанного задайте keymanager.server_sha256",
         HttpRequestError.ProxyTunnelError => "прокси не пропустил соединение",
         _ => $"сбой HTTP ({ошибка.HttpRequestError})",
     };

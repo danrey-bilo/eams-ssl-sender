@@ -65,6 +65,11 @@ public sealed class БезПочты : IMailQueue
         IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken = default) =>
         Task.FromResult<IReadOnlyDictionary<Guid, MailLetterStatus>>(new Dictionary<Guid, MailLetterStatus>());
 
+    /// <summary>Модуль личностей писем не отменяет; член — ради полноты контракта.</summary>
+    public Task<int> CancelAsync(
+        IReadOnlyCollection<Guid> ids, string reason, CancellationToken cancellationToken = default) =>
+        Task.FromResult(0);
+
     /// <summary>Последнее письмо на этот адрес. <c>null</c> — не слали.</summary>
     public Письмо? Последнее(string адрес) =>
         Отправленные.FindLast(письмо => string.Equals(письмо.To, адрес, StringComparison.OrdinalIgnoreCase));

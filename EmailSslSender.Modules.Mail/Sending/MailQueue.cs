@@ -86,6 +86,37 @@ internal sealed class MailQueue(
                 письмо.LastError));
     }
 
+    /// <summary>Отменить письма, которые ещё не ушли.</summary>
+    /// <remarks>
+    /// ⚠ Условным обновлением: ушедшее (<c>sent_at</c>) и уже мёртвое (срок «никогда») не
+    /// трогаются — у мёртвого своя причина, и её затирать нельзя.
+    /// </remarks>
+    public Task<int> CancelAsync(
+        IReadOnlyCollection<Guid> ids, string reason, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(ids);
+        ArgumentException.ThrowIfNullOrWhiteSpace(reason);
+
+        if (ids.Count == 0)
+        {
+            return Task.FromResult(0);
+        }
+
+        var номера = ids.ToArray();
+        var причина = $"Отменено: {reason}";
+
+        return db.Set<MailOutbox>()
+            .Where(письмо => номера.Contains(письмо.Id)
+                && письмо.SentAt == null
+                && письмо.NextAttemptAt < MailAttachments.Никогда)
+            .ExecuteUpdateAsync(
+                set => set
+                    .SetProperty(письмо => письмо.SealedAttachments, (byte[]?)null)
+                    .SetProperty(письмо => письмо.NextAttemptAt, MailAttachments.Никогда)
+                    .SetProperty(письмо => письмо.LastError, причина),
+                cancellationToken);
+    }
+
     public async Task<MailTicket> EnqueueAsync(
         string toAddress,
         string kind,

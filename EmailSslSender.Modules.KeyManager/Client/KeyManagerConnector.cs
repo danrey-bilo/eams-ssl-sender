@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography.X509Certificates;
 using EmailSslSender.Modules.KeyManager.Secrets;
 using EmailSslSender.Modules.KeyManager.Settings;
 using EmailSslSender.Shared.Contracts.Settings;
@@ -31,7 +32,9 @@ internal interface IKeyManagerConnector
 
     /// <summary>Открыть клиента.</summary>
     /// <exception cref="AppException"><c>KEYMANAGER_NOT_CONFIGURED</c>: нет адреса или ключа.</exception>
-    /// <exception cref="KeyManagerException">Адрес или отпечаток заданы неверно.</exception>
+    /// <exception cref="KeyManagerException">
+    /// Адрес или отпечаток заданы неверно либо сменились после ввода ключа API.
+    /// </exception>
     Task<IKeyManagerClient> OpenAsync(CancellationToken cancellationToken = default);
 }
 
@@ -46,6 +49,15 @@ internal interface IKeyManagerConnector
 /// ⚠ ⚠ <b>Перенаправления выключены.</b> <c>HttpClient</c> при перенаправлении снимает только
 /// <c>Authorization</c>, а свой заголовок <c>AUTHTOKEN</c> понёс бы на любой хост, куда
 /// укажет <c>Location</c>.
+///
+/// ⚠ ⚠ <b>Ключ открывается только для адреса, для которого его ввели</b> (<c>ApiKeyStore</c>):
+/// сменивший <c>keymanager.base_url</c> или <c>keymanager.server_sha256</c> получает отказ, а не
+/// соединение с ключом в заголовке.
+///
+/// ⚠ <b>Без закреплённого отпечатка проверяется и отзыв</b> (<c>Online</c>): у живого сервера
+/// владельца сертификат Sectigo, и отозванный сертификат обязан не пройти. Значит, серверу нужен
+/// выход к OCSP/CRL удостоверяющего центра. С отпечатком отзыв не спрашивается: принимается ровно
+/// закреплённый лист, и цепочки у него обычно нет.
 /// </remarks>
 internal sealed class KeyManagerConnector(ISettingsReader settings, ApiKeyStore apiKey) : IKeyManagerConnector
 {
@@ -91,7 +103,8 @@ internal sealed class KeyManagerConnector(ISettingsReader settings, ApiKeyStore 
                 + "знака, двоеточия допустимы.");
         }
 
-        var ключ = await apiKey.GetAsync(cancellationToken)
+        var ключ = await apiKey.GetForAsync(
+                ApiKeyStore.Target(настройки.BaseUrl, настройки.ServerSha256), cancellationToken)
             ?? throw new AppException(
                 ErrorCodes.KeyManagerNotConfigured, "Ключ API Key Manager Plus не задан.", HttpStatusCode.Conflict);
 
@@ -104,6 +117,10 @@ internal sealed class KeyManagerConnector(ISettingsReader settings, ApiKeyStore 
 
         обработчик.SslOptions.RemoteCertificateValidationCallback =
             (_, сертификат, _, ошибки) => ServerCertificatePin.Accept(сертификат, ошибки, отпечаток);
+
+        // ⚠ Без отпечатка — обычная цепочка вместе с отзывом; с отпечатком решает только он.
+        обработчик.SslOptions.CertificateRevocationCheckMode =
+            отпечаток is null ? X509RevocationMode.Online : X509RevocationMode.NoCheck;
 
         var http = new HttpClient(обработчик, disposeHandler: true)
         {

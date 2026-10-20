@@ -99,6 +99,28 @@ public interface IMailQueue
     /// </remarks>
     Task<IReadOnlyDictionary<Guid, MailLetterStatus>> StatusAsync(
         IReadOnlyCollection<Guid> ids, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Отменить письма, которые ещё не ушли: стереть вложения и больше не пытаться.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ ⚠ <b>Право на письмо проверяется при постановке, а уходит оно позже.</b> Получатель,
+    /// которого убрали из подписки, или удалённая подписка не должны получить закрытый ключ,
+    /// ещё стоящий в очереди. Отменённое письмо становится мёртвым (<see cref="MailLetterState.Dead"/>)
+    /// с причиной «Отменено: …», а его вложения стираются сразу.
+    ///
+    /// ⚠ <b>Выполняется сразу, а не с <c>SaveChangesAsync</c></b> — в транзакции вызывающего,
+    /// если она открыта: откат действия возвращает письма в очередь. Строка письма на это время
+    /// заблокирована, и насос её не возьмёт.
+    ///
+    /// ⚠ Ушедшее и уже взятое насосом в отправку не отзывается: отменяется то, что ещё ждёт.
+    /// </remarks>
+    /// <param name="ids">Номера писем из <see cref="MailTicket"/>.</param>
+    /// <param name="reason">Почему отменено — для причины письма; без адресов и секретов.</param>
+    /// <param name="cancellationToken">Отмена.</param>
+    /// <returns>Сколько писем отменено.</returns>
+    Task<int> CancelAsync(
+        IReadOnlyCollection<Guid> ids, string reason, CancellationToken cancellationToken = default);
 }
 
 /// <summary>Итог постановки письма: результат и номер в очереди, если письмо легло.</summary>
