@@ -172,6 +172,13 @@ internal sealed class UserRepository(SenderDbContext db)
     /// Отдаются идентификаторы, а не количество: агрегат с <c>FOR UPDATE</c> несовместим,
     /// поэтому сравнение делается уже здесь, в коде.
     /// </remarks>
+    /// <remarks>
+    /// ⚠ ⚠ Возвращаются только те, кто <b>может войти</b> (ревью безопасности 2026-10-20):
+    /// активированные и с настоящим паролем. Неактивированное приглашение тоже «активно», но
+    /// войти по нему нельзя — посчитай его, и последний настоящий администратор удалял бы себя,
+    /// оставляя систему без единого входа. Блокируются при этом все активные строки: порядок
+    /// параллельных изменений тот же.
+    /// </remarks>
     public async Task<HashSet<Guid>> LockActiveUsersAsync(CancellationToken cancellationToken = default)
     {
         // Запрос-константа, без подстановки: имя таблицы в нём литеральное, и анализатору
@@ -180,6 +187,9 @@ internal sealed class UserRepository(SenderDbContext db)
             .FromSqlRaw(LockActiveUsers)
             .ToListAsync(cancellationToken);
 
-        return [.. locked.Select(user => user.Id)];
+        return [.. locked.Where(CanSignIn).Select(user => user.Id)];
     }
+
+    /// <summary>Может ли учётная запись войти: активирована и пароль не заглушка.</summary>
+    internal static bool CanSignIn(User user) => user.ActivatedAt is not null && user.PasswordHash != "!";
 }

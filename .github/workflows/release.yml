@@ -80,7 +80,7 @@ jobs:
           sed "s|\${SENDER_IMAGE:-[^}]*}|\${SENDER_IMAGE:-$IMAGE:$VERSION}|" docker-compose.yml \
             > "bundle/email-ssl-sender/docker-compose.yml"
           cp .env.example "bundle/email-ssl-sender/.env.example"
-          cp scripts/gen-secrets.sh scripts/set-tunnel-token.sh "bundle/email-ssl-sender/scripts/"
+          cp scripts/gen-secrets.sh scripts/set-tunnel-token.sh scripts/reset-access.sh "bundle/email-ssl-sender/scripts/"
           chmod +x bundle/email-ssl-sender/scripts/*.sh
           (cd bundle && zip -qr "../email-ssl-sender-deploy-$TAG.zip" email-ssl-sender)
 

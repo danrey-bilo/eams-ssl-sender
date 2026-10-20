@@ -14,15 +14,27 @@ export const text = (settings: Settings, key: string): string => {
   return value === null || value === undefined ? '' : String(value);
 };
 
-/** Сохранить настройки: пустая строка — null у обнуляемых и умолчание у прочих. */
+/**
+ * Сохранить настройки: только изменённые. Пустая строка — null у обнуляемых и умолчание у прочих.
+ *
+ * ⚠ Неизменённые ключи не отправляются: сервер требует свежего кода за любой названный ключ
+ * защиты, и форма, отправившая всё подряд, спрашивала бы код без нужды.
+ */
 export async function saveSettings(settings: Settings, values: Record<string, string | number | boolean>) {
   const body: { values: Record<string, unknown>; reset: string[] } = { values: {}, reset: [] };
   for (const [key, value] of Object.entries(values)) {
+    const meta = settings[key];
+    const current = meta?.value ?? null;
     if (value === '') {
-      if (settings[key]?.nullable) body.values[key] = null; else body.reset.push(key);
-    } else {
+      if (meta?.nullable) {
+        if (current !== null && current !== '') body.values[key] = null;
+      } else if (current !== (meta?.default ?? null)) {
+        body.reset.push(key);
+      }
+    } else if (value !== current) {
       body.values[key] = value;
     }
   }
+  if (Object.keys(body.values).length === 0 && body.reset.length === 0) return;
   await api.patch('/api/settings/system', body);
 }

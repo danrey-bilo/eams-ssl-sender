@@ -17,7 +17,7 @@ const FORMATS: Array<[format: string, title: string, hint: string]> = [
   ['DER', 'DER', 'двоичный'],
   ['P7B', 'P7B', 'с цепочкой'],
   ['PKCS', 'PFX', 'с ключом'],
-  ['JKS', 'JKS', 'хранилище Java'],
+  ['JKS', 'JKS', 'для Java'],
   ['KEY', 'KEY', 'закрытый ключ'],
 ];
 

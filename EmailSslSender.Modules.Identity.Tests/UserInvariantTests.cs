@@ -43,6 +43,21 @@ public sealed class UserInvariantTests(IdentityDatabase database)
     }
 
     [Fact]
+    public async Task Неактивированное_приглашение_не_спасает_последнего_администратора()
+    {
+        // Ревью безопасности 2026-10-20: приглашение тоже «активно», но войти по нему нельзя.
+        // Посчитай его — и последний настоящий администратор удалял бы себя, оставляя систему
+        // без единого входа.
+        await using var only = await SoleActiveAsync();
+
+        database.Actor.AsSuperuser();
+        await CreateAsync();
+
+        (await Should.ThrowAsync<AppException>(() => database.InScopeAsync(users => users.DeleteAsync(only.Id, Ct))))
+            .Code.ShouldBe("LAST_SUPERADMIN");
+    }
+
+    [Fact]
     public async Task Предпоследнюю_отключить_можно()
     {
         // Обратная сторона: инвариант про систему, а не про отдельного человека. Запрет,
@@ -203,9 +218,15 @@ public sealed class UserInvariantTests(IdentityDatabase database)
 
     private static string Email() => $"user-{Guid.CreateVersion7():N}@example.com";
 
+    /// <summary>Приглашение: активно, но войти по нему нельзя, пока человек не задал пароль.</summary>
     private Task<(User User, Invitation? Invitation)> CreateAsync() =>
         database.InScopeAsync(users => users.CreateAsync(
             new UserDraft(Email(), "Тестовый человек", null), Ct));
+
+    /// <summary>Учётная запись, которая может войти: с паролем, значит активированная.</summary>
+    private Task<(User User, Invitation? Invitation)> CreateSignInAsync() =>
+        database.InScopeAsync(users => users.CreateAsync(
+            new UserDraft(Email(), "Тестовый человек", "Очень-Хороший-Пароль-42!", MustChangePassword: false), Ct));
 
     /// <summary>
     /// Сделать так, чтобы в системе осталась ровно одна активная учётная запись.
@@ -239,7 +260,8 @@ public sealed class UserInvariantTests(IdentityDatabase database)
 
         for (var i = 0; i < count; i++)
         {
-            var (user, _) = await CreateAsync();
+            // ⚠ «Последние» — те, кто может войти: приглашения инвариант не считает.
+            var (user, _) = await CreateSignInAsync();
             ids.Add(user.Id);
         }
 

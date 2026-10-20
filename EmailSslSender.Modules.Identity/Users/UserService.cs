@@ -1177,6 +1177,7 @@ internal sealed class UserService(
 
         var active = await users.LockActiveUsersAsync(cancellationToken);
 
+        // ⚠ Считаются только те, кто может войти (UserRepository.LockActiveUsersAsync).
         if (active.Count == 1 && active.Contains(user.Id))
         {
             throw new AppException(
