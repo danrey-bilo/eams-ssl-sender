@@ -1,0 +1,88 @@
+namespace EmailSslSender.Modules.Identity.Domain;
+
+/// <summary>
+/// Одноразовая ссылка или код: приглашение, сброс пароля, расписка и коды второго фактора.
+/// </summary>
+/// <remarks>
+/// <b>Одна таблица на все назначения.</b> Различаются они колонкой
+/// <see cref="Purpose"/>, а всё остальное у них общее: выдача, срок, гашение, защита от
+/// повторного использования. Две таблицы означали бы две реализации одного и того же, и
+/// вторая однажды забыла бы условие в <c>WHERE</c>.
+/// </remarks>
+internal sealed class IdentityToken
+{
+    public Guid Id { get; set; }
+
+    /// <summary>Кому выдана.</summary>
+    public Guid UserId { get; set; }
+
+    /// <summary>
+    /// SHA-256 от самой ссылки.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ <b>Хранится хеш, а не значение.</b> Дамп базы не должен давать возможности войти
+    /// чужой учётной записью — а незахешированная ссылка ровно это и даёт, причём тихо:
+    /// воспользоваться ею можно один раз и следов «кто-то украл базу» не останется.
+    ///
+    /// Обычный SHA-256, без argon2: ссылка — это 32 байта случайности, перебирать там
+    /// нечего, и платить за каждую проверку тридцатью миллисекундами незачем.
+    /// </remarks>
+    public byte[] TokenHash { get; set; } = [];
+
+    /// <summary>Зачем выдана: <c>activation</c> или <c>reset</c>.</summary>
+    public string Purpose { get; set; } = Purposes.Activation;
+
+    public DateTimeOffset CreatedAt { get; set; }
+
+    /// <summary>До какого момента действует.</summary>
+    public DateTimeOffset ExpiresAt { get; set; }
+
+    /// <summary>
+    /// Когда ею воспользовались.
+    /// </summary>
+    /// <remarks>
+    /// Погашенная строка <b>не удаляется</b>: «ссылкой воспользовались» и «ссылки не было» —
+    /// разные ответы тому, кто разбирает происшествие.
+    /// </remarks>
+    public DateTimeOffset? UsedAt { get; set; }
+
+    /// <summary>Привязка короткого кода к вызову входа или сессии; открытого секрета здесь нет.</summary>
+    public string? Binding { get; set; }
+
+}
+
+/// <summary>Назначения ссылок.</summary>
+internal static class Purposes
+{
+    /// <summary>Активация по приглашению.</summary>
+    public const string Activation = "activation";
+
+    /// <summary>Сброс забытого пароля.</summary>
+    public const string Reset = "reset";
+
+    /// <summary>Расписка между вводом пароля и вводом кода второго фактора.</summary>
+    /// <remarks>
+    /// Пять минут и один раз. Она не даёт доступа сама по себе — только право предъявить
+    /// код; без неё пришлось бы просить пароль второй раз, а клиенту — держать его в памяти
+    /// между двумя запросами.
+    /// </remarks>
+    public const string TwoFactor = "two_factor";
+
+    /// <summary>Одноразовый код второго фактора, ушедший письмом.</summary>
+    /// <remarks>
+    /// ⚠ <b>Хранится там же, где ссылки, и по той же причине:</b> это одноразовое значение со
+    /// сроком и назначением, и заводить ради него вторую таблицу с теми же тремя свойствами
+    /// значило бы завести второе место, где их однажды реализуют по-другому.
+    ///
+    /// ⚠ <b>Прежний код гасится при выдаче нового.</b> Иначе два письма подряд дают два живых
+    /// кода, и перебор становится вдвое дешевле — а человек, запросивший код дважды, введёт тот,
+    /// что пришёл позже.
+    /// </remarks>
+    public const string LoginCode = "login_code";
+
+    /// <summary>Код письмом для переподтверждения личности перед опасным действием.</summary>
+    public const string StepUpCode = "step_up_code";
+
+    /// <summary>Все допустимые значения — для ограничения в базе.</summary>
+    public static readonly string[] All = [Activation, Reset, TwoFactor, LoginCode, StepUpCode];
+}

@@ -1,0 +1,103 @@
+<Project>
+
+  <!--
+    Центральное управление версиями пакетов: версия задаётся здесь один раз, в `.csproj`
+    остаётся только имя пакета без `Version=`.
+
+    Маски `*` не бывает: сборка перестаёт быть воспроизводимой, и «у меня работает»
+    становится буквальным утверждением про одну конкретную машину.
+
+    Версии и SPDX перенесены из EAMS вместе с кодом (сверены там с nuget.org; последняя
+    сверка — 2026-10-19). Обновляя — сверяйте заново, а не по памяти.
+  -->
+  <PropertyGroup>
+    <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+    <CentralPackageTransitivePinningEnabled>true</CentralPackageTransitivePinningEnabled>
+  </PropertyGroup>
+
+  <!-- ─── Журнал приложения ───────────────────────────────────────────────────────── -->
+  <ItemGroup>
+    <!-- Структурные логи с requestId в каждой строке. SPDX: Apache-2.0 -->
+    <PackageVersion Include="Serilog.AspNetCore" Version="10.0.0" />
+    <!-- Компактный JSON в stdout: без него .WriteTo.Console() пишет человекочитаемый текст.
+         SPDX: Apache-2.0 -->
+    <PackageVersion Include="Serilog.Formatting.Compact" Version="3.0.0" />
+    <!-- SPDX: Apache-2.0 -->
+    <PackageVersion Include="Serilog.Sinks.Console" Version="6.1.1" />
+  </ItemGroup>
+
+  <!-- ─── База ────────────────────────────────────────────────────────────────────── -->
+  <ItemGroup>
+    <!-- SPDX: PostgreSQL -->
+    <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.3" />
+    <!-- Нужен модулям: конфигурации сущностей живут рядом с ними, а не в хосте. SPDX: MIT -->
+    <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.11" />
+    <!--
+      Закреплён явно: драйвер Npgsql 10.0.3 тянет версию 10.0.4, и без закрепления в одной
+      сборке оказывались обе. Транзитивное закрепление работает только по объявленным.
+      SPDX: MIT
+    -->
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Relational" Version="10.0.11" />
+    <!-- Только хосту: инструмент миграций (`dotnet ef`). SPDX: MIT -->
+    <PackageVersion Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.11" />
+  </ItemGroup>
+
+  <!-- ─── Пароли и почта ──────────────────────────────────────────────────────────── -->
+  <ItemGroup>
+    <!--
+      argon2id паролей. В BCL его нет — единственная причина брать сторонний пакет для
+      паролей. AES-256-GCM брать не нужно: `System.Security.Cryptography.AesGcm` есть в
+      самой платформе. SPDX: MIT
+    -->
+    <PackageVersion Include="Konscious.Security.Cryptography.Argon2" Version="1.3.1" />
+
+    <!--
+      Отправка почты. `SmtpClient` из BCL объявлен устаревшим для нового кода, MailKit — то,
+      на что указывает сама документация .NET. SPDX: MIT
+    -->
+    <PackageVersion Include="MailKit" Version="4.17.0" />
+    <!-- Транзитивная зависимость MailKit (через MimeKit), закреплена явно: 10.0.0 попала под
+         GHSA-846f-f764-76mx (CVE-2026-84008, отказ в обслуживании, высокий уровень; исправлено
+         в 10.0.13), и восстановление отказывает само. SPDX: MIT -->
+    <PackageVersion Include="System.Security.Cryptography.Pkcs" Version="10.0.13" />
+  </ItemGroup>
+
+  <!-- ─── Контракт наружу ─────────────────────────────────────────────────────────── -->
+  <ItemGroup>
+    <!-- Документ OpenAPI в рантайме (только в разработке). SPDX: MIT -->
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.11" />
+  </ItemGroup>
+
+  <!-- ─── Тесты ───────────────────────────────────────────────────────────────────── -->
+  <ItemGroup>
+    <!-- xunit v3 на тестовой платформе (MTP). Проектам тестов нужен <OutputType>Exe</OutputType>.
+         SPDX: Apache-2.0 -->
+    <PackageVersion Include="xunit.v3" Version="4.0.0" />
+    <!-- SPDX: Apache-2.0 -->
+    <PackageVersion Include="xunit.runner.visualstudio" Version="4.0.0" />
+    <!--
+      Shouldly, а НЕ FluentAssertions: с версии 8 FluentAssertions ушёл с Apache-2.0 на
+      лицензию Xceed (платно для коммерческого использования). SPDX: BSD-3-Clause
+    -->
+    <PackageVersion Include="Shouldly" Version="4.3.0" />
+    <!-- Интеграционные тесты: WebApplicationFactory и настоящий PostgreSQL в контейнере.
+         SPDX: MIT -->
+    <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.11" />
+    <!-- SPDX: MIT -->
+    <PackageVersion Include="Testcontainers.PostgreSql" Version="4.14.0" />
+  </ItemGroup>
+
+  <!-- ─── Чего здесь нет намеренно ────────────────────────────────────────────────── -->
+  <!--
+    `AutoMapper` и `FluentAssertions` — не брать: оба сменили лицензию на платную для
+    коммерческого использования.
+
+    Redis не нужен: в EAMS он держал кэш прав и живые события, а здесь нет ни прав, ни
+    событий. Предел попыток входа живёт в процессе (`SignInAttempts`).
+
+    Рантаймовые возможности, которые НЕ требуют пакетов, — их часто ставят по привычке:
+    ограничение частоты (`AddRateLimiter`), проверки готовности, AES-256-GCM и HKDF
+    (`System.Security.Cryptography`).
+  -->
+
+</Project>

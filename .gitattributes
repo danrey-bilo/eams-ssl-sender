@@ -1,0 +1,4 @@
+# Репозиторий хранит LF; .editorconfig требует того же от `dotnet format`.
+* text=auto eol=lf
+*.sh text eol=lf
+*.png binary

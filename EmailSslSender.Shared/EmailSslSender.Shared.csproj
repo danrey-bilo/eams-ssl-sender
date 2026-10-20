@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <!--
+      EF Core — фреймворк, а не модуль: общий контекст живёт здесь, потому что
+      ссылаться на хост модули не могут, а по контексту на модуль означало бы
+      распределённую транзакцию внутри одного процесса. Разбор — в SenderDbContext.
+    -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <!--
+      Реляционный пакет — ради транзакций и стратегии выполнения (`Transactions.cs`).
+      ⚠ Это НЕ ссылка на провайдера: Npgsql здесь нет — «реляционная база» это уровень
+      абстракции EF, а не выбор базы.
+    -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Свои тесты видят нутро: крипто наружу публичным API не выставляется целиком -->
+    <InternalsVisibleTo Include="EmailSslSender.Shared.Tests" />
+  </ItemGroup>
+</Project>

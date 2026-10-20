@@ -1,0 +1,45 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- xunit v3 собирает тестовый проект в исполняемый файл; без этого он не запустится -->
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <!--
+      Запускать тесты новой тестовой платформой, а не внутренним раннером xunit. Без этого
+      `dotnet test` видит приложение, но не понимает его протокол и отвечает «запущено ноль
+      тестов» — при том что прямой запуск .exe показывает все тесты.
+    -->
+    <UseMicrosoftTestingPlatformRunner>true</UseMicrosoftTestingPlatformRunner>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio" />
+    <PackageReference Include="Shouldly" />
+    <!--
+      Настоящий PostgreSQL: половина того, что проверяет модуль, — поведение базы.
+      Частичный уникальный индекс по адресу, регистронезависимый citext, блокировка строк
+      при снятии последнего суперпользователя, условное обновление при гашении ссылки.
+      Ни одно из этого на подделке не проверить.
+    -->
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EmailSslSender.Modules.Identity\EmailSslSender.Modules.Identity.csproj" />
+    <!--
+      Ссылка на хост — ради МИГРАЦИЙ. Они живут там, потому что модуль не знает провайдера
+      базы, а тестовая схема обязана совпадать с боевой: собери её по модели, и расхождение
+      обнаружит пользователь, а не тест. Архитектурный сторож это разрешает — он проверяет
+      проекты модулей, а не их тесты.
+    -->
+    <ProjectReference Include="..\EmailSslSender.Api\EmailSslSender.Api.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <Using Include="Shouldly" />
+  </ItemGroup>
+
+</Project>

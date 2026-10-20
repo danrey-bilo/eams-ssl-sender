@@ -1,0 +1,90 @@
+# Боевой стек: API и PostgreSQL.
+#
+# Порядок первого запуска (подробно — README.md):
+#   ./scripts/gen-secrets.sh
+#   docker compose build
+#   docker compose run --rm api migrate
+#   docker compose run --rm api create-superadmin --email admin@example.com
+#   docker compose up -d
+#
+# ⚠ Наружу публикуется ТОЛЬКО 127.0.0.1:8001. TLS для клиентов — забота обратного прокси
+# (nginx, Caddy, Traefik) перед ним: кука обновления помечена Secure и по голому HTTP браузер её
+# не сохранит. Публиковать 8001 на все адреса без прокси — значит слать пароли открытым текстом.
+#
+# ⚠ У секретов НЕТ умолчаний: нет файла — нет старта. Файл, по которому поднимают систему, —
+# это инструкция, и она исполняется буквально; пароль-умолчание здесь стал бы паролем установки.
+name: email-ssl-sender
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  api:
+    image: email-ssl-sender-api
+    build:
+      context: .
+      dockerfile: EmailSslSender.Api/Dockerfile
+    restart: unless-stopped
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ASPNETCORE_HTTP_PORTS: "8001"
+      # ⚠ `GSS Encryption Mode=Disable`: Npgsql иначе пробует Kerberos, а в обрезанном образе
+      # библиотеки libgssapi нет — каждое подключение печатало бы ошибку загрузки.
+      ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=sender;Username=sender;Maximum Pool Size=40;GSS Encryption Mode=Disable"
+      SENDER_POSTGRES_PASSWORD_FILE: /run/secrets/sender_postgres_password
+      SENDER_MASTER_KEK_FILE: /run/secrets/sender_master_kek
+      # Сети обратного прокси, которому верим заголовок X-Forwarded-For. Пусто — не верим
+      # никому, и предел попыток входа считается по адресу прокси.
+      ForwardedHeaders__KnownNetworks: ${SENDER_TRUSTED_PROXY_NETWORKS:-}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp
+    secrets:
+      - sender_master_kek
+      - sender_postgres_password
+    ports:
+      - "127.0.0.1:8001:8001"
+    logging: *logging
+    healthcheck:
+      test: ["CMD", "dotnet", "EmailSslSender.Api.dll", "health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: sender
+      POSTGRES_USER: sender
+      POSTGRES_PASSWORD_FILE: /run/secrets/sender_postgres_password
+    secrets:
+      - sender_postgres_password
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    logging: *logging
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sender -d sender"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+secrets:
+  sender_master_kek:
+    file: ./secrets/sender_master_kek
+  sender_postgres_password:
+    file: ./secrets/sender_postgres_password
+
+volumes:
+  pgdata:

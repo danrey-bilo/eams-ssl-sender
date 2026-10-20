@@ -1,0 +1,18 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="EmailSslSender.Api/EmailSslSender.Api.csproj" />
+    <Project Path="EmailSslSender.Shared/EmailSslSender.Shared.csproj" />
+    <Project Path="EmailSslSender.Modules.Identity/EmailSslSender.Modules.Identity.csproj" />
+    <Project Path="EmailSslSender.Modules.Tokens/EmailSslSender.Modules.Tokens.csproj" />
+    <Project Path="EmailSslSender.Modules.Settings/EmailSslSender.Modules.Settings.csproj" />
+    <Project Path="EmailSslSender.Modules.Mail/EmailSslSender.Modules.Mail.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="EmailSslSender.Shared.Tests/EmailSslSender.Shared.Tests.csproj" />
+    <Project Path="EmailSslSender.Modules.Identity.Tests/EmailSslSender.Modules.Identity.Tests.csproj" />
+    <Project Path="EmailSslSender.Modules.Tokens.Tests/EmailSslSender.Modules.Tokens.Tests.csproj" />
+    <Project Path="EmailSslSender.Modules.Settings.Tests/EmailSslSender.Modules.Settings.Tests.csproj" />
+    <Project Path="EmailSslSender.Modules.Mail.Tests/EmailSslSender.Modules.Mail.Tests.csproj" />
+    <Project Path="EmailSslSender.IntegrationTests/EmailSslSender.IntegrationTests.csproj" />
+  </Folder>
+</Solution>

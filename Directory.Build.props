@@ -1,0 +1,56 @@
+<Project>
+
+  <!--
+    Общие свойства всех проектов решения: одни и те же строки не копируются в каждый
+    `.csproj` и однажды не расходятся между ними.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!--
+      Предупреждение — ошибка. Иначе они копятся сотнями, и флаг потом не включают вовсе.
+    -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+    <!--
+      XML-комментарии нужны не для красоты: с .NET 10 генератор OpenAPI забирает их в
+      документ, и описания эндпоинтов приезжают клиентам без второй записи руками.
+    -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <!--
+      CS1591 — «нет XML-комментария у публичного типа». Вместе с TreatWarningsAsErrors
+      это означало бы, что сборка падает на каждом типе без `///`. XML-комментарии здесь
+      нужны генератору OpenAPI, а не как повинность: где они полезны, там и пишутся.
+      Русские комментарии живут обычными `//` и к этому предупреждению отношения не имеют.
+    -->
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+
+    <!--
+      ⚠ ⚠ ПРОВЕРКА УЯЗВИМОСТЕЙ ЗАВИСИМОСТЕЙ объявлена явно, а не взята умолчаниями SDK:
+      умолчания плавают (`NuGetAuditMode` в .NET 8 был `direct`, с .NET 9 стал `all`), и
+      проверка, живущая на умолчании, слабеет молча при обновлении SDK. Восстановление
+      отказывает на высоком и критическом уровне, включая транзитивные пакеты.
+    -->
+    <NuGetAudit>true</NuGetAudit>
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <NuGetAuditLevel>low</NuGetAuditLevel>
+
+    <!--
+      NU1901 (низкая) и NU1902 (средняя) остаются ПРЕДУПРЕЖДЕНИЯМИ: низкая уязвимость в
+      глубоком транзитивном пакете без исправленной версии иначе останавливает всю работу, и
+      единственным быстрым выходом оказывается `<NuGetAudit>false</NuGetAudit>` — то есть
+      потеря защиты целиком.
+    -->
+    <WarningsNotAsErrors>$(WarningsNotAsErrors);NU1901;NU1902</WarningsNotAsErrors>
+
+    <Product>Email SSL Sender</Product>
+    <Company>danrey</Company>
+    <Version>0.1.0</Version>
+  </PropertyGroup>
+
+</Project>

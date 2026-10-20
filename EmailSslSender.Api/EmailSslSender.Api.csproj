@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <RootNamespace>EmailSslSender.Api</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+    <!-- Только для `dotnet ef migrations add`: в выпуск не уезжает. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <PackageReference Include="Serilog.AspNetCore" />
+    <PackageReference Include="Serilog.Formatting.Compact" />
+    <PackageReference Include="Serilog.Sinks.Console" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\EmailSslSender.Modules.Identity\EmailSslSender.Modules.Identity.csproj" />
+    <ProjectReference Include="..\EmailSslSender.Modules.Tokens\EmailSslSender.Modules.Tokens.csproj" />
+    <ProjectReference Include="..\EmailSslSender.Modules.Settings\EmailSslSender.Modules.Settings.csproj" />
+    <ProjectReference Include="..\EmailSslSender.Modules.Mail\EmailSslSender.Modules.Mail.csproj" />
+    <ProjectReference Include="..\EmailSslSender.Shared\EmailSslSender.Shared.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Свои интеграционные тесты видят нутро хоста — ровно так же, как тесты модуля видят
+      нутро своего модуля. Промежуточные слои конвейера публичными от этого становиться не
+      должны: публичный тип хоста нельзя объяснить ничем, кроме удобства теста.
+    -->
+    <InternalsVisibleTo Include="EmailSslSender.IntegrationTests" />
+    <!-- Тестам модулей нужен DatabaseStartup, чтобы назвать сборку миграций -->
+    <InternalsVisibleTo Include="EmailSslSender.Modules.Identity.Tests" />
+    <InternalsVisibleTo Include="EmailSslSender.Modules.Tokens.Tests" />
+  </ItemGroup>
+
+</Project>

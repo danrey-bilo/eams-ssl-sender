@@ -1,0 +1,82 @@
+EAMS ssl sender License
+Version 1.0 — October 2026
+
+Required Notice: Copyright (c) 2026 danrey (https://github.com/danrey-bilo/eams-ssl-sender)
+
+Free to use. Source code may be viewed, but not copied, modified or redistributed.
+
+1. Definitions
+
+"Software" means EAMS ssl sender: the source code in this repository, the official
+builds and the documentation.
+
+"Official builds" means the container images and release archives that the licensor
+publishes on the Releases page of this repository and in its GitHub Container Registry.
+
+"You" means the individual or the organization that uses the Software, and "your
+organization" includes the people working for it.
+
+2. Free use
+
+The licensor grants you a worldwide, non-exclusive, royalty-free, non-transferable
+license to install, run and use the official builds for any purpose, including
+commercial use within your organization, on any number of servers, free of charge.
+
+You may copy the official builds and keep backups of them within your organization as
+needed to install, run and restore the Software. You may copy and adapt the deployment
+files shipped in the official release archives (such as docker-compose.yml, .env.example
+and the scripts) only to deploy, configure and operate the Software.
+
+3. Viewing the source code
+
+You may view the source code in this repository, including through GitHub, to evaluate
+the Software, review its security and understand how it works.
+
+4. Restrictions
+
+Unless the licensor gives you prior written permission, you may not:
+
+a. copy or reproduce the source code, in whole or in part, in any form, except for the
+   temporary copies your browser or GitHub makes so that you can view it;
+b. modify, translate or adapt the source code, create derivative works based on it, or
+   build and run modified versions of the Software;
+c. publish, distribute, sell, rent, lend, sublicense or otherwise make the source code,
+   the official builds or modified versions available to third parties;
+d. use the source code, in whole or in part, to develop, train or improve other software,
+   services or models;
+e. remove, alter or hide this license, the Required Notice or any copyright notices.
+
+5. Forks
+
+GitHub's Terms of Service allow users to view and fork public repositories on GitHub.
+A fork gives you no rights beyond this license: you may not modify, build, run or
+distribute the code from a fork.
+
+6. Third-party components
+
+The official builds contain open-source components from third parties. Those components
+remain under their own licenses, and nothing in this license limits your rights under
+those licenses.
+
+7. Contributions
+
+The licensor does not accept code contributions. Bug reports and suggestions through
+GitHub Issues are welcome.
+
+8. Termination
+
+If you break this license, your license ends automatically. If you stop the violation
+within 30 days after the licensor notifies you of it, your license is reinstated, but
+only once.
+
+9. No warranty and no liability
+
+The Software is provided "as is", without warranty of any kind, express or implied,
+including the warranties of merchantability, fitness for a particular purpose and
+non-infringement. In no event shall the licensor be liable for any claim, damages or
+other liability arising from, out of or in connection with the Software or its use.
+
+10. Language
+
+A Russian translation of this license is provided in LICENSE.ru.md for convenience. If
+the two texts differ, this English text prevails.

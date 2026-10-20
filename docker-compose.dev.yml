@@ -1,0 +1,36 @@
+# Разработческий стек: только зависимости. Само API запускается `dotnet run` (README.md,
+# раздел «Разработка»).
+#
+#   docker compose -f docker-compose.dev.yml up -d
+#
+# - PostgreSQL на 127.0.0.1:5432, пароль `dev` — ЭТО ФАЙЛ РАЗРАБОТКИ, и пароль в нём явный, а не
+#   умолчание: боевой docker-compose.yml без файла секрета не стартует вовсе.
+# - Mailpit — ловушка писем: SMTP на 127.0.0.1:1025 без TLS, веб-интерфейс на
+#   http://127.0.0.1:8025. Всё, что отправит приложение, видно там, и никуда дальше не уходит.
+name: email-ssl-sender-dev
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: sender
+      POSTGRES_USER: sender
+      POSTGRES_PASSWORD: dev
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata-dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sender -d sender"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  mailpit:
+    image: axllent/mailpit:v1.27
+    ports:
+      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:8025:8025"
+
+volumes:
+  pgdata-dev:

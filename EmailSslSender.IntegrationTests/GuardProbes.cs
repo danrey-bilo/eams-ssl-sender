@@ -1,0 +1,50 @@
+using EmailSslSender.Shared.Contracts.Authz;
+using Microsoft.AspNetCore.Mvc;
+
+namespace EmailSslSender.IntegrationTests;
+
+/// <summary>
+/// Эндпоинт, которому «забыли» объявить право.
+/// </summary>
+/// <remarks>
+/// Существует ровно затем, чтобы проверить самое важное свойство конвейера прав: <b>такой
+/// эндпоинт закрыт</b>. Проверить это на настоящем контроллере нельзя — у всех настоящих
+/// право объявлено, и в этом весь смысл.
+///
+/// Архитектурный тест ловит ту же ошибку раньше, но он смотрит только на сборки модулей.
+/// Здесь проверяется вторая линия — живой запрос.
+/// </remarks>
+[ApiController]
+[Route("api/test")]
+public sealed class GuardProbeController : ControllerBase
+{
+    /// <summary>Права не объявлены нарочно. Ответ обязан быть отказом.</summary>
+    [HttpGet("unguarded")]
+    public string Unguarded() => "сюда попадать нельзя";
+
+    /// <summary>А этот открыт явно — и обязан отвечать.</summary>
+    [HttpGet("public")]
+    [PublicEndpoint("зонд: проверяет, что явная открытость работает")]
+    public string Open() => "открыто намеренно";
+}
+
+/// <summary>
+/// Внутренний контроллер <b>чужой</b> сборки.
+/// </summary>
+/// <remarks>
+/// ⚠ Проверяет, что <c>InternalControllerFeatureProvider</c> журнала поднимает внутренние
+/// контроллеры <b>только своей</b> сборки. Провайдер попадает в общий список и его
+/// спрашивают про каждый тип каждой подключённой части — без ограничения он сделал бы
+/// маршрутизируемым любой непубличный класс с именем на «Controller» во всём приложении,
+/// включая вспомогательные классы соседей, написанные без объявления прав.
+///
+/// Ожидаемый ответ на этот маршрут — 404: его не должно существовать.
+/// </remarks>
+[ApiController]
+[Route("api/test")]
+internal sealed class ForeignInternalController : ControllerBase
+{
+    [HttpGet("foreign")]
+    [PublicEndpoint("зонд: даже открытым он не должен быть найден маршрутизацией")]
+    public string Foreign() => "этого маршрута быть не должно";
+}
