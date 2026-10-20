@@ -20,7 +20,7 @@ internal enum DeliveryReason
 }
 
 /// <summary>
-/// Письмо с сертификатом: вид, шаблоны на трёх языках, подписи причин.
+/// Письмо с сертификатом: вид и шаблоны на трёх языках.
 /// </summary>
 /// <remarks>
 /// ⚠ ⚠ <b>Вид снят с предела <c>mail.rate_per_hour</c></b> (<see cref="UnthrottledKinds"/>). Предел
@@ -28,9 +28,8 @@ internal enum DeliveryReason
 /// предел пять писем в час на адрес оставил бы сотрудника на шести подписках без шестого
 /// сертификата.
 ///
-/// ⚠ <b>Письмо короткое нарочно</b> (просьба владельца): имя, срок, причина, файлы. Просьба не
-/// пересылать — только когда во вложении действительно есть закрытый ключ или его пароль
-/// (<see cref="Warning"/>); безусловное предупреждение читать перестают.
+/// ⚠ <b>Три строки, и это решение владельца</b>: имя, срок, файлы. Ни причины отправки, ни
+/// предупреждений — получателю нужны файлы, а не пояснения.
 /// </remarks>
 internal sealed class CertificateMail : IMailTemplateProvider
 {
@@ -45,47 +44,24 @@ internal sealed class CertificateMail : IMailTemplateProvider
             "Сертификат {common_name}",
             "Сертификат: {common_name}\n"
             + "Действует до: {expires_on}\n"
-            + "Причина: {reason}\n"
-            + "Файлы: {files}\n"
-            + "{warning}"),
+            + "Файлы: {files}\n"),
         new(
             Kind,
             MailLocales.Uk,
             "Сертифікат {common_name}",
             "Сертифікат: {common_name}\n"
             + "Дійсний до: {expires_on}\n"
-            + "Причина: {reason}\n"
-            + "Файли: {files}\n"
-            + "{warning}"),
+            + "Файли: {files}\n"),
         new(
             Kind,
             MailLocales.En,
             "Certificate {common_name}",
             "Certificate: {common_name}\n"
             + "Valid until: {expires_on}\n"
-            + "Reason: {reason}\n"
-            + "Files: {files}\n"
-            + "{warning}"),
+            + "Files: {files}\n"),
     ];
 
     public IReadOnlyCollection<string> UnthrottledKinds => [Kind];
-
-    /// <summary>Причина словами на языке письма.</summary>
-    public static string Reason(DeliveryReason reason, string locale) => (locale, reason) switch
-    {
-        (MailLocales.Ru, DeliveryReason.Initial) => "новая подписка",
-        (MailLocales.Ru, DeliveryReason.Changed) => "сертификат обновлён",
-        (MailLocales.Ru, DeliveryReason.Scheduled) => "по расписанию",
-        (MailLocales.Ru, DeliveryReason.Manual) => "вручную",
-        (MailLocales.Uk, DeliveryReason.Initial) => "нова підписка",
-        (MailLocales.Uk, DeliveryReason.Changed) => "сертифікат оновлено",
-        (MailLocales.Uk, DeliveryReason.Scheduled) => "за розкладом",
-        (MailLocales.Uk, DeliveryReason.Manual) => "вручну",
-        (_, DeliveryReason.Initial) => "new subscription",
-        (_, DeliveryReason.Changed) => "certificate renewed",
-        (_, DeliveryReason.Scheduled) => "scheduled",
-        _ => "sent manually",
-    };
 
     /// <summary>Срок действия в привычном языку виде; неизвестный — прочерк.</summary>
     public static string ExpiresOn(DateOnly? date, string locale) => date switch
@@ -102,12 +78,4 @@ internal sealed class CertificateMail : IMailTemplateProvider
     /// сразу после отправки.
     /// </remarks>
     public const string PassphraseFile = "passphrase.txt";
-
-    /// <summary>Просьба не пересылать письмо — или пусто, если секретов во вложении нет.</summary>
-    public static string Warning(bool secret, string locale) => !secret ? string.Empty : locale switch
-    {
-        MailLocales.Ru => "\nНе пересылайте письмо: в нём закрытый ключ.\n",
-        MailLocales.Uk => "\nНе пересилайте лист: у ньому закритий ключ.\n",
-        _ => "\nDo not forward this letter: it contains a private key.\n",
-    };
 }

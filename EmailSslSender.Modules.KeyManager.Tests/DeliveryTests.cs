@@ -59,9 +59,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         письмо.Kind.ShouldBe(CertificateMail.Kind);
         письмо.Values["serial_number"].ShouldBe("aa01");
         письмо.Values["expires_on"].ShouldBe("01.01.2027");
-        письмо.Values["reason"].ShouldBe(CertificateMail.Reason(DeliveryReason.Initial, MailLocales.Ru));
         письмо.Values["files"].ShouldBe("site.example.com.pem, site.example.com.key");
-        письмо.Values["warning"].ShouldContain("закрытый ключ", Case.Sensitive, "во вложении KEY");
         письмо.Attachments.Select(ф => ф.FileName).ShouldBe(["site.example.com.pem", "site.example.com.key"]);
         Encoding.ASCII.GetString(письмо.Attachments[1].Content).ShouldBe("KEY:aa01");
 
@@ -106,7 +104,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
 
         база.Почта.Письма.Count.ShouldBe(1);
         база.Почта.Письма[0].Values["serial_number"].ShouldBe("bb02");
-        база.Почта.Письма[0].Values["reason"].ShouldBe(CertificateMail.Reason(DeliveryReason.Changed, MailLocales.Ru));
+        база.Аудит.Записи.Last(з => з.Action == KeyManagerActions.CertificateSent).Reason.ShouldBe("changed");
         (await Прочитать(id)).LastSentSerial.ShouldBe("bb02");
     }
 
@@ -212,8 +210,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         база.Часы.Вперёд(TimeSpan.FromDays(1));
         (await Опросить()).Sent.ShouldBe(1, "неделя прошла");
 
-        база.Почта.Письма[^1].Values["reason"]
-            .ShouldBe(CertificateMail.Reason(DeliveryReason.Scheduled, MailLocales.Ru));
+        база.Аудит.Записи.Last(з => з.Action == KeyManagerActions.CertificateSent).Reason.ShouldBe("scheduled");
     }
 
     [Fact]
@@ -384,17 +381,6 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
 
         var b = база.Почта.Письма.Single(п => п.To == "b@example.com");
         b.Attachments.ShouldNotContain(ф => ф.FileName == CertificateMail.PassphraseFile);
-    }
-
-    [Fact]
-    public async Task Без_ключа_во_вложении_нет_и_просьбы_не_пересылать()
-    {
-        База("site.example.com", "aa01", Год);
-        await Подписка("site.example.com", ["a@example.com"], formats: [CertificateFormats.Crt]);
-
-        await Опросить();
-
-        база.Почта.Письма.Single().Values["warning"].ShouldBeEmpty();
     }
 
     [Theory]

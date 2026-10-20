@@ -253,6 +253,20 @@ public sealed class AttachmentTests(MailDatabase база) : IAsyncLifetime
         сообщение.Body.ShouldBeOfType<TextPart>();
     }
 
+    [Fact]
+    public void Строки_тела_уходят_с_CRLF_а_не_голым_LF()
+    {
+        // Голый LF внутри base64 почтовые клиенты не считают переводом строки и склеивают письмо.
+        var сообщение = SmtpSession.СобратьДляПроверки(
+            Политика(), new OutgoingMail("кому@example.com", "тема", "Сертификат: a\nДействует до: b\r\nФайлы: c\n"));
+
+        using var байты = new MemoryStream();
+        сообщение.Body.ShouldBeOfType<TextPart>().Content.ShouldNotBeNull().DecodeTo(байты, Ct);
+
+        System.Text.Encoding.UTF8.GetString(байты.ToArray())
+            .ShouldBe("Сертификат: a\r\nДействует до: b\r\nФайлы: c\r\n");
+    }
+
     private static MailPolicy Политика() => new(
         Enabled: true,
         Host: "smtp.example.com",

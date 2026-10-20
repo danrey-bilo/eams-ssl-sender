@@ -235,26 +235,18 @@ internal sealed class CertificateDelivery(
                 CertificateMail.PassphraseFile, "text/plain; charset=utf-8", Encoding.UTF8.GetBytes(пароль + Environment.NewLine)));
         }
 
-        // ⚠ Просьба не пересылать — только когда секрет действительно во вложении: тип с ключом
-        // (KEY, PKCS, JKS), PEM, в который Key Manager Plus положил ключ, или пароль ключа.
-        var секрет = пароль is not null
-            || подписка.Formats.Any(CertificateFormats.CarriesPrivateKey)
-            || вложения.Any(ф => ф.Content.AsSpan().IndexOf("PRIVATE KEY"u8) >= 0);
-
         var номера = new List<Guid>(подписка.Recipients.Length);
 
         foreach (var адрес in подписка.Recipients)
         {
-            // ⚠ Серийный номер в шаблон не входит (письмо короткое), но едет в значениях: по нему
-            // видно, какой выпуск ушёл.
+            // ⚠ Серийный номер в шаблон не входит (письмо в три строки), но едет в значениях: по
+            // нему видно, какой выпуск ушёл.
             var значения = new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["common_name"] = текущий.CommonName,
                 ["serial_number"] = текущий.SerialNumber,
                 ["expires_on"] = CertificateMail.ExpiresOn(текущий.ExpiresOn, подписка.Locale),
-                ["reason"] = CertificateMail.Reason(причина.Value, подписка.Locale),
                 ["files"] = string.Join(", ", вложения.Select(ф => ф.FileName)),
-                ["warning"] = CertificateMail.Warning(секрет, подписка.Locale),
             };
 
             var итог = await mail.EnqueueAsync(

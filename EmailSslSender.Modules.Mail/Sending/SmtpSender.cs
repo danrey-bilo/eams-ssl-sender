@@ -274,9 +274,12 @@ internal sealed class SmtpSession(MailPolicy policy, string host, SystemSecrets 
         // RFC 3834: без этого автоответчик получателя отвечает нашему ящику.
         сообщение.Headers.Add("Auto-Submitted", "auto-generated");
 
+        // ⚠ ⚠ Переводы строк — CRLF ДО кодирования. Base64 везёт байты как есть, и голый LF из
+        // шаблона доходил до получателя нетронутым: Outlook и веб-почта склеивали строки письма
+        // в одну («mdmtst.example.comДействует до…»). RFC 2046 требует для text/* именно CRLF.
         var текст = new TextPart(TextFormat.Plain)
         {
-            Text = mail.Body,
+            Text = mail.Body.ReplaceLineEndings("\r\n"),
             ContentTransferEncoding = ContentEncoding.Base64,
         };
 
