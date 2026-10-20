@@ -1,6 +1,5 @@
 using System.Text.Json.Serialization;
 using EmailSslSender.Modules.Tokens.Domain;
-using EmailSslSender.Modules.Tokens.Storage;
 using EmailSslSender.Modules.Tokens.Tokens;
 using EmailSslSender.Shared.Contracts.Authz;
 using EmailSslSender.Shared.Contracts.Tokens;

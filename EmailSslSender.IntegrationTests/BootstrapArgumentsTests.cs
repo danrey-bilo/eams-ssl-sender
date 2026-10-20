@@ -16,7 +16,6 @@ public sealed class BootstrapArgumentsTests
     {
         var args = new[] { command, "--email", "admin@example.com" };
         Bootstrap.IsCommand(args).ShouldBeTrue();
-        Bootstrap.NeedsDatabase(args).ShouldBeTrue();
         Should.NotThrow(() => Bootstrap.ValidateSuperuserArguments(args));
     }
 

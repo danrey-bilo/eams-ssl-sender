@@ -27,7 +27,7 @@ jobs:
     steps:
       # ⚠ Действия закреплены хешем коммита, а не тегом: тег можно переставить, а у задачи есть
       # право писать релиз и образ. Токен в .git/config не остаётся — он попал бы в контекст сборки.
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -41,16 +41,16 @@ jobs:
       # Тесты не гоняются здесь: им нужен Docker для PostgreSQL (Testcontainers), и релиз
       # тегируется с проверенного main. Сборка образа сама проверяет компиляцию и типы панели.
 
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - id: meta
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ steps.v.outputs.image }}
           tags: |
@@ -58,13 +58,16 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
 
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
           context: .
           file: EmailSslSender.Api/Dockerfile
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # Версия сборки — из тега: её пишет журнал при старте (sender_started).
+          build-args: |
+            VERSION=${{ steps.v.outputs.version }}
 
       - name: Файлы релиза
         env:
@@ -94,8 +97,18 @@ jobs:
           chmod +x cli/email-ssl-sender/scripts/*.sh
           (cd cli && zip -qr "../email-ssl-sender-cli-$TAG.zip" email-ssl-sender)
 
-          sed -e "s|{TAG}|$TAG|g" -e "s|{VERSION}|$VERSION|g" -e "s|{IMAGE}|$IMAGE|g" \
-            -e "s|{REPOSITORY}|$GITHUB_REPOSITORY|g" .github/release-notes.md > notes.md
+          # Страница релиза: «Что нового» — раздел этой версии из CHANGELOG.md, затем установка.
+          awk -v v="$VERSION" '/^## / { show = ($0 == "## " v || index($0, "## " v " ") == 1); next } show' \
+            CHANGELOG.md | sed '/./,$!d' > changes.md
+          {
+            if [ -s changes.md ]; then
+              printf '## Что нового\n\n'
+              cat changes.md
+              printf '\n'
+            fi
+            sed -e "s|{TAG}|$TAG|g" -e "s|{VERSION}|$VERSION|g" -e "s|{IMAGE}|$IMAGE|g" \
+              -e "s|{REPOSITORY}|$GITHUB_REPOSITORY|g" .github/release-notes.md
+          } > notes.md
 
           sha256sum "$PKG.zip" "email-ssl-sender-cli-$TAG.zip" > SHA256SUMS
 

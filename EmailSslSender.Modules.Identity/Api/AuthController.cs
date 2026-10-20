@@ -2,7 +2,6 @@ using EmailSslSender.Shared.Data;
 using EmailSslSender.Shared.Contracts.Tokens;
 using System.ComponentModel.DataAnnotations;
 using System.Text.Json.Serialization;
-using EmailSslSender.Modules.Identity.Storage;
 using EmailSslSender.Modules.Identity.Users;
 using EmailSslSender.Shared.Contracts.Authz;
 using EmailSslSender.Shared.Errors;
@@ -232,7 +231,7 @@ internal sealed class AuthController(
     /// </summary>
     /// <remarks>
     /// Открыт по существу: пришедший сюда ещё не вошёл, а пропуск — расписка, выданная в
-    /// ответе на пароль. Принимается и код из приложения, и код восстановления.
+    /// ответе на пароль. Принимается код из приложения или из письма — какой, решает расписка.
     /// </remarks>
     [HttpPost("two-factor")]
     [PublicEndpoint("вход не завершён: пропуск — расписка, выданная в обмен на пароль")]

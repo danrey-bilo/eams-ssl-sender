@@ -20,7 +20,6 @@ using EmailSslSender.Shared.Data;
 using EmailSslSender.Shared.Errors;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.HttpOverrides;
-using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Serilog;
@@ -207,6 +206,9 @@ app.MapControllers();
 // ⚠ Схема накатывается командой `migrate`, а не стартом: иначе `docker compose up` и есть
 // миграция, и копию базы до неё снять негде. Отставшая схема — отказ стартовать.
 await app.RequireCurrentSchemaAsync();
+
+// Версия в журнале: по ней видно, что обновление стека действительно подняло новый образ.
+app.Logger.LogInformation("sender_starting {Version}", Bootstrap.InstallationVersion(typeof(Program).Assembly));
 
 await app.RunAsync();
 

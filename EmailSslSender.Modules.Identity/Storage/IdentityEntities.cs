@@ -75,14 +75,12 @@ internal sealed class IdentityEntities : IEntityConfigurationProvider
 
         model.Entity<IdentityToken>(token =>
         {
-            // Ограничение на назначение — в базе, а не только в коде: строка с чужим
-            // назначением никогда не найдётся запросом и будет жить незамеченной.
+            // ⚠ Список назначений в БАЗЕ, а не только в коде: строка с чужим назначением никогда
+            // не найдётся запросом и будет жить незамеченной. Строится из Purposes.All — новое
+            // назначение не разойдётся с ограничением (разбор у TwoFactorTests).
             token.ToTable(TokensTable, table => table.HasCheckConstraint(
-                // ⚠ Список назначений в БАЗЕ, а не только в коде: строка с чужим назначением
-                // никогда не найдётся запросом и будет жить незамеченной. `two_factor` —
-                // короткая расписка между вводом пароля и вводом кода.
                 "ck_identity_tokens_purpose",
-                "purpose IN ('activation', 'reset', 'two_factor', 'login_code', 'step_up_code')"));
+                $"purpose IN ({string.Join(", ", Purposes.All.Select(p => $"'{p}'"))})"));
 
             token.HasKey(row => row.Id).HasName("pk_identity_tokens");
 

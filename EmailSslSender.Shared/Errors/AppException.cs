@@ -48,14 +48,6 @@ public class AppException : Exception
     // Не «для удобства»: одинаковая беда должна выходить наружу одинаково, а свободное
     // создание исключения на каждом вызове однажды даст три разных статуса на один смысл.
 
-    /// <summary>Прав не хватает.</summary>
-    /// <remarks>
-    /// Причина отказа наружу <b>не уходит</b> — она пишется в журнал. «Нет права
-    /// credential.reveal на хранилище X» рассказывает о существовании хранилища X.
-    /// </remarks>
-    public static AppException PermissionDenied(string message = "Недостаточно прав") =>
-        new(ErrorCodes.PermissionDenied, message, HttpStatusCode.Forbidden);
-
     /// <summary>Не найдено — или найдено, но показывать нельзя.</summary>
     public static AppException NotFound(string message = "Не найдено") =>
         new(ErrorCodes.NotFound, message, HttpStatusCode.NotFound);

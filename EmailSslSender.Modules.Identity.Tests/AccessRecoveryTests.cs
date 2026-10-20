@@ -292,7 +292,5 @@ public sealed class AccessRecoveryTests(IdentityDatabase database) : IAsyncLifet
     private sealed class Заголовком(string access) : IIdentityRequest
     {
         public string? Header(string name) => name == "Authorization" ? $"Bearer {access}" : null;
-
-        public string? Cookie(string name) => null;
     }
 }

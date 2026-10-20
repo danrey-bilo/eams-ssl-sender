@@ -29,7 +29,7 @@ internal sealed class RequestCurrentUser : ICurrentUser
     /// </summary>
     /// <remarks>
     /// ⚠ Умолчание здесь безопасно ровно потому, что до привязки <see cref="Id"/> равен
-    /// <c>null</c>: неаутентифицированный запрос не проходит ни одной проверки прав, и
+    /// <c>null</c>: неаутентифицированный запрос не проходит фильтра входа, и
     /// вопрос «а ты человек?» к нему не задаётся вовсе.
     /// </remarks>
     public AuditActorType ActorType { get; private set; } = AuditActorType.User;
@@ -79,8 +79,8 @@ internal sealed class RequestCurrentUser : ICurrentUser
 /// следующего» — и любая кончившаяся сессия выглядела бы просто как отсутствие входа.
 ///
 /// ⚠ Стоит <b>после</b> контекста журнала и <b>до</b> контроллеров. Личность дописывается в
-/// уже собранный контекст (адрес и агент известны с первой строки конвейера), а проверка
-/// прав спрашивает <see cref="ICurrentUser"/> уже заполненным.
+/// уже собранный контекст (адрес и агент известны с первой строки конвейера), а фильтр
+/// входа спрашивает <see cref="ICurrentUser"/> уже заполненным.
 ///
 /// Реализовано как <c>IMiddleware</c>, а не по соглашению: тогда службы с областью запроса
 /// приходят конструктором законно. Обычному middleware их пришлось бы принимать параметром
@@ -128,14 +128,11 @@ internal sealed class CurrentUserMiddleware(
 
 /// <summary>То немногое из запроса, что видит распознаватель.</summary>
 /// <remarks>
-/// Заголовки и куки — и ничего больше. Ни тела, ни маршрута, ни ответа: распознаватель
+/// Заголовки — и ничего больше. Ни кук, ни тела, ни маршрута, ни ответа: распознаватель
 /// отвечает на вопрос «кто это», и всё остальное ему для этого не нужно.
 /// </remarks>
 internal sealed class HttpIdentityRequest(HttpContext context) : IIdentityRequest
 {
     public string? Header(string name) =>
         context.Request.Headers.TryGetValue(name, out var values) ? values.FirstOrDefault() : null;
-
-    public string? Cookie(string name) =>
-        context.Request.Cookies.TryGetValue(name, out var value) ? value : null;
 }

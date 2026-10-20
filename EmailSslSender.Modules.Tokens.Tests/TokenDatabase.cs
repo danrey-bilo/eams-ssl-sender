@@ -10,7 +10,6 @@ using EmailSslSender.Shared.Contracts.Settings;
 using EmailSslSender.Shared.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Testcontainers.PostgreSql;
 
 namespace EmailSslSender.Modules.Tokens.Tests;

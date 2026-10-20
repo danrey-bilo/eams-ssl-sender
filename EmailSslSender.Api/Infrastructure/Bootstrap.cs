@@ -131,7 +131,7 @@ internal static class Bootstrap
                 return 0;
             }
 
-            // Тело готовности называет ИМЕННО ту проверку, что не сошлась (база, кэш, замок);
+            // Тело готовности называет ИМЕННО ту проверку, что не сошлась (сейчас она одна — база);
             // без него в журнале контейнера осталось бы «unhealthy» без причины.
             await Console.Error.WriteLineAsync(
                 $"{Health}: /api/ready ответил {(int)ответ.StatusCode} — "
@@ -178,18 +178,6 @@ internal static class Bootstrap
         args.Length > 0
         && args[0] is CreateSuperadmin or SetSuperadminPassword or ResetSuperadminTwoFactor or ResetAccess
             or RewrapKeys or ExportOpenApi or Migrate;
-
-    /// <summary>
-    /// Команда, которой база не нужна.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Заводить первую учётную запись и перекладывать обёртки без базы нельзя, а выгружать
-    /// контракт — можно и <b>нужно</b>: иначе перевыпуск документа потребовал бы поднятого
-    /// PostgreSQL, и в CI он стал бы недоступен ровно там, где его сверяют.
-    /// </remarks>
-    public static bool NeedsDatabase(string[] args) =>
-        args[0] is not ExportOpenApi;
-
 
     /// <summary>Проверить параметры команд суперпользователя до чтения пароля.</summary>
     /// <remarks>

@@ -53,7 +53,7 @@
 ## Обновление
 
 1. **Images → Import** — образ новой версии.
-2. В переменных стека — новый `SENDER_IMAGE` (например `ghcr.io/danrey-bilo/email_ssl_sender:1.3.0`).
+2. В переменных стека — новый `SENDER_IMAGE` (например `ghcr.io/danrey-bilo/email_ssl_sender:X.Y.Z`).
 3. **Update the stack**. Миграции выполнятся сами (служба `migrate`).
 
 Перед обновлением снимите копию базы (ниже).

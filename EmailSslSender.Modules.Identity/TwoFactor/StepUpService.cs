@@ -7,7 +7,6 @@ using EmailSslSender.Shared.Contracts.Tokens;
 using EmailSslSender.Shared.Data;
 using EmailSslSender.Shared.Errors;
 using EmailSslSender.Modules.Identity.Contracts;
-using EmailSslSender.Modules.Identity.Domain;
 
 namespace EmailSslSender.Modules.Identity.TwoFactor;
 
@@ -65,7 +64,7 @@ internal sealed class StepUpService(
     /// блокировку</b> (ревью 2026-09-15, S2, stepup-1). До этого переподтверждение было
     /// единственной дверью с кодом без счёта: держатель угнанной сессии перебирал шесть цифр
     /// (окно ±1 шаг — три годных кода на миллион) со скоростью сети и за минуты получал отметку,
-    /// открывающую записи с <c>require_totp</c>. Теперь — <c>auth.lockout_threshold</c> попыток на
+    /// открывающую выгрузку ключей и правку доступа. Теперь — <c>auth.lockout_threshold</c> попыток на
     /// <c>auth.lockout_minutes</c>. Цена названа у <see cref="LoginFailures"/>.
     ///
     /// ⚠ <b>Проверка кода и засчёт неудачи — ВНЕ транзакции.</b> Отказ, брошенный внутри неё,

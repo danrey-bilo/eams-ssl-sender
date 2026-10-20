@@ -6,12 +6,7 @@ using System.Text.Json.Nodes;
 using EmailSslSender.Shared.Errors;
 using Microsoft.EntityFrameworkCore;
 using EmailSslSender.Shared.Data;
-using EmailSslSender.Api.Infrastructure;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
-using Microsoft.AspNetCore.Mvc.Testing;
 
 namespace EmailSslSender.IntegrationTests;
 

@@ -2,8 +2,6 @@ using EmailSslSender.Modules.Identity.Settings;
 using EmailSslSender.Modules.Identity.Contracts;
 using EmailSslSender.Modules.Identity.Domain;
 using EmailSslSender.Modules.Identity.Naming;
-using EmailSslSender.Modules.Identity.Storage;
-using EmailSslSender.Modules.Identity.Users;
 using EmailSslSender.Shared.Contracts.Audit;
 using EmailSslSender.Shared.Contracts.Settings;
 using EmailSslSender.Shared.Data;

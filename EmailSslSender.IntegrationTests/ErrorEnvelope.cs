@@ -96,13 +96,14 @@ public sealed class ErrorEnvelope(SenderHost host)
     [Fact]
     public async Task Известная_ошибка_выходит_своим_кодом_и_статусом()
     {
-        using var server = await PipelineAsync(_ => throw AppException.PermissionDenied());
+        using var server = await PipelineAsync(_ => throw new AppException(
+            ErrorCodes.SecondFactorRequired, "Подтвердите кодом.", HttpStatusCode.Forbidden));
 
         var response = await server.GetTestClient().GetAsync("/", Ct);
         var body = await response.Content.ReadFromJsonAsync<ErrorResponse>(Ct);
 
         response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
-        body!.Code.ShouldBe(ErrorCodes.PermissionDenied);
+        body!.Code.ShouldBe(ErrorCodes.SecondFactorRequired);
         body.RequestId.ShouldNotBeNullOrWhiteSpace();
     }
 

@@ -5,7 +5,6 @@ using EmailSslSender.Modules.Identity.Users;
 using EmailSslSender.Shared.Contracts.Audit;
 using EmailSslSender.Shared.Contracts.Settings;
 using EmailSslSender.Shared.Contracts.Tokens;
-using EmailSslSender.Shared.Crypto;
 using EmailSslSender.Shared.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;

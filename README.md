@@ -338,9 +338,9 @@ mkdir -p backups && docker compose exec -T postgres pg_dump -U sender sender > b
 ## Справочник
 
 [docs/REFERENCE.md](docs/REFERENCE.md) — устройство сервиса, REST API, все настройки, ротация
-мастер-ключа, разработка и тесты.
+мастер-ключа, разработка и тесты. Изменения по версиям — [CHANGELOG.md](CHANGELOG.md).
 
-**Сборка из исходников:** .NET SDK 10, Node 22, Docker.
+**Сборка из исходников:** .NET SDK 10, Node 22+, Docker.
 
 ```bash
 docker compose build

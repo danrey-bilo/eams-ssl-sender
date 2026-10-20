@@ -1,4 +1,3 @@
-using EmailSslSender.Modules.Identity.Storage;
 using EmailSslSender.Shared.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;

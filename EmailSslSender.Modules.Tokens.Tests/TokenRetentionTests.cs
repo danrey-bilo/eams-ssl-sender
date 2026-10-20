@@ -1,7 +1,6 @@
 using EmailSslSender.Modules.Tokens.Domain;
 using EmailSslSender.Modules.Tokens.Retention;
 using EmailSslSender.Shared.Contracts.Tokens;
-using EmailSslSender.Modules.Tokens.Storage;
 using EmailSslSender.Shared.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;

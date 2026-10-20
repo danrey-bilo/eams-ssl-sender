@@ -9,7 +9,6 @@ using EmailSslSender.Shared.Contracts.Audit;
 using EmailSslSender.Shared.Contracts.Mail;
 using EmailSslSender.Shared.Contracts.Settings;
 using EmailSslSender.Shared.Contracts.Tokens;
-using EmailSslSender.Shared.Crypto;
 using EmailSslSender.Shared.Data;
 using EmailSslSender.Shared.Errors;
 using Microsoft.EntityFrameworkCore;

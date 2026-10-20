@@ -5,7 +5,6 @@ using EmailSslSender.Modules.KeyManager.Client;
 using EmailSslSender.Modules.KeyManager.Contracts;
 using EmailSslSender.Modules.KeyManager.Domain;
 using EmailSslSender.Modules.KeyManager.Export;
-using EmailSslSender.Shared.Contracts.Audit;
 using EmailSslSender.Shared.Data;
 using EmailSslSender.Shared.Errors;
 using Microsoft.EntityFrameworkCore;

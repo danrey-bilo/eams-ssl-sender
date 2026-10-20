@@ -1,5 +1,3 @@
-using EmailSslSender.Modules.Tokens;
-
 namespace EmailSslSender.Modules.Tokens.Tests;
 
 /// <summary>

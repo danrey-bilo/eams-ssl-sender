@@ -1,7 +1,6 @@
 using System.Net;
 using System.Text.Json.Nodes;
 using EmailSslSender.Shared.Contracts.Authz;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;

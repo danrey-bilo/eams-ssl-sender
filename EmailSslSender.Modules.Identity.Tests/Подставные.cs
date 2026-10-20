@@ -118,7 +118,4 @@ public sealed class ВнешнийАдрес : IPublicOrigin
 
     public Task<string?> ConfiguredAsync(CancellationToken cancellationToken = default) =>
         Task.FromResult(Адрес);
-
-    public Task<string?> ResolveAsync(CancellationToken cancellationToken = default) =>
-        Task.FromResult(Адрес);
 }

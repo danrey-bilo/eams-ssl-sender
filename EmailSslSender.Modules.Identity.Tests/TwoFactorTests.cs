@@ -541,8 +541,6 @@ public sealed class TwoFactorTests(IdentityDatabase database)
     {
         public string? Header(string name) =>
             name == "Authorization" ? $"Bearer {access}" : null;
-
-        public string? Cookie(string name) => null;
     }
 
     /// <summary>

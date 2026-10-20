@@ -148,6 +148,18 @@ async function request<T>(method: string, path: string, body?: unknown, stepUp =
   return await r.json().catch(() => null) as T;
 }
 
+/** Отдать браузеру файл на сохранение. */
+export function saveFile(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 /** Имя файла из Content-Disposition: сперва filename* (UTF-8), затем filename. */
 function fileName(disposition: string | null): string | null {
   if (!disposition) return null;
@@ -173,15 +185,7 @@ export const api = {
    */
   download: async (path: string, body: unknown, fallbackName: string) => {
     const r = await send('POST', path, body);
-    const blob = await r.blob();
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = fileName(r.headers.get('Content-Disposition')) ?? fallbackName;
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+    saveFile(await r.blob(), fileName(r.headers.get('Content-Disposition')) ?? fallbackName);
   },
 };
 

@@ -81,8 +81,13 @@ internal static class Purposes
     public const string LoginCode = "login_code";
 
     /// <summary>Код письмом для переподтверждения личности перед опасным действием.</summary>
+    /// <remarks>
+    /// Больше не выдаётся: переподтверждение — только кодом из приложения. Значение остаётся в
+    /// ограничении базы, а смена пароля, сброс фактора и завершение сессий гасят такие коды вместе
+    /// с прочими — на случай строк, оставшихся от прежних версий.
+    /// </remarks>
     public const string StepUpCode = "step_up_code";
 
-    /// <summary>Все допустимые значения — для ограничения в базе.</summary>
+    /// <summary>Все допустимые значения — из них строится ограничение в базе.</summary>
     public static readonly string[] All = [Activation, Reset, TwoFactor, LoginCode, StepUpCode];
 }

@@ -11,9 +11,6 @@ public interface IIdentityRequest
 {
     /// <summary>Значение заголовка или <c>null</c>.</summary>
     string? Header(string name);
-
-    /// <summary>Значение куки или <c>null</c>.</summary>
-    string? Cookie(string name);
 }
 
 /// <summary>Распознанная личность.</summary>

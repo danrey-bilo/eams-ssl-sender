@@ -366,8 +366,6 @@ public sealed class StepUpTests(IdentityDatabase database)
     {
         public string? Header(string name) =>
             name == "Authorization" ? $"Bearer {access}" : null;
-
-        public string? Cookie(string name) => null;
     }
 
     private async Task<TokenIdentity?> ЛичностьAsync(string access)

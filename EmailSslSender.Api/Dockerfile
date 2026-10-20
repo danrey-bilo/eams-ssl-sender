@@ -16,7 +16,7 @@ EXPOSE 8001
 
 # Веб-панель (React + TypeScript): собирается своей стадией, в образ уезжает только результат.
 # Сначала манифесты — слой `npm ci` переиспользуется, пока зависимости не менялись.
-FROM node:22-alpine AS web
+FROM node:24-alpine AS web
 WORKDIR /web
 COPY ["EmailSslSender.Web/package.json", "EmailSslSender.Web/package-lock.json", "./"]
 RUN npm ci --no-audit --no-fund
@@ -25,6 +25,8 @@ RUN PANEL_OUT_DIR=/web/dist npm run build
 
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 ARG BUILD_CONFIGURATION=Release
+# Версия установки (тег релиза без «v»). Пусто — версия из Directory.Build.props.
+ARG VERSION=
 WORKDIR /src
 
 # Сначала только файлы проектов — слой с восстановлением пакетов переиспользуется, пока
@@ -44,7 +46,7 @@ RUN dotnet restore "EmailSslSender.Api/EmailSslSender.Api.csproj"
 
 COPY . .
 RUN dotnet publish "EmailSslSender.Api/EmailSslSender.Api.csproj" \
-    -c "$BUILD_CONFIGURATION" -o /publish --no-restore /p:UseAppHost=false
+    -c "$BUILD_CONFIGURATION" -o /publish --no-restore /p:UseAppHost=false ${VERSION:+/p:Version=$VERSION}
 
 FROM base AS final
 WORKDIR /app

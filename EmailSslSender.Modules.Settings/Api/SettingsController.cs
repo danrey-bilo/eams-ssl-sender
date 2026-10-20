@@ -1,6 +1,5 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
-using EmailSslSender.Shared.Contracts.Authz;
 using Microsoft.AspNetCore.Mvc;
 
 namespace EmailSslSender.Modules.Settings.Api;

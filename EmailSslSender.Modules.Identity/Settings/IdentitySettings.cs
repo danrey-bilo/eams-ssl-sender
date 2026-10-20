@@ -1,6 +1,4 @@
-using System.Net;
 using EmailSslSender.Shared.Contracts.Settings;
-using EmailSslSender.Shared.Errors;
 
 namespace EmailSslSender.Modules.Identity.Settings;
 

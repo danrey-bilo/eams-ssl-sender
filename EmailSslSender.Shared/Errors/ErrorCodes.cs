@@ -12,7 +12,7 @@ namespace EmailSslSender.Shared.Errors;
 /// заставят клиент обрабатывать оба, и однажды он обработает только один.
 ///
 /// Константы, а не перечисление: код уезжает в JSON строкой, и <c>enum</c> потребовал бы
-/// конвертера, который однажды напишет "PermissionDenied" вместо "PERMISSION_DENIED".
+/// конвертера, который однажды напишет "NotFound" вместо "NOT_FOUND".
 /// </remarks>
 public static class ErrorCodes
 {
@@ -27,9 +27,6 @@ public static class ErrorCodes
     /// <summary>Нет удостоверения или оно недействительно.</summary>
     public const string Unauthenticated = "UNAUTHENTICATED";
 
-    /// <summary>Удостоверение есть, прав не хватает.</summary>
-    public const string PermissionDenied = "PERMISSION_DENIED";
-
     /// <summary>Объект не найден — или найден, но показывать его этому человеку нельзя.</summary>
     /// <remarks>
     /// Различать «нет» и «не положено» нельзя: разница сама по себе является утечкой —
@@ -37,7 +34,7 @@ public static class ErrorCodes
     /// </remarks>
     public const string NotFound = "NOT_FOUND";
 
-    /// <summary>Зависимости недоступны: база, кэш, партиции журнала.</summary>
+    /// <summary>Зависимости недоступны: база.</summary>
     public const string NotReady = "NOT_READY";
 
     /// <summary>Слишком часто. Ставится ограничителем частоты на входе.</summary>
@@ -195,7 +192,7 @@ public static class ErrorCodes
     /// <remarks>
     /// ⚠ <b>Не «нет прав».</b> Отказ по правам говорит «вам нельзя»; этот говорит «не
     /// туда»: системную настройку не задать себе лично, а личное предпочтение не навязать
-    /// установке. Слить их в `PERMISSION_DENIED` значило бы отправить человека выпрашивать
+    /// установке. Слить их с отказом по правам значило бы отправить человека выпрашивать
     /// право, которое ничего не изменит.
     /// </remarks>
     public const string SettingLevelForbidden = "SETTING_LEVEL_FORBIDDEN";

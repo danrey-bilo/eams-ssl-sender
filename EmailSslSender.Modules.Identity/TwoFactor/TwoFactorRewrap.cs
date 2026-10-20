@@ -1,6 +1,5 @@
 using System.Globalization;
 using EmailSslSender.Modules.Identity.Domain;
-using EmailSslSender.Modules.Identity.Storage;
 using EmailSslSender.Shared.Crypto;
 using EmailSslSender.Shared.Data;
 using Microsoft.EntityFrameworkCore;

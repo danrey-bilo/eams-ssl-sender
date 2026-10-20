@@ -30,9 +30,6 @@ internal sealed class LoginCodes(
     IMailQueue queue,
     ISettingsReader settings)
 {
-    /// <summary>Сколько цифр в коде.</summary>
-    private const int Цифр = 6;
-
     /// <summary>
     /// Завести код и послать его письмом.
     /// </summary>
@@ -96,7 +93,4 @@ internal sealed class LoginCodes(
 
         return чей == userId;
     }
-
-    /// <summary>Длина кода — им проверяется, что поле на экране одно на оба способа.</summary>
-    public static int Длина => Цифр;
 }

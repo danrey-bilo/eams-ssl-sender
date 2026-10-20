@@ -1,4 +1,3 @@
-using EmailSslSender.Modules.Identity.Contracts;
 using EmailSslSender.Modules.Identity.Users;
 using EmailSslSender.Shared.Errors;
 

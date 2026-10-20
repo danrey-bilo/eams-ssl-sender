@@ -9,7 +9,6 @@ using EmailSslSender.Modules.Identity.Naming;
 using EmailSslSender.Modules.Identity.Storage;
 using EmailSslSender.Shared.Contracts.Audit;
 using EmailSslSender.Shared.Contracts.Authz;
-using EmailSslSender.Shared.Crypto;
 using EmailSslSender.Shared.Data;
 using EmailSslSender.Shared.Errors;
 using Microsoft.EntityFrameworkCore;
@@ -694,9 +693,8 @@ internal sealed class UserService(
     /// </summary>
     /// <remarks>
     /// ⚠ Своё — и только имя. Адрес не меняется вовсе: он логин, на него ссылается журнал, и
-    /// смена адреса это отдельное решение владельца, а не строчка в профиле. Флаги не
-    /// меняются тем более: право распоряжаться собственной активностью и собственным
-    /// суперпользовательством означало бы, что прав нет вообще.
+    /// смена адреса это отдельное решение владельца, а не строчка в профиле. Флаги здесь не
+    /// меняются вовсе: активность и требование сменить пароль правятся через <c>api/users</c>.
     ///
     /// До 2026-08-22 своё имя человек изменить не мог никак: профиль только читался.
     /// </remarks>

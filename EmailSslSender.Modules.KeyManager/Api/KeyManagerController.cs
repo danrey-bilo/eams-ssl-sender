@@ -31,7 +31,7 @@ internal sealed record ApiKeyIn([property: JsonPropertyName("api_key")] string? 
 /// <summary>Итог проверки связи.</summary>
 internal sealed record KeyManagerTestOut([property: JsonPropertyName("certificates")] int Certificates);
 
-/// <summary>Сертификат из снимка последних опросов.</summary>
+/// <summary>Сертификат из последнего опроса.</summary>
 internal sealed record KnownCertificateOut(
     [property: JsonPropertyName("common_name")] string CommonName,
     [property: JsonPropertyName("serial_number")] string SerialNumber,
@@ -180,7 +180,7 @@ internal sealed class KeyManagerController(
         return Accepted();
     }
 
-    /// <summary>Сертификаты, которые видел опрос: по Common Name, замеченные позже — первыми.</summary>
+    /// <summary>Сертификаты из последнего опроса: по Common Name, замеченные позже — первыми.</summary>
     [HttpGet("certificates")]
     public async Task<IReadOnlyList<KnownCertificateOut>> Certificates(CancellationToken cancellationToken) =>
         await CertificateSnapshots.Current(db)

@@ -6,7 +6,8 @@
 # Linux — то есть говорит о платформе, а не о коде.
 #
 # Стилевых правил здесь намеренно нет: набор правил, введённый разом на готовый код, означал
-# бы сотни правок в одном коммите и ни одной проверенной.
+# бы сотни правок в одном коммите и ни одной проверенной. Исключение — лишние `using` (IDE0005):
+# их правки проверяет сам компилятор.
 
 root = true
 
@@ -27,6 +28,11 @@ trim_trailing_whitespace = false
 
 [*.{cs,csx}]
 indent_size = 4
+dotnet_diagnostic.IDE0005.severity = warning
+
+# Миграции генерирует `dotnet ef` — руками их не правят, стилевые правила к ним не относятся.
+[EmailSslSender.Api/Migrations/*.cs]
+generated_code = true
 
 [*.{csproj,props,targets,slnx}]
 indent_size = 2

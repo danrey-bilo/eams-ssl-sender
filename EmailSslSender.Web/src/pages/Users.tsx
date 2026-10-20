@@ -118,7 +118,7 @@ export function UsersPage({ myId }: { myId: string }) {
                     <div className="item-title">{name(u)}</div>
                     <div className="item-status"><Status kind={kind}>{label}</Status>{u.authenticator_enabled && <span className="chip">2FA</span>}</div>
                   </div>
-                  <Menu items={menu(u)} />
+                  <Menu title={u.email} items={menu(u)} />
                 </div>
               );
             })}

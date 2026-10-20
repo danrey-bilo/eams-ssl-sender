@@ -6,7 +6,6 @@ using EmailSslSender.Shared.Contracts.Audit;
 using EmailSslSender.Shared.Contracts.Authz;
 using EmailSslSender.Shared.Contracts.Mail;
 using EmailSslSender.Shared.Contracts.Tokens;
-using EmailSslSender.Shared.Crypto;
 using EmailSslSender.Shared.Data;
 using EmailSslSender.Shared.Errors;
 using Microsoft.EntityFrameworkCore;
@@ -323,6 +322,5 @@ public sealed class SuperuserRecoveryTests(IdentityDatabase database) : IAsyncLi
     private sealed class Request(string access) : IIdentityRequest
     {
         public string? Header(string name) => name == "Authorization" ? $"Bearer {access}" : null;
-        public string? Cookie(string name) => null;
     }
 }

@@ -1,5 +1,3 @@
-using EmailSslSender.Shared.Contracts.Tokens;
-using EmailSslSender.Modules.Identity.Contracts;
 using EmailSslSender.Modules.Identity.Domain;
 using EmailSslSender.Modules.Identity.Retention;
 using EmailSslSender.Modules.Identity.Users;

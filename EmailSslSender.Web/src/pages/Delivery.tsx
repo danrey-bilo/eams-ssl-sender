@@ -59,6 +59,11 @@ export function DeliveryPage() {
     reload();
   };
 
+  const toggle = async (s: Subscription) => {
+    const done = s.enabled ? 'Подписка отключена' : 'Подписка включена';
+    if (await run(() => api.patch('/api/certificate-subscriptions/' + s.id, { enabled: !s.enabled }), done)) reload();
+  };
+
   const remove = async (s: Subscription) => {
     if (!await confirm('Удалить подписку?', s.common_name + ' больше не будет рассылаться.', 'Удалить', true)) return;
     if (await run(() => api.del('/api/certificate-subscriptions/' + s.id), 'Подписка удалена')) reload();
@@ -93,9 +98,10 @@ export function DeliveryPage() {
                     <div className="item-meta">{scheduleText(s)}{expires && ' · до ' + fmtDate(expires)}</div>
                     <div className="item-status"><LastDelivery s={s} /></div>
                   </div>
-                  <Menu items={[
+                  <Menu title={s.common_name} items={[
                     { text: 'Отправить сейчас', action: () => send(s) },
                     { text: 'Изменить', action: () => edit(s) },
+                    { text: s.enabled ? 'Отключить' : 'Включить', action: () => toggle(s) },
                     { text: 'Удалить', action: () => remove(s), danger: true },
                   ]} />
                 </div>
@@ -137,6 +143,9 @@ export function DeliveryPage() {
                     <td className="actions">
                       <button className="icon" title="Отправить сейчас" onClick={() => send(s)}><Icon name="send" /></button>
                       <button className="icon" title="Изменить" onClick={() => edit(s)}><Icon name="edit" /></button>
+                      <button className="icon" title={s.enabled ? 'Отключить' : 'Включить'} onClick={() => toggle(s)}>
+                        <Icon name={s.enabled ? 'pause' : 'play'} />
+                      </button>
                       <button className="icon danger" title="Удалить" onClick={() => remove(s)}><Icon name="trash" /></button>
                     </td>
                   </tr>
@@ -247,7 +256,7 @@ function SubscriptionDialog({ subscription: s, known, onClose }: {
             {LOCALES.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
           </select>
         </Field>
-        <div className="stack tight end">
+        <div className="stack tight align-end">
           <Check label="Пароль ключа в письме" checked={passphrase} onChange={setPassphrase} />
           <Check label="Включена" checked={enabled} onChange={setEnabled} />
         </div>

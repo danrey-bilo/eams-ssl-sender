@@ -15,9 +15,6 @@ public readonly struct WrappedDataKey(byte[] bytes)
     /// <summary>Байты для хранения. Секретом не являются — ключ внутри зашифрован.</summary>
     public byte[] Bytes { get; } = bytes;
 
-    /// <summary>Пустой ли. Так выглядит строка, которой ключ ещё не выдавали.</summary>
-    public bool IsEmpty => Bytes is null or { Length: 0 };
-
     /// <summary>Содержимое не печатается: привычка важнее того, что внутри шифротекст.</summary>
     public override string ToString() => "<обёрнутый ключ данных>";
 }
@@ -30,9 +27,6 @@ public readonly struct SealedSecret(byte[] bytes)
 {
     /// <summary>Байты для хранения.</summary>
     public byte[] Bytes { get; } = bytes;
-
-    /// <summary>Пустой ли. Секрета нет — это не то же самое, что секрет пустой.</summary>
-    public bool IsEmpty => Bytes is null or { Length: 0 };
 
     /// <summary>Содержимое не печатается.</summary>
     public override string ToString() => "<запечатанный секрет>";

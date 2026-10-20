@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Text;
 using EmailSslSender.Shared.Contracts.Mail;
 
@@ -182,7 +181,4 @@ internal sealed class MailTemplates
 
         return итог.ToString();
     }
-
-    /// <summary>Число в текст — единообразно и без зависимости от языка машины.</summary>
-    public static string Число(int значение) => значение.ToString(CultureInfo.InvariantCulture);
 }

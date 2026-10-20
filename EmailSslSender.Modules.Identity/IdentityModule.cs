@@ -10,8 +10,6 @@ using EmailSslSender.Shared.Contracts.Data;
 using EmailSslSender.Shared.Contracts.Mail;
 using EmailSslSender.Shared.Contracts.Settings;
 using EmailSslSender.Shared.Crypto;
-using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using EmailSslSender.Modules.Identity.Passwords;

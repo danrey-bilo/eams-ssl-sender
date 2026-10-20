@@ -4,12 +4,10 @@ using System.Security.Cryptography;
 using EmailSslSender.Modules.Identity.Contracts;
 using EmailSslSender.Modules.Identity.Domain;
 using EmailSslSender.Modules.Identity.Naming;
-using EmailSslSender.Modules.Identity.Settings;
 using EmailSslSender.Modules.Identity.Storage;
 using EmailSslSender.Modules.Identity.Users;
 using EmailSslSender.Shared.Contracts.Audit;
 using EmailSslSender.Shared.Contracts.Authz;
-using EmailSslSender.Shared.Contracts.Settings;
 using EmailSslSender.Shared.Crypto;
 using EmailSslSender.Shared.Data;
 using EmailSslSender.Shared.Errors;
@@ -206,11 +204,8 @@ internal sealed class TwoFactorService(
     /// Отключить фактор. Требует пароля.
     /// </summary>
     /// <remarks>
-    /// ⚠ Одной транзакцией. Коды восстановления удаляются оператором и исчезают немедленно, а
-    /// строка журнала и удаление самого фактора уезжают на сохранении: сбой между ними
-    /// оставлял бы состояние, из которого человека не вытащить, — фактор включён, кодов нет,
-    /// в журнале ничего. Потерял телефон — заперт снаружи собственной учётной записи.
-    /// Найдено разбором 2026-08-22.
+    /// ⚠ Одной транзакцией: удаление фактора, гашение выданной расписки и строка журнала
+    /// фиксируются вместе — сбой между ними не оставит фактор снятым без следа в журнале.
     /// </remarks>
     public async Task DisableAsync(string password, CancellationToken cancellationToken = default)
     {
@@ -247,9 +242,9 @@ internal sealed class TwoFactorService(
     /// Снять фактор <b>другому человеку</b>. Пароля снимаемого не требует — его никто не знает.
     /// </summary>
     /// <remarks>
-    /// ⚠ <b>Без этого человек, потерявший и приложение, и коды восстановления, заперт</b>
-    /// снаружи собственной учётной записи навсегда. Если он единственный — заперта вся
-    /// система; на этот случай есть консольная <c>reset-superadmin-2fa</c>.
+    /// ⚠ <b>Без этого человек, потерявший приложение-аутентификатор, заперт</b> снаружи
+    /// собственной учётной записи навсегда. Если он единственный — заперта вся система; на этот
+    /// случай есть консольные <c>reset-access</c> и <c>reset-superadmin-2fa</c>.
     ///
     /// ⚠ <b>Действие опасное:</b> снимающий снимает именно защиту, а знай он вдобавок чужой
     /// пароль — вход открыт. Эндпоинт поэтому требует свежего второго фактора; служба не знает,

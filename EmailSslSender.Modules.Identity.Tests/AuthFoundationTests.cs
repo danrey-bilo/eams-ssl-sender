@@ -261,7 +261,6 @@ public sealed class AuthFoundationTests(IdentityDatabase database) : IAsyncLifet
     private sealed class Request(string access) : IIdentityRequest
     {
         public string? Header(string name) => name == "Authorization" ? $"Bearer {access}" : null;
-        public string? Cookie(string name) => null;
     }
 
     private const string Password = "Очень-Хороший-Пароль-42!";

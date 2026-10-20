@@ -7,7 +7,6 @@ using EmailSslSender.Shared.Contracts.Tokens;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using EmailSslSender.Modules.Tokens.Storage;
 using EmailSslSender.Shared.Contracts.Data;
-using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace EmailSslSender.Modules.Tokens;

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { api } from '../lib/api';
+import { api, saveFile } from '../lib/api';
 import { isMobile } from '../lib/device';
 import { fmtDate, fmtDateTime } from '../lib/format';
 import { useLoad } from '../lib/hooks';
@@ -23,6 +23,9 @@ const FORMATS: Array<[format: string, title: string, hint: string]> = [
 
 const DAY = 86_400_000;
 
+/** Основа имени файла: «*» в имени файла недопустим. */
+const fileBase = (c: KnownCertificate) => c.common_name.replace('*', 'wildcard');
+
 function daysLeft(ymd: string | null): number | null {
   if (!ymd) return null;
   const end = new Date(ymd + 'T00:00:00').getTime();
@@ -33,7 +36,7 @@ function daysLeft(ymd: string | null): number | null {
 function Expiry({ ymd }: { ymd: string | null }) {
   const days = daysLeft(ymd);
   if (days === null) return <span className="muted">—</span>;
-  const kind = days < 0 ? 'err' : days <= 14 ? 'err' : days <= 30 ? 'warn' : '';
+  const kind = days <= 14 ? 'err' : days <= 30 ? 'warn' : '';
   const label = days < 0 ? 'истёк' : days === 0 ? 'сегодня' : days + ' дн.';
   return (
     <span className="expiry">
@@ -158,7 +161,6 @@ export function CertificatesPage() {
 
 function DownloadDialog({ certificate: c, onClose }: { certificate: KnownCertificate; onClose: (done: boolean) => void }) {
   const [format, setFormat] = useState('PEM');
-  const name = c.common_name.replace('*', 'wildcard');
 
   return (
     <FormModal
@@ -166,7 +168,7 @@ function DownloadDialog({ certificate: c, onClose }: { certificate: KnownCertifi
       note={c.common_name}
       submit="Скачать"
       onSubmit={() => api.download('/api/keymanager/certificates/download',
-        { common_name: c.common_name, serial_number: c.serial_number, format }, name + '.' + format.toLowerCase())}
+        { common_name: c.common_name, serial_number: c.serial_number, format }, fileBase(c) + '.' + format.toLowerCase())}
       onClose={onClose}
     >
       <Group label="Формат">
@@ -191,16 +193,7 @@ function KeyDialog({ certificate: c, keyData, onClose }: {
 }) {
   const [copied, copy] = useCopy();
 
-  const save = () => {
-    const url = URL.createObjectURL(new Blob([keyData.private_key], { type: 'application/x-pem-file' }));
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = c.common_name.replace('*', 'wildcard') + '.key';
-    document.body.append(link);
-    link.click();
-    link.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 10_000);
-  };
+  const save = () => saveFile(new Blob([keyData.private_key], { type: 'application/x-pem-file' }), fileBase(c) + '.key');
 
   return (
     <FormModal title="Закрытый ключ" note={c.common_name} submit="Готово" cancel={null} wide onClose={onClose}>

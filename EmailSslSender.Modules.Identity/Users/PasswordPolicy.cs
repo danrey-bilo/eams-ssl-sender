@@ -2,7 +2,6 @@ using EmailSslSender.Modules.Identity.Settings;
 using System.Net;
 using System.Text;
 using EmailSslSender.Shared.Contracts.Settings;
-using EmailSslSender.Shared.Crypto;
 using EmailSslSender.Shared.Errors;
 using EmailSslSender.Modules.Identity.Passwords;
 
