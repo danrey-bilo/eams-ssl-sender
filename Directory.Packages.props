@@ -87,6 +87,25 @@
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.16.0" />
   </ItemGroup>
 
+  <!-- ─── Модули EAMS из modules/ ─────────────────────────────────────────────────── -->
+  <!--
+    Пакеты, которые подмодули `modules/<имя>` берут сверх наших: проект над модулем главнее, и
+    версии модулей берутся отсюда (их собственный Directory.Packages.props внутри проекта
+    выключен). Версии — те, с которыми модули проверены в EAMS.
+  -->
+  <ItemGroup>
+    <!-- module-crypto: печать на ключ устройства и подпись сборок. SPDX: MIT -->
+    <PackageVersion Include="BouncyCastle.Cryptography" Version="2.7.0" />
+    <!-- module-hosting: замок одного экземпляра — ADO-соединение, а не провайдер EF.
+         SPDX: PostgreSQL -->
+    <PackageVersion Include="Npgsql" Version="10.0.3" />
+    <!-- module-hosting: приёмник логов без текста исключений. SPDX: Apache-2.0 -->
+    <PackageVersion Include="Serilog" Version="4.4.0" />
+    <!-- module-hosting: проверка готовности Redis. Нужен только для сборки модуля — Redis
+         сервис не использует, и эта проверка не подключается. SPDX: MIT -->
+    <PackageVersion Include="StackExchange.Redis" Version="3.1.31" />
+  </ItemGroup>
+
   <!-- ─── Чего здесь нет намеренно ────────────────────────────────────────────────── -->
   <!--
     `AutoMapper` и `FluentAssertions` — не брать: оба сменили лицензию на платную для

@@ -52,13 +52,13 @@ git в каталог `modules/<имя>`. Версия каждого **закр
 
 | Каталог | Репозиторий | Метка |
 |---|---|---|
-| `modules/core` | `module-core` | `v0.8.0` |
+| `modules/core` | `module-core` | `v0.9.0` |
 | `modules/crypto` | `module-crypto` | `v0.5.0` |
-| `modules/hosting` | `module-hosting` | `v0.5.0` |
-| `modules/identity` | `module-identity` | `v0.9.0` |
-| `modules/tokens` | `module-tokens` | `v0.8.0` |
-| `modules/settings` | `module-settings` | `v0.8.0` |
-| `modules/mail` | `module-mail` | `v0.8.0` |
+| `modules/hosting` | `module-hosting` | `v0.6.0` |
+| `modules/identity` | `module-identity` | `v0.10.0` |
+| `modules/tokens` | `module-tokens` | `v0.8.1` |
+| `modules/settings` | `module-settings` | `v0.8.1` |
+| `modules/mail` | `module-mail` | `v0.9.0` |
 
 Клонировать вместе с модулями (репозитории модулей закрытые — нужен доступ к ним):
 
@@ -73,7 +73,7 @@ git submodule update --init
 
 ```bash
 git -C modules/mail fetch --tags
-git -C modules/mail checkout v0.9.0
+git -C modules/mail checkout v0.10.0
 git add modules/mail
 ```
 
