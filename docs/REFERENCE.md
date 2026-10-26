@@ -1,4 +1,4 @@
-# Email SSL Sender — справочник
+# EAMS ssl sender — справочник
 
 Подробности для администратора и разработчика: устройство, API, настройки, расширение кода,
 обслуживание. Установка и первая настройка — в [README](../README.md).
@@ -301,7 +301,7 @@ curl -s -X POST $API/api/auth/refresh -H 'Content-Type: application/json' -d '{"
 | `none` | Без шифрования — только ловушка писем или релей в той же сети, **без логина**: пароль по открытому соединению не отправляется | 25, 1025 |
 
 ```bash
-curl -s -X PATCH $API/api/settings/system -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"values":{"mail.enabled":true,"mail.smtp_host":"smtp.example.com","mail.smtp_port":465,"mail.smtp_security":"tls","mail.smtp_username":"noreply@example.com","mail.from_address":"noreply@example.com","mail.from_name":"Email SSL Sender","server.public_url":"https://sender.example.com"}}'
+curl -s -X PATCH $API/api/settings/system -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"values":{"mail.enabled":true,"mail.smtp_host":"smtp.example.com","mail.smtp_port":465,"mail.smtp_security":"tls","mail.smtp_username":"noreply@example.com","mail.from_address":"noreply@example.com","mail.from_name":"EAMS ssl sender","server.public_url":"https://sender.example.com"}}'
 ```
 
 `server.public_url` — внешний адрес установки. Из него собираются ссылки в письмах
@@ -369,6 +369,11 @@ build 7110) и рассылает файлы SSL-сертификатов по *
 - **Сразу после заведения подписки.** Опрос будится, и текущий сертификат уходит в течение
   секунд.
 - **Вручную:** `POST /api/certificate-subscriptions/{id}/send`.
+
+Файлы уходят **одним архивом** `<Common Name>.zip` (звёздочка — `wildcard`): Outlook блокирует
+вложения `.crt`, `.cer` и `.der`. Пароль ключа (`include_passphrase`) лежит в том же архиве файлом
+`passphrase.txt`. Текст письма: приветствие, сертификат с форматами и сроком, содержимое архива,
+подпись «EAMS ssl sender».
 
 > ⚠ **Письмо несёт закрытый ключ** (тип `KEY`, а также `PKCS` и `JKS`). Любой, кто прочтёт ящик
 > получателя или пересланное письмо, получит ключ. В очереди вложения лежат запечатанными и
@@ -449,6 +454,9 @@ curl -s -X POST $API/api/certificate-subscriptions -H "Authorization: Bearer $TO
 выгружаются вовсе. Удаление подписки, удаление получателя или смена Common Name отменяют её
 неотправленные письма. Письмо с вложениями, не ушедшее за 24 часа, теряет вложения и считается
 неотправленным — после починки почты отправьте подписку заново.
+
+Какие методы REST API Key Manager Plus вызывает сервис, с какими параметрами и что берёт из
+ответа — [KEYMANAGER-API.md](KEYMANAGER-API.md).
 
 **Что сверить на своём Key Manager Plus.** Документация не описывает, в каком виде
 `getCertificate` отдаёт файлы. Клиент принимает только то, что похоже на файл сертификата или
@@ -612,7 +620,7 @@ curl -s "$API/api/users?limit=50" -H "Authorization: Bearer $TOKEN"
 | `mail.smtp_security` | `starttls` | `tls`, `starttls` или `none` |
 | `mail.smtp_username` | — | Пользователь SMTP; пусто — без авторизации |
 | `mail.from_address` | — | Адрес в `From`; без него почта считается ненастроенной |
-| `mail.from_name` | `Email SSL Sender` | Имя в `From` |
+| `mail.from_name` | `EAMS ssl sender` | Имя в `From` |
 | `mail.rate_per_hour` | `5` | Писем в час на адрес и вид |
 | `mail.max_attempts` | `5` | Попыток доставки |
 | `server.public_url` | `https://sender.example.com` | Внешний адрес для ссылок в письмах |

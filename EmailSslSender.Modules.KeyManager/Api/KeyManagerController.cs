@@ -196,10 +196,15 @@ internal sealed class KeyManagerController(
     /// Выгрузить файл сертификата из Key Manager Plus — себе, а не письмом.
     /// </summary>
     /// <remarks>
-    /// Ответ — сам файл: <c>Content-Type</c> по типу (ZIP, если Key Manager Plus упаковал несколько
-    /// файлов), <c>Content-Disposition: attachment; filename="…"</c> с тем же именем, что у вложения
+    /// Ответ — сам файл: <c>Content-Type: application/octet-stream</c>,
+    /// <c>Content-Disposition: attachment; filename="…"</c> с тем же именем, что у файла в архиве
     /// письма (<c>*.example.com</c> + <c>PEM</c> → <c>wildcard.example.com.pem</c>),
     /// <c>Cache-Control: no-store</c>.
+    ///
+    /// ⚠ ⚠ Тип — всегда <c>application/octet-stream</c>, а не по формату (замечание владельца
+    /// 2026-10-26): Chrome на телефоне дописывает к имени расширение «своего» типа —
+    /// <c>.crt</c> с <c>application/pkix-cert</c> сохранялся как <c>.crt.cer</c>, ключ с
+    /// <c>application/x-pem-file</c> — как <c>.key.pem</c>. У «просто байтов» своего расширения нет.
     ///
     /// ⚠ Только для пары «Common Name + серийный номер» из <c>GET /api/keymanager/certificates</c>;
     /// иначе <c>404 KEYMANAGER_CERTIFICATE_NOT_FOUND</c>. Отказ Key Manager Plus —
@@ -231,7 +236,7 @@ internal sealed class KeyManagerController(
         Response.Headers.CacheControl = "no-store";
         Response.Headers.ContentDisposition = Вложение(файл.FileName);
 
-        return File(файл.Content, файл.ContentType);
+        return File(файл.Content, "application/octet-stream");
     }
 
     /// <summary>

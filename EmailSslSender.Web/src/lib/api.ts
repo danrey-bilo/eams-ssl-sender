@@ -148,9 +148,14 @@ async function request<T>(method: string, path: string, body?: unknown, stepUp =
   return await r.json().catch(() => null) as T;
 }
 
-/** Отдать браузеру файл на сохранение. */
-export function saveFile(blob: Blob, name: string) {
-  const url = URL.createObjectURL(blob);
+/**
+ * Отдать браузеру файл на сохранение.
+ *
+ * ⚠ Тип всегда application/octet-stream: Chrome на телефоне дописывает к имени расширение «своего»
+ * типа — .crt превращался в .crt.cer, ключ — в .key.pem. У «просто байтов» своего расширения нет.
+ */
+export function saveFile(data: Blob, name: string) {
+  const url = URL.createObjectURL(new Blob([data], { type: 'application/octet-stream' }));
   const link = document.createElement('a');
   link.href = url;
   link.download = name;

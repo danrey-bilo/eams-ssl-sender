@@ -1,3 +1,4 @@
+using EmailSslSender.Shared;
 using EmailSslSender.Shared.Contracts.Mail;
 
 namespace EmailSslSender.Modules.Identity.Mail;
@@ -46,8 +47,8 @@ internal sealed class IdentityMailTemplates : IMailTemplateProvider
         new(
             IdentityMailKinds.Invitation,
             MailLocales.Ru,
-            "Email SSL Sender: приглашение",
-            "Для вас создана учётная запись в Email SSL Sender.\n\n"
+            Product.Name + ": приглашение",
+            "Для вас создана учётная запись в " + Product.Name + ".\n\n"
             + "Пароль задаёте вы сами, по ссылке. Она действует {minutes} минут и работает\n"
             + "один раз:\n{link}\n\n"
             + "Администратор вашего пароля не знает и знать не будет.\n\n"
@@ -55,8 +56,8 @@ internal sealed class IdentityMailTemplates : IMailTemplateProvider
         new(
             IdentityMailKinds.Invitation,
             MailLocales.Uk,
-            "Email SSL Sender: запрошення",
-            "Для вас створено обліковий запис в Email SSL Sender.\n\n"
+            Product.Name + ": запрошення",
+            "Для вас створено обліковий запис в " + Product.Name + ".\n\n"
             + "Пароль задаєте ви самі, за посиланням. Воно діє {minutes} хвилин і працює\n"
             + "один раз:\n{link}\n\n"
             + "Адміністратор вашого пароля не знає і знати не буде.\n\n"
@@ -64,8 +65,8 @@ internal sealed class IdentityMailTemplates : IMailTemplateProvider
         new(
             IdentityMailKinds.Invitation,
             MailLocales.En,
-            "Email SSL Sender: invitation",
-            "An account has been created for you in Email SSL Sender.\n\n"
+            Product.Name + ": invitation",
+            "An account has been created for you in " + Product.Name + ".\n\n"
             + "You set the password yourself, through this link. It works once and expires\n"
             + "in {minutes} minutes:\n{link}\n\n"
             + "Your administrator does not know your password and never will.\n\n"
@@ -75,7 +76,7 @@ internal sealed class IdentityMailTemplates : IMailTemplateProvider
         new(
             IdentityMailKinds.PasswordReset,
             MailLocales.Ru,
-            "Email SSL Sender: восстановление пароля",
+            Product.Name + ": восстановление пароля",
             "Кто-то запросил смену пароля для этого адреса.\n\n"
             + "Ссылка действует {minutes} минут и срабатывает один раз:\n{link}\n\n"
             + "После смены пароля все ваши сессии будут закрыты — войти придётся заново на\n"
@@ -86,7 +87,7 @@ internal sealed class IdentityMailTemplates : IMailTemplateProvider
         new(
             IdentityMailKinds.PasswordReset,
             MailLocales.Uk,
-            "Email SSL Sender: відновлення пароля",
+            Product.Name + ": відновлення пароля",
             "Хтось запросив зміну пароля для цієї адреси.\n\n"
             + "Посилання діє {minutes} хвилин і працює один раз:\n{link}\n\n"
             + "Після зміни пароля всі ваші сесії буде закрито — увійти доведеться заново на\n"
@@ -97,7 +98,7 @@ internal sealed class IdentityMailTemplates : IMailTemplateProvider
         new(
             IdentityMailKinds.PasswordReset,
             MailLocales.En,
-            "Email SSL Sender: password reset",
+            Product.Name + ": password reset",
             "Someone asked to change the password for this address.\n\n"
             + "The link works once and expires in {minutes} minutes:\n{link}\n\n"
             + "Changing the password closes all your sessions — you will sign in again on\n"
@@ -110,24 +111,24 @@ internal sealed class IdentityMailTemplates : IMailTemplateProvider
         new(
             IdentityMailKinds.AccountSuspended,
             MailLocales.Ru,
-            "Email SSL Sender: доступ приостановлен",
-            "Доступ к Email SSL Sender для этого адреса приостановлен.\n\n"
+            Product.Name + ": доступ приостановлен",
+            "Доступ к " + Product.Name + " для этого адреса приостановлен.\n\n"
             + "Форма входа причину не называет — она отвечает одинаково на все случаи, чтобы\n"
             + "не подсказывать посторонним, какие адреса существуют. Поэтому мы пишем письмом.\n\n"
             + "Восстановить доступ может администратор."),
         new(
             IdentityMailKinds.AccountSuspended,
             MailLocales.Uk,
-            "Email SSL Sender: доступ припинено",
-            "Доступ до Email SSL Sender для цієї адреси припинено.\n\n"
+            Product.Name + ": доступ припинено",
+            "Доступ до " + Product.Name + " для цієї адреси припинено.\n\n"
             + "Форма входу причину не називає — вона відповідає однаково на всі випадки, щоб\n"
             + "не підказувати стороннім, які адреси існують. Тому ми пишемо листом.\n\n"
             + "Відновити доступ може адміністратор."),
         new(
             IdentityMailKinds.AccountSuspended,
             MailLocales.En,
-            "Email SSL Sender: access suspended",
-            "Access to Email SSL Sender for this address has been suspended.\n\n"
+            Product.Name + ": access suspended",
+            "Access to " + Product.Name + " for this address has been suspended.\n\n"
             + "The sign-in form does not say why — it answers the same way in every case, so it\n"
             + "cannot tell strangers which addresses exist. That is why we write instead.\n\n"
             + "Your administrator can restore access."),
@@ -140,7 +141,7 @@ internal sealed class IdentityMailTemplates : IMailTemplateProvider
         new(
             IdentityMailKinds.LoginCode,
             MailLocales.Ru,
-            "Email SSL Sender: код для входа",
+            Product.Name + ": код для входа",
             "Код для входа: {code}\n\n"
             + "Он действует {minutes} минут и работает один раз.\n\n"
             + "Если вы не входили — кто-то знает ваш пароль. Смените его и сообщите\n"
@@ -148,7 +149,7 @@ internal sealed class IdentityMailTemplates : IMailTemplateProvider
         new(
             IdentityMailKinds.LoginCode,
             MailLocales.Uk,
-            "Email SSL Sender: код для входу",
+            Product.Name + ": код для входу",
             "Код для входу: {code}\n\n"
             + "Він діє {minutes} хвилин і працює один раз.\n\n"
             + "Якщо ви не входили — хтось знає ваш пароль. Змініть його та повідомте\n"
@@ -156,7 +157,7 @@ internal sealed class IdentityMailTemplates : IMailTemplateProvider
         new(
             IdentityMailKinds.LoginCode,
             MailLocales.En,
-            "Email SSL Sender: sign-in code",
+            Product.Name + ": sign-in code",
             "Sign-in code: {code}\n\n"
             + "It works once and expires in {minutes} minutes.\n\n"
             + "If this was not you, someone knows your password. Change it and tell your\n"

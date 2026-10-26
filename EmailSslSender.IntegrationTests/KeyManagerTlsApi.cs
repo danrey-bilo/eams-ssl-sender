@@ -234,7 +234,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
 
         ответ.StatusCode.ShouldBe(HttpStatusCode.OK, await ответ.Content.ReadAsStringAsync(Ct));
         (await ответ.Content.ReadAsByteArrayAsync(Ct)).ShouldBe(ЗаглушкаKmp.Сертификат);
-        ответ.Content.Headers.ContentType!.MediaType.ShouldBe("application/x-pem-file");
+        ответ.Content.Headers.ContentType!.MediaType.ShouldBe("application/octet-stream");
         ответ.Content.Headers.GetValues("Content-Disposition").Single()
             .ShouldBe("attachment; filename=\"site.example.com.pem\"");
         ответ.Headers.CacheControl!.NoStore.ShouldBeTrue();

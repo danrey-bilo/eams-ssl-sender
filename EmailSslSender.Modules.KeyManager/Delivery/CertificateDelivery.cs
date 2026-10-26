@@ -221,36 +221,42 @@ internal sealed class CertificateDelivery(
             throw new ОтказПочты(MailQueueResult.NotConfigured);
         }
 
-        var вложения = await ВыгрузитьAsync(client, текущий, подписка.Formats, cache, token);
+        var файлы = await ВыгрузитьAsync(client, текущий, подписка.Formats, cache, token);
 
         var пароль = подписка.IncludePassphrase
             ? await ПарольAsync(client, текущий, cache, token)
             : null;
 
-        // ⚠ Пароль ключа — отдельным вложением, а не строкой в теле: тело письма живёт в очереди
+        // ⚠ Пароль ключа — файлом в архиве, а не строкой в теле: тело письма живёт в очереди
         // до уборки, а вложения стираются, как только письмо ушло.
         if (пароль is not null)
         {
-            вложения.Add(new MailAttachment(
+            файлы.Add(new MailAttachment(
                 CertificateMail.PassphraseFile, "text/plain; charset=utf-8", Encoding.UTF8.GetBytes(пароль + Environment.NewLine)));
         }
+
+        // ⚠ ⚠ Одним архивом ZIP: Outlook блокирует вложения .crt, .cer и .der (разбор у CertificateArchive).
+        var архив = CertificateArchive.Pack(
+            CertificateFormats.FileBase(текущий.CommonName) + ".zip", файлы, сейчас);
 
         var номера = new List<Guid>(подписка.Recipients.Length);
 
         foreach (var адрес in подписка.Recipients)
         {
-            // ⚠ Серийный номер в шаблон не входит (письмо в три строки), но едет в значениях: по
-            // нему видно, какой выпуск ушёл.
+            // ⚠ Серийный номер в шаблон не входит, но едет в значениях: по нему видно, какой
+            // выпуск ушёл.
             var значения = new Dictionary<string, string>(StringComparer.Ordinal)
             {
                 ["common_name"] = текущий.CommonName,
                 ["serial_number"] = текущий.SerialNumber,
                 ["expires_on"] = CertificateMail.ExpiresOn(текущий.ExpiresOn, подписка.Locale),
-                ["files"] = string.Join(", ", вложения.Select(ф => ф.FileName)),
+                ["formats"] = CertificateMail.Formats(подписка.Formats),
+                ["archive"] = архив.FileName,
+                ["files"] = CertificateMail.Files(файлы),
             };
 
             var итог = await mail.EnqueueAsync(
-                адрес, CertificateMail.Kind, подписка.Locale, значения, вложения, token);
+                адрес, CertificateMail.Kind, подписка.Locale, значения, [архив], token);
 
             if (итог.Result != MailQueueResult.Queued || итог.Id is not { } номер)
             {

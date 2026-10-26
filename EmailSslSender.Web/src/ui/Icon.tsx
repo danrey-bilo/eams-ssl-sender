@@ -44,7 +44,7 @@ export function Brand() {
   return (
     <a className="brand" href="#/delivery">
       <span className="brand-mark"><Icon name="brand" /></span>
-      <span>SSL Sender</span>
+      <span>EAMS ssl sender</span>
     </a>
   );
 }

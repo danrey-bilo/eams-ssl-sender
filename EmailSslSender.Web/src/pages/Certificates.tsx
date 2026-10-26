@@ -193,7 +193,7 @@ function KeyDialog({ certificate: c, keyData, onClose }: {
 }) {
   const [copied, copy] = useCopy();
 
-  const save = () => saveFile(new Blob([keyData.private_key], { type: 'application/x-pem-file' }), fileBase(c) + '.key');
+  const save = () => saveFile(new Blob([keyData.private_key]), fileBase(c) + '.key');
 
   return (
     <FormModal title="Закрытый ключ" note={c.common_name} submit="Готово" cancel={null} wide onClose={onClose}>

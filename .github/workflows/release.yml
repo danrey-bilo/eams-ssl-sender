@@ -118,7 +118,7 @@ jobs:
           TAG: ${{ steps.v.outputs.tag }}
         run: |
           gh release create "$TAG" \
-            --title "Email SSL Sender $TAG" \
+            --title "EAMS ssl sender $TAG" \
             --notes-file notes.md \
             --verify-tag \
             "email-ssl-sender-$TAG.zip" \

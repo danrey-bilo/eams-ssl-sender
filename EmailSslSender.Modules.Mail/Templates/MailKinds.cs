@@ -1,3 +1,4 @@
+using EmailSslSender.Shared;
 using EmailSslSender.Shared.Contracts.Mail;
 
 namespace EmailSslSender.Modules.Mail.Templates;
@@ -37,21 +38,21 @@ internal sealed class MailOwnTemplates : IMailTemplateProvider
         new(
             MailKinds.Test,
             MailLocales.Ru,
-            "Email SSL Sender: проверка почты",
+            Product.Name + ": проверка почты",
             "Если вы это читаете, отправка писем настроена верно.\n\n"
             + "Письмо отправлено вручную из настроек почты в админке и ничего не значит для\n"
             + "учётных записей."),
         new(
             MailKinds.Test,
             MailLocales.Uk,
-            "Email SSL Sender: перевірка пошти",
+            Product.Name + ": перевірка пошти",
             "Якщо ви це читаєте, надсилання листів налаштовано правильно.\n\n"
             + "Лист надіслано вручну з налаштувань пошти в адмінці й нічого не означає для\n"
             + "облікових записів."),
         new(
             MailKinds.Test,
             MailLocales.En,
-            "Email SSL Sender: mail check",
+            Product.Name + ": mail check",
             "If you are reading this, sending mail is configured correctly.\n\n"
             + "This letter was sent by hand from the mail settings in the admin area and means\n"
             + "nothing for any account."),

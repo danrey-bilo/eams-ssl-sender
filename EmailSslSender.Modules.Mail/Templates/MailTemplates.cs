@@ -123,7 +123,7 @@ internal sealed class MailTemplates
                 $"Письма «{kind}» не объявлял ни один модуль. Вид письма — не строка в вызове, "
                 + "а объявление в `IMailTemplateProvider`.");
 
-        return (Подставить(текст.Subject, values), Подставить(текст.Body, values));
+        return (Подставить(текст.Subject, values), MailFrame.Wrap(Подставить(текст.Body, values), текст.Locale));
     }
 
     /// <summary>

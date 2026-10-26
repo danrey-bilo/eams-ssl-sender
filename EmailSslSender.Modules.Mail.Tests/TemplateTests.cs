@@ -92,7 +92,29 @@ public sealed class TemplateTests
 
         var (тема, _) = справочник.Render(MailKinds.Test, "fr", ЗначенийНет);
 
-        тема.ShouldBe("Email SSL Sender: mail check");
+        тема.ShouldBe("EAMS ssl sender: mail check");
+    }
+
+    /// <summary>
+    /// Каждое письмо — с приветствием в начале и благодарностью с именем сервиса в конце.
+    /// </summary>
+    /// <remarks>
+    /// Решение владельца 2026-10-26: письмо человеческое, как уведомления Key Manager Plus. Рамка
+    /// одна на все виды, поэтому проверяется на чужом шаблоне — модуль, объявивший письмо, о ней
+    /// не знает.
+    /// </remarks>
+    [Theory]
+    [InlineData(MailLocales.Ru, "Здравствуйте!", "Спасибо,")]
+    [InlineData(MailLocales.Uk, "Вітаємо!", "Дякуємо,")]
+    [InlineData(MailLocales.En, "Hi,", "Thank You,")]
+    public void Письмо_начинается_приветствием_и_кончается_подписью(string язык, string привет, string спасибо)
+    {
+        var справочник = new MailTemplates([new MailOwnTemplates()]);
+
+        var (_, тело) = справочник.Render(MailKinds.Test, язык, ЗначенийНет);
+
+        тело.ShouldStartWith(привет + "\n\n");
+        тело.ShouldEndWith("\n\n" + спасибо + "\nEAMS ssl sender\n");
     }
 
     // --- подстановка ------------------------------------------------------------------------

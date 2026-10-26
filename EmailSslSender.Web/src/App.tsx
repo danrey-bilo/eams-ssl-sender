@@ -109,7 +109,7 @@ function Shell({ me, onRenamed, onLogout }: { me: Me; onRenamed: () => void; onL
   const page = MOVED[first] ? 'settings' : first in TITLES ? first : 'delivery';
   const sub = MOVED[first] ? first : second;
 
-  useEffect(() => { document.title = TITLES[page] + ' · SSL Sender'; }, [page]);
+  useEffect(() => { document.title = TITLES[page] + ' · EAMS ssl sender'; }, [page]);
 
   const content = (
     <main key={page}>

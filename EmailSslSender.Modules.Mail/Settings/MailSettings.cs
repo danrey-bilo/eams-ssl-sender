@@ -1,3 +1,4 @@
+using EmailSslSender.Shared;
 using EmailSslSender.Shared.Contracts.Settings;
 
 namespace EmailSslSender.Modules.Mail.Settings;
@@ -106,7 +107,7 @@ internal static class MailSettings
     /// <summary>Имя отправителя в заголовке From.</summary>
     public static readonly SettingKey<string> FromName = new(
         "mail.from_name",
-        Default: "Email SSL Sender",
+        Default: Product.Name,
         "From name",
         "Display name in the From header.",
         Category,

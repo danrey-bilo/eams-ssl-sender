@@ -1,4 +1,4 @@
-# Email SSL Sender — стек для Portainer (Stacks → Add stack → Upload) или для `docker compose up -d`.
+# EAMS ssl sender — стек для Portainer (Stacks → Add stack → Upload) или для `docker compose up -d`.
 #
 # Все значения — в .env (Portainer: «Load variables from .env file»). Секреты приходят переменными:
 # в Portainer нет файлов секретов на сервере. Подробно — README.md рядом.

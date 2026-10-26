@@ -32,6 +32,23 @@ internal static class CertificateFormats
         return тип is not null && All.Contains(тип, StringComparer.Ordinal) ? тип : null;
     }
 
+    /// <summary>
+    /// Основа имени файла из Common Name: <c>*.example.com</c> → <c>wildcard.example.com</c>.
+    /// </summary>
+    /// <remarks>
+    /// Звёздочка и всё, что не годится в имя файла на любой системе, заменяются: имя уезжает и во
+    /// вложение письма, и в <c>Content-Disposition</c> выгрузки.
+    /// </remarks>
+    public static string FileBase(string commonName)
+    {
+        ArgumentNullException.ThrowIfNull(commonName);
+
+        var основа = commonName.Replace("*", "wildcard", StringComparison.Ordinal);
+        var чистое = new string([.. основа.Select(с => char.IsLetterOrDigit(с) || с is '.' or '-' or '_' ? с : '_')]);
+
+        return чистое.Length == 0 ? "certificate" : чистое;
+    }
+
     /// <summary>Расширение файла для типа.</summary>
     public static string Extension(string format) => format switch
     {

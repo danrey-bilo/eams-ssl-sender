@@ -55,7 +55,7 @@ public sealed class QueueTests(MailDatabase база) : IAsyncLifetime
         var письма = await Письма(адрес);
 
         письма.Count.ShouldBe(1);
-        письма[0].Subject.ShouldBe("Email SSL Sender: проверка почты");
+        письма[0].Subject.ShouldBe("EAMS ssl sender: проверка почты");
         письма[0].SentAt.ShouldBeNull();
         письма[0].Attempts.ShouldBe(0);
     }
@@ -101,7 +101,7 @@ public sealed class QueueTests(MailDatabase база) : IAsyncLifetime
             .ShouldContain("настроена верно");
 
         // А тема открыта: секрета в ней нет, и при разборе она отвечает на первый вопрос.
-        письмо.Subject.ShouldBe("Email SSL Sender: проверка почты");
+        письмо.Subject.ShouldBe("EAMS ssl sender: проверка почты");
     }
 
     // --- отказы -----------------------------------------------------------------------------

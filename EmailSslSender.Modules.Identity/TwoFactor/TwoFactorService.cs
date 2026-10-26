@@ -1,3 +1,4 @@
+using EmailSslSender.Shared;
 using EmailSslSender.Shared.Contracts.Tokens;
 using System.Net;
 using System.Security.Cryptography;
@@ -71,7 +72,7 @@ internal sealed class TwoFactorService(
     /// старое имя остаётся в приложении, и две записи с разными подписями читаются как две
     /// разные системы.
     /// </remarks>
-    private const string Issuer = "Email SSL Sender";
+    private const string Issuer = Product.Name;
 
     /// <summary>
     /// Завести секрет и показать его человеку.

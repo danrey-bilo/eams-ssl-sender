@@ -1,3 +1,4 @@
+using System.IO.Compression;
 using System.Text;
 using EmailSslSender.Modules.KeyManager.Client;
 using EmailSslSender.Modules.KeyManager.Contracts;
@@ -59,9 +60,18 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         письмо.Kind.ShouldBe(CertificateMail.Kind);
         письмо.Values["serial_number"].ShouldBe("aa01");
         письмо.Values["expires_on"].ShouldBe("01.01.2027");
-        письмо.Values["files"].ShouldBe("site.example.com.pem, site.example.com.key");
-        письмо.Attachments.Select(ф => ф.FileName).ShouldBe(["site.example.com.pem", "site.example.com.key"]);
-        Encoding.ASCII.GetString(письмо.Attachments[1].Content).ShouldBe("KEY:aa01");
+        письмо.Values["formats"].ShouldBe("PEM, KEY");
+        письмо.Values["archive"].ShouldBe("site.example.com.zip");
+        письмо.Values["files"].ShouldBe("  • site.example.com.pem\n  • site.example.com.key");
+
+        // ⚠ Одно вложение — архив: Outlook блокирует .crt, .cer и .der отдельными файлами.
+        var архив = письмо.Attachments.ShouldHaveSingleItem();
+        архив.FileName.ShouldBe("site.example.com.zip");
+        архив.ContentType.ShouldBe("application/zip");
+
+        var файлы = Распаковать(архив);
+        файлы.Select(ф => ф.Name).ShouldBe(["site.example.com.pem", "site.example.com.key"]);
+        Encoding.ASCII.GetString(файлы[1].Content).ShouldBe("KEY:aa01");
 
         var подписка = await Прочитать(id);
         подписка.LastSentSerial.ShouldBe("aa01");
@@ -429,11 +439,13 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         var a = база.Почта.Письма.Single(п => п.To == "a@example.com");
         a.Values["files"].ShouldEndWith(CertificateMail.PassphraseFile);
         a.Values.Values.ShouldNotContain(з => з.Contains("пароль-a", StringComparison.Ordinal));
-        Encoding.UTF8.GetString(a.Attachments.Single(ф => ф.FileName == CertificateMail.PassphraseFile).Content)
+        Encoding.UTF8.GetString(Распаковать(a.Attachments.ShouldHaveSingleItem())
+                .Single(ф => ф.Name == CertificateMail.PassphraseFile).Content)
             .Trim().ShouldBe("пароль-a");
 
         var b = база.Почта.Письма.Single(п => п.To == "b@example.com");
-        b.Attachments.ShouldNotContain(ф => ф.FileName == CertificateMail.PassphraseFile);
+        Распаковать(b.Attachments.ShouldHaveSingleItem())
+            .ShouldNotContain(ф => ф.Name == CertificateMail.PassphraseFile);
     }
 
     [Theory]
@@ -615,5 +627,20 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
 
         return await db.Set<CertificateSubscription>().AsNoTracking().SingleAsync(п => п.Id == id, Ct);
+    }
+
+    /// <summary>Содержимое архива-вложения: имя и байты каждого файла, по порядку.</summary>
+    private static List<(string Name, byte[] Content)> Распаковать(MailAttachment архив)
+    {
+        using var архивZip = new ZipArchive(new MemoryStream(архив.Content), ZipArchiveMode.Read);
+
+        return [.. архивZip.Entries.Select(запись =>
+        {
+            using var поток = запись.Open();
+            using var копия = new MemoryStream();
+            поток.CopyTo(копия);
+
+            return (запись.FullName, копия.ToArray());
+        })];
     }
 }

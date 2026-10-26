@@ -466,9 +466,7 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
     /// </remarks>
     internal static string ИмяПоУмолчанию(string commonName, string тип, string? упаковка = null)
     {
-        var основа = commonName.Replace("*", "wildcard", StringComparison.Ordinal);
-        var чистое = new string([.. основа.Select(с => char.IsLetterOrDigit(с) || с is '.' or '-' or '_' ? с : '_')]);
-        var имя = $"{(чистое.Length == 0 ? "certificate" : чистое)}.{CertificateFormats.Extension(тип)}";
+        var имя = $"{CertificateFormats.FileBase(commonName)}.{CertificateFormats.Extension(тип)}";
 
         return упаковка is null ? имя : $"{имя}.{упаковка}";
     }

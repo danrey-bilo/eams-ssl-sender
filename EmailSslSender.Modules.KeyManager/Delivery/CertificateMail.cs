@@ -1,4 +1,5 @@
 using System.Globalization;
+using EmailSslSender.Modules.KeyManager.Client;
 using EmailSslSender.Shared.Contracts.Mail;
 
 namespace EmailSslSender.Modules.KeyManager.Delivery;
@@ -28,8 +29,9 @@ internal enum DeliveryReason
 /// фактором, и предел пять писем в час на адрес оставил бы сотрудника на шести подписках без
 /// шестого сертификата.
 ///
-/// ⚠ <b>Три строки, и это решение владельца</b>: имя, срок, файлы. Ни причины отправки, ни
-/// предупреждений — получателю нужны файлы, а не пояснения.
+/// ⚠ <b>Формат — решение владельца 2026-10-26:</b> что это, сертификат с форматами и сроком, что
+/// лежит в архиве. Приветствие и подпись с именем сервиса добавляет рамка почты (<c>MailFrame</c>),
+/// причина отправки в письмо не входит. Файлы — одним архивом ZIP (<see cref="CertificateArchive"/>).
 /// </remarks>
 internal sealed class CertificateMail : IMailTemplateProvider
 {
@@ -41,24 +43,33 @@ internal sealed class CertificateMail : IMailTemplateProvider
         new(
             Kind,
             MailLocales.Ru,
-            "Сертификат {common_name}",
-            "Сертификат: {common_name}\n"
-            + "Действует до: {expires_on}\n"
-            + "Файлы: {files}\n"),
+            "SSL-сертификат {common_name}",
+            "Отправляем файлы SSL-сертификата.\n\n"
+            + "Сертификат: {common_name}\n"
+            + "Форматы: {formats}\n"
+            + "Действует до: {expires_on}\n\n"
+            + "Во вложении — архив {archive}:\n"
+            + "{files}\n"),
         new(
             Kind,
             MailLocales.Uk,
-            "Сертифікат {common_name}",
-            "Сертифікат: {common_name}\n"
-            + "Дійсний до: {expires_on}\n"
-            + "Файли: {files}\n"),
+            "SSL-сертифікат {common_name}",
+            "Надсилаємо файли SSL-сертифіката.\n\n"
+            + "Сертифікат: {common_name}\n"
+            + "Формати: {formats}\n"
+            + "Дійсний до: {expires_on}\n\n"
+            + "У вкладенні — архів {archive}:\n"
+            + "{files}\n"),
         new(
             Kind,
             MailLocales.En,
-            "Certificate {common_name}",
-            "Certificate: {common_name}\n"
-            + "Valid until: {expires_on}\n"
-            + "Files: {files}\n"),
+            "SSL certificate {common_name}",
+            "Please find the files of the SSL certificate attached.\n\n"
+            + "Certificate: {common_name}\n"
+            + "Formats: {formats}\n"
+            + "Valid until: {expires_on}\n\n"
+            + "The attached archive {archive} contains:\n"
+            + "{files}\n"),
     ];
 
     public IReadOnlyCollection<string> UnthrottledKinds => [Kind];
@@ -72,9 +83,17 @@ internal sealed class CertificateMail : IMailTemplateProvider
         { } дата => дата.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
     };
 
-    /// <summary>Имя вложения с паролем закрытого ключа.</summary>
+    /// <summary>Форматы так, как их видит человек: по расширению файла — <c>KEY, CRT, PFX</c>.</summary>
+    public static string Formats(IEnumerable<string> formats) =>
+        string.Join(", ", formats.Select(ф => CertificateFormats.Extension(ф).ToUpperInvariant()));
+
+    /// <summary>Содержимое архива списком — по файлу в строке.</summary>
+    public static string Files(IEnumerable<MailAttachment> files) =>
+        string.Join("\n", files.Select(ф => "  • " + ф.FileName));
+
+    /// <summary>Имя файла с паролем закрытого ключа внутри архива.</summary>
     /// <remarks>
-    /// ⚠ Пароль — вложением, не в теле: тело живёт в очереди до уборки, а вложения стираются
+    /// ⚠ Пароль — файлом в архиве, не в теле: тело живёт в очереди до уборки, а вложение стирается
     /// сразу после отправки.
     /// </remarks>
     public const string PassphraseFile = "passphrase.txt";

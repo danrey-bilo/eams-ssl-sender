@@ -1,4 +1,4 @@
-# Email SSL Sender
+# EAMS ssl sender
 
 Рассылка SSL-сертификатов из **ManageEngine Key Manager Plus** по почте. Сертификат обновился
 в Key Manager Plus — нужные люди получают его файлы письмом. Без ручной выгрузки и пересылки.
@@ -9,14 +9,27 @@
 - **Почта через ваш SMTP** по SSL/TLS, очередь с повторами.
 - **Docker:** один образ сервиса, PostgreSQL и Cloudflare Tunnel — без открытых портов на сервере.
 
-Письмо получателю:
+Письмо получателю — файлы одним архивом ZIP (Outlook блокирует вложения `.crt`, `.cer`, `.der`):
 
 ```
-Тема: Сертификат example.com
+Тема: SSL-сертификат example.com
+Вложение: example.com.zip
+
+Здравствуйте!
+
+Отправляем файлы SSL-сертификата.
 
 Сертификат: example.com
+Форматы: CRT, KEY
 Действует до: 08.01.2027
-Файлы: example.com.crt, example.com.key, passphrase.txt
+
+Во вложении — архив example.com.zip:
+  • example.com.crt
+  • example.com.key
+  • passphrase.txt
+
+Спасибо,
+EAMS ssl sender
 ```
 
 ---
@@ -338,7 +351,9 @@ mkdir -p backups && docker compose exec -T postgres pg_dump -U sender sender > b
 ## Справочник
 
 [docs/REFERENCE.md](docs/REFERENCE.md) — устройство сервиса, REST API, все настройки, ротация
-мастер-ключа, разработка и тесты. Изменения по версиям — [CHANGELOG.md](CHANGELOG.md).
+мастер-ключа, разработка и тесты. Какие методы REST API Key Manager Plus вызывает сервис и что
+каждый даёт — [docs/KEYMANAGER-API.md](docs/KEYMANAGER-API.md). Изменения по версиям —
+[CHANGELOG.md](CHANGELOG.md).
 
 **Сборка из исходников:** .NET SDK 10, Node 22+, Docker.
 
