@@ -6,10 +6,10 @@ using EmailSslSender.Modules.KeyManager.Delivery;
 using EmailSslSender.Modules.KeyManager.Domain;
 using EmailSslSender.Modules.KeyManager.Export;
 using EmailSslSender.Modules.KeyManager.Secrets;
-using EmailSslSender.Shared.Contracts.Audit;
-using EmailSslSender.Shared.Contracts.Authz;
-using EmailSslSender.Shared.Data;
-using EmailSslSender.Shared.Errors;
+using Modules.Core.Contracts.Audit;
+using Modules.Core.Contracts.Authz;
+using Modules.Core.Data;
+using Modules.Core.Errors;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -81,9 +81,10 @@ internal sealed record PrivateKeyOut(
 /// только на адрес, для которого его ввели (<see cref="ApiKeyStore"/>).
 /// </remarks>
 [ApiController]
+[AuthenticatedEndpoint("ролей в проекте нет: каждая учётная запись — администратор Key Manager Plus")]
 [Route("api/keymanager")]
 internal sealed class KeyManagerController(
-    SenderDbContext db,
+    AppDbContext db,
     ApiKeyStore apiKey,
     IKeyManagerConnector connector,
     CertificateExport export,
@@ -136,8 +137,7 @@ internal sealed class KeyManagerController(
                     Changes: new Dictionary<string, object?>(StringComparer.Ordinal)
                     {
                         ["set"] = !string.IsNullOrWhiteSpace(body.ApiKey),
-                    },
-                    LogChanges: true));
+                    }));
 
                 await db.SaveChangesAsync(token);
             },
@@ -297,7 +297,7 @@ internal sealed class KeyManagerController(
     /// причина до администратора не доехала бы (разбор у <c>MAIL_SEND_FAILED</c>).
     /// </remarks>
     internal static AppException Unavailable(KeyManagerException ошибка) => new(
-        ErrorCodes.KeyManagerUnavailable,
+        KeyManagerErrorCodes.Unavailable,
         "Key Manager Plus не ответил или отказал.",
         HttpStatusCode.Conflict,
         new Dictionary<string, object?>(StringComparer.Ordinal) { ["reason"] = ошибка.Message });

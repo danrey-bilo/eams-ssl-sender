@@ -1,7 +1,7 @@
 using System.Reflection;
 using System.Text;
-using EmailSslSender.Modules.Identity;
-using EmailSslSender.Shared.Errors;
+using Modules.Identity.Contracts;
+using Modules.Core.Errors;
 
 namespace EmailSslSender.Api.Infrastructure;
 

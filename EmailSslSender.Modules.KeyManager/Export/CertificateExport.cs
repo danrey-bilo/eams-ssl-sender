@@ -5,9 +5,9 @@ using EmailSslSender.Modules.KeyManager.Client;
 using EmailSslSender.Modules.KeyManager.Contracts;
 using EmailSslSender.Modules.KeyManager.Delivery;
 using EmailSslSender.Modules.KeyManager.Domain;
-using EmailSslSender.Shared.Contracts.Audit;
-using EmailSslSender.Shared.Data;
-using EmailSslSender.Shared.Errors;
+using Modules.Core.Contracts.Audit;
+using Modules.Core.Data;
+using Modules.Core.Errors;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -44,7 +44,7 @@ internal sealed record PrivateKeyText(string PrivateKey, string? Passphrase)
 /// отправка: выключатель останавливает опрос и рассылку, а не доступ администратора к ключам.
 /// </remarks>
 internal sealed class CertificateExport(
-    SenderDbContext db,
+    AppDbContext db,
     IKeyManagerConnector connector,
     IAuditWriter audit,
     ILogger<CertificateExport> log)
@@ -168,9 +168,9 @@ internal sealed class CertificateExport(
 
     /// <summary>Строка журнала: какой сертификат и в каком виде — без содержимого.</summary>
     /// <remarks>
-    /// ⚠ <c>LogChanges</c> — под поручительство: Common Name — имя сервера, серийный номер и тип
-    /// файла — не сведения о человеке и не секрет. Без них строка «показан ключ» не отвечала бы на
-    /// главный вопрос: чей.
+    /// ⚠ Изменения пишутся в лог со значениями (писатель журнала хоста делает так для событий
+    /// модуля): Common Name — имя сервера, серийный номер и тип файла — не сведения о человеке и не
+    /// секрет. Без них строка «показан ключ» не отвечала бы на главный вопрос: чей.
     /// </remarks>
     private static AuditEntry Строка(AuditAction событие, KnownCertificate сертификат, string? формат)
     {
@@ -188,8 +188,7 @@ internal sealed class CertificateExport(
         return new AuditEntry(
             событие,
             ResourceType: KeyManagerActions.CertificateResource,
-            Changes: изменения,
-            LogChanges: true);
+            Changes: изменения);
     }
 
     /// <summary>Пара из снимка опроса — или 404.</summary>
@@ -202,7 +201,7 @@ internal sealed class CertificateExport(
             .AsNoTracking()
             .FirstOrDefaultAsync(с => с.CommonName == имя && с.SerialNumber == серийный, cancellationToken)
         ?? throw new AppException(
-            ErrorCodes.KeyManagerCertificateNotFound,
+            KeyManagerErrorCodes.CertificateNotFound,
             "Такого сертификата нет среди тех, что видел опрос Key Manager Plus.",
             HttpStatusCode.NotFound);
 

@@ -1,6 +1,6 @@
 using EmailSslSender.Modules.KeyManager.Client;
 using EmailSslSender.Modules.KeyManager.Domain;
-using EmailSslSender.Shared.Data;
+using Modules.Core.Data;
 using Microsoft.EntityFrameworkCore;
 
 namespace EmailSslSender.Modules.KeyManager.Delivery;
@@ -45,7 +45,7 @@ internal sealed class CertificateSnapshot(
 /// <summary>
 /// Запросить список у Key Manager Plus, запомнить его и вернуть снимок.
 /// </summary>
-internal sealed class CertificateSnapshots(SenderDbContext db, TimeProvider clock)
+internal sealed class CertificateSnapshots(AppDbContext db, TimeProvider clock)
 {
     /// <summary>
     /// Сколько хранить пару, которой больше нет в Key Manager Plus.
@@ -66,7 +66,7 @@ internal sealed class CertificateSnapshots(SenderDbContext db, TimeProvider cloc
     /// удалённые из Key Manager Plus или чужие (заглушка, старая установка): их не показывают и
     /// не выгружают.
     /// </remarks>
-    public static IQueryable<KnownCertificate> Current(SenderDbContext db) =>
+    public static IQueryable<KnownCertificate> Current(AppDbContext db) =>
         db.Set<KnownCertificate>().Where(с =>
             с.LastSeenAt >= db.Set<KnownCertificate>().Max(в => в.LastSeenAt));
 

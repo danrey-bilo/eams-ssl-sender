@@ -22,6 +22,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\EmailSslSender.Modules.KeyManager\EmailSslSender.Modules.KeyManager.csproj" />
+    <!-- Конверт и связка мастер-ключа — настоящие, из крипты модулей EAMS. -->
+    <ProjectReference Include="..\modules\crypto\src\Modules.Crypto\Modules.Crypto.csproj" />
   </ItemGroup>
 
   <ItemGroup>

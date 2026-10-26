@@ -1,10 +1,6 @@
 using EmailSslSender.Api.Infrastructure;
-using EmailSslSender.Shared.Data;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
-using Microsoft.Extensions.Hosting;
 using Testcontainers.PostgreSql;
 
 namespace EmailSslSender.IntegrationTests;
@@ -31,6 +27,7 @@ public sealed class SchemaGateTests : IAsyncLifetime
         .WithPassword("тест-не-секрет")
         .Build();
 
+    private readonly string _мастерКлюч = MigrateCommand.NewMasterKey();
 
     public async ValueTask InitializeAsync() =>
         await _postgres.StartAsync();
@@ -48,7 +45,7 @@ public sealed class SchemaGateTests : IAsyncLifetime
         // Сообщение обязано нести три вещи: что не так, чего не хватает поимённо и что
         // набрать. Без третьего оператор в три часа ночи вспоминает синтаксис по памяти.
         отказ.Message.ShouldContain("Схема базы отстала");
-        отказ.Message.ShouldContain("InitialCreate");
+        отказ.Message.ShouldContain("identity: 20261022231421_Baseline");
         // ⚠ Именно `run --rm migrate` — отдельная служба: только у неё пароль владельца схемы,
         // служба api ходит ролью без права менять схему. И БЕЗ `dotnet EmailSslSender.Api.dll`:
         // у образа это `ENTRYPOINT`, а команду `migrate` служба передаёт сама.
@@ -74,38 +71,9 @@ public sealed class SchemaGateTests : IAsyncLifetime
         response.IsSuccessStatusCode.ShouldBeTrue();
     }
 
-    /// <summary>
-    /// Накатить схему, не поднимая приложения.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Модули здесь не подключаются, и они не нужны: миграции — это классы в сборке хоста,
-    /// а не модель. Контекст без конфигураций модулей знает пустую модель и всё равно
-    /// применяет все миграции. В производстве ту же работу делает команда <c>migrate</c>,
-    /// и она тоже возвращается раньше проверки.
-    ///
-    /// ⚠ ⚠ <b>А вот утверждение «<c>MigrateAsync</c> исполняет миграции, а не сверяет с
-    /// моделью» было НЕВЕРНЫМ, и оно стоило разбора</b> (подэтап 27.4). Сверяет: внутри
-    /// <c>Migrator.ValidateMigrations</c>, и на пустой модели поднимает
-    /// <c>PendingModelChangesWarning</c> — а он настроен ошибкой. Здесь этого не видно лишь
-    /// потому, что база свежая и миграции есть что применять; на уже накатанной схеме тот же
-    /// вызов бросит. Поэтому предупреждение глушится явно — ровно как в <c>SenderHost</c>, шаг 1,
-    /// где эта же опасность была названа с самого начала. Два файла одного коммита обращались
-    /// с одной известной опасностью по-разному; теперь одинаково.
-    /// </remarks>
-    private async Task МигрироватьAsync()
-    {
-        var options = new DbContextOptionsBuilder<SenderDbContext>()
-            .UseNpgsql(
-                _postgres.GetConnectionString(),
-                npgsql => npgsql.MigrationsAssembly(typeof(DatabaseStartup).Assembly.FullName))
-            .ConfigureWarnings(предупреждения =>
-                предупреждения.Ignore(RelationalEventId.PendingModelChangesWarning))
-            .Options;
-
-        await using var контекст = new SenderDbContext(options, []);
-
-        await контекст.Database.MigrateAsync(Ct);
-    }
+    /// <summary>Накатить схему, не поднимая приложения, — командой migrate того же хоста.</summary>
+    private async Task МигрироватьAsync() =>
+        (await MigrateCommand.RunAsync(_postgres.GetConnectionString(), _мастерКлюч)).ShouldBe(0);
 
     // --- обвязка ---------------------------------------------------------------------
 
@@ -117,8 +85,6 @@ public sealed class SchemaGateTests : IAsyncLifetime
         {
             builder.UseEnvironment("Development");
             builder.UseSetting("ConnectionStrings:Postgres", _postgres.GetConnectionString());
-            builder.UseSetting(
-                MasterKeyFile.InlineKey,
-                Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)));
+            builder.UseSetting(MasterKeyFile.InlineKey, _мастерКлюч);
         });
 }

@@ -31,7 +31,8 @@ indent_size = 4
 dotnet_diagnostic.IDE0005.severity = warning
 
 # Миграции генерирует `dotnet ef` — руками их не правят, стилевые правила к ним не относятся.
-[EmailSslSender.Api/Migrations/*.cs]
+# Прежний набор хоста, набор проекта и набор модуля Key Manager.
+[{EmailSslSender.Api/Migrations,EmailSslSender.Api/Schema/Migrations,EmailSslSender.Modules.KeyManager/Schema/Migrations}/*.cs]
 generated_code = true
 
 [*.{csproj,props,targets,slnx}]

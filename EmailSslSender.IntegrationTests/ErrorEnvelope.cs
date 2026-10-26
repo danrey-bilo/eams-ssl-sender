@@ -1,8 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
-using EmailSslSender.Api.Infrastructure;
-using EmailSslSender.Shared.Errors;
+using Modules.Hosting;
+using Modules.Core.Errors;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -51,11 +51,11 @@ public sealed class ErrorEnvelope(SenderHost host)
         // За туннелем и обратным прокси номер могут присвоить раньше нас. Завести свой
         // означало бы разорвать цепочку ровно там, где она нужнее всего.
         using var request = new HttpRequestMessage(HttpMethod.Get, "/api/health");
-        request.Headers.Add(RequestIdMiddleware.HeaderName, "снаружи-123");
+        request.Headers.Add(RequestIdMiddleware.HeaderName, "outside-123");
 
         var response = await host.CreateClient().SendAsync(request, Ct);
 
-        response.Headers.GetValues(RequestIdMiddleware.HeaderName).Single().ShouldBe("снаружи-123");
+        response.Headers.GetValues(RequestIdMiddleware.HeaderName).Single().ShouldBe("outside-123");
     }
 
     /// <summary>Номер с управляющим знаком заменяется своим, а не роняет запрос.</summary>

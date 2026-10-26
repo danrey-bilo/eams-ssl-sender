@@ -135,13 +135,28 @@ public static partial class RuntimeRole
                 ("r", role));
         }
 
-        if (await ЗначениеAsync<bool>(
-                connection, транзакция, "SELECT to_regclass('public.\"__EFMigrationsHistory\"') IS NOT NULL", cancellationToken))
+        // ⚠ Таблицы истории миграций — прежняя хоста и по одной на набор модуля (решение EAMS 0114):
+        // читать их сервису нужно (проверка схемы при старте), менять — нет.
+        var истории = new List<string>();
+
+        await using (var список = new NpgsqlCommand(
+            "SELECT tablename FROM pg_tables WHERE schemaname = 'public' "
+            + "AND (tablename = '__EFMigrationsHistory' OR starts_with(tablename, '__ef_history_'))",
+            connection, транзакция))
+        await using (var читатель = await список.ExecuteReaderAsync(cancellationToken))
+        {
+            while (await читатель.ReadAsync(cancellationToken))
+            {
+                истории.Add(читатель.GetString(0));
+            }
+        }
+
+        foreach (var история in истории)
         {
             await ВыполнитьСобраннуюAsync(
                 connection, транзакция,
-                "SELECT format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.%I FROM %I', '__EFMigrationsHistory', @r::text)",
-                cancellationToken, ("r", role));
+                "SELECT format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.%I FROM %I', @t::text, @r::text)",
+                cancellationToken, ("t", история), ("r", role));
         }
 
         // В PostgreSQL 15+ так уже по умолчанию; явно — на случай базы, обновлённой со старой версии.

@@ -1,4 +1,4 @@
-using EmailSslSender.Shared.Contracts.Authz;
+using Modules.Core.Contracts.Authz;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Routing;

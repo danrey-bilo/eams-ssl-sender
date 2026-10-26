@@ -1,17 +1,21 @@
+using EmailSslSender.Modules.KeyManager.Contracts;
 using System.Text;
 using EmailSslSender.Modules.KeyManager.Client;
 using EmailSslSender.Modules.KeyManager.Delivery;
 using EmailSslSender.Modules.KeyManager.Export;
+using EmailSslSender.Modules.KeyManager.Schema;
 using EmailSslSender.Modules.KeyManager.Secrets;
 using EmailSslSender.Modules.KeyManager.Storage;
-using EmailSslSender.Shared.Contracts.Audit;
-using EmailSslSender.Shared.Contracts.Authz;
-using EmailSslSender.Shared.Contracts.Data;
-using EmailSslSender.Shared.Contracts.Mail;
-using EmailSslSender.Shared.Contracts.Settings;
-using EmailSslSender.Shared.Crypto;
-using EmailSslSender.Shared.Data;
+using Modules.Core.Contracts.Audit;
+using Modules.Core.Contracts.Authz;
+using Modules.Core.Contracts.Data;
+using Modules.Core.Contracts.Mail;
+using Modules.Core.Contracts.Settings;
+using Modules.Core.Errors;
+using Modules.Crypto;
+using Modules.Core.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Testcontainers.PostgreSql;
@@ -67,7 +71,9 @@ public sealed class KeyManagerDatabase : IAsyncLifetime
 
         services.AddLogging(строитель => строитель.AddProvider(Логи));
         services.AddSingleton<IEntityConfigurationProvider, KeyManagerTables>();
-        services.AddDbContext<SenderDbContext>(options => options.UseNpgsql(_postgres.GetConnectionString()));
+        services.AddDbContext<AppDbContext>(options => options
+            .UseNpgsql(_postgres.GetConnectionString())
+            .ReplaceService<IModelCacheKeyFactory, AppModelCacheKeyFactory>());
         services.AddSingleton<TimeProvider>(Часы);
         services.AddSingleton<ICurrentUser>(Личность);
         services.AddSingleton<ISecretEnvelope>(Конверт);
@@ -85,8 +91,8 @@ public sealed class KeyManagerDatabase : IAsyncLifetime
 
         _services = services.BuildServiceProvider();
 
-        await using var scope = Scope();
-        await scope.ServiceProvider.GetRequiredService<SenderDbContext>().Database.EnsureCreatedAsync();
+        // ⚠ Таблицы — базовой миграцией набора модуля, а не EnsureCreated: так проверяется и она.
+        await KeyManagerSchema.Declaration.MigrateAsync(_postgres.GetConnectionString());
     }
 
     public async ValueTask DisposeAsync()
@@ -133,6 +139,8 @@ public sealed class ПодвижныеЧасы(DateTimeOffset start) : TimeProvi
 public sealed class ПодставнаяЛичность : ICurrentUser
 {
     public Guid? Id { get; set; } = Guid.CreateVersion7();
+
+    public bool IsSuperuser => true;
 
     public AuditActorType ActorType { get; set; } = AuditActorType.User;
 
@@ -237,12 +245,13 @@ public sealed class ПодставнаяОчередь : IMailQueue
 
     public async Task<MailQueueResult> EnqueueAsync(
         string toAddress, string kind, string locale, IReadOnlyDictionary<string, string> values,
-        CancellationToken cancellationToken = default) =>
-        (await EnqueueAsync(toAddress, kind, locale, values, [], cancellationToken)).Result;
+        DateTimeOffset? expiresAt = null, CancellationToken cancellationToken = default) =>
+        (await EnqueueAsync(toAddress, kind, locale, values, [], expiresAt, cancellationToken)).Result;
 
     public Task<MailTicket> EnqueueAsync(
         string toAddress, string kind, string locale, IReadOnlyDictionary<string, string> values,
-        IReadOnlyList<MailAttachment> attachments, CancellationToken cancellationToken = default)
+        IReadOnlyList<MailAttachment> attachments, DateTimeOffset? expiresAt = null,
+        CancellationToken cancellationToken = default)
     {
         if (Ответ != MailQueueResult.Queued)
         {
@@ -372,8 +381,8 @@ internal sealed class ПодставнойKmp : IKeyManagerConnector, IKeyManage
     public Task<IKeyManagerClient> OpenAsync(CancellationToken cancellationToken = default) =>
         Настройки.Ready
             ? Task.FromResult<IKeyManagerClient>(this)
-            : throw new EmailSslSender.Shared.Errors.AppException(
-                EmailSslSender.Shared.Errors.ErrorCodes.KeyManagerNotConfigured,
+            : throw new AppException(
+                KeyManagerErrorCodes.NotConfigured,
                 "Key Manager Plus не настроен (подставной).",
                 System.Net.HttpStatusCode.Conflict);
 
@@ -450,6 +459,9 @@ public sealed class ПодвижныйКонверт : ISecretEnvelope
     public bool NeedsRewrap(WrappedDataKey key) => _текущий.NeedsRewrap(key);
 
     public WrappedDataKey Rewrap(WrappedDataKey key) => _текущий.Rewrap(key);
+
+    public (byte[] Sealed, int KeyVersion) SealForDevice(WrappedDataKey key, DeviceSealTarget target, Guid vaultId) =>
+        _текущий.SealForDevice(key, target, vaultId);
 
     private static SecretEnvelope Кольцо(int версий) => new(MasterKeyRing.FromKeys(
         версий == 1

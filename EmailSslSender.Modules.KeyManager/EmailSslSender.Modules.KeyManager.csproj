@@ -15,14 +15,19 @@
     <!-- ToTable, HasColumnType, FromSql, ExecuteSql живут в реляционном пакете, а не в ядре -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
     <!--
-      ⚠ Ссылки на Npgsql здесь нет, как и у остальных модулей: `text[]` и `ON CONFLICT` — это
-      строки схемы и SQL, провайдер подставляет хост.
+      Провайдер нужен набору миграций модуля (KeyManagerSchema): схему модуль несёт сам, как модули
+      EAMS (решение 0114). Рабочий контекст по-прежнему настраивает хост.
     -->
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
   </ItemGroup>
 
   <ItemGroup>
-    <!-- ⚠ Единственная ссылка на проект: почта и настройки — через контракты Shared (правило 1). -->
-    <ProjectReference Include="..\EmailSslSender.Shared\EmailSslSender.Shared.csproj" />
+    <!--
+      ⚠ Только фундамент модулей EAMS: ядро (контракты почты, настроек, журнала, базы) и крипта
+      (конверт секретов). Соседние модули — через контракты ядра, не ссылками (правило 1).
+    -->
+    <ProjectReference Include="..\modules\core\src\Modules.Core\Modules.Core.csproj" />
+    <ProjectReference Include="..\modules\crypto\src\Modules.Crypto\Modules.Crypto.csproj" />
   </ItemGroup>
 
 </Project>

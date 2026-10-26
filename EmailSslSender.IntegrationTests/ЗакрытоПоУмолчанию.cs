@@ -1,6 +1,6 @@
 using System.Net;
 using System.Text.Json.Nodes;
-using EmailSslSender.Shared.Contracts.Authz;
+using Modules.Core.Contracts.Authz;
 using Microsoft.AspNetCore.Mvc.Controllers;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
@@ -12,7 +12,8 @@ namespace EmailSslSender.IntegrationTests;
 /// </summary>
 /// <remarks>
 /// ⚠ ⚠ <b>Самое важное свойство конвейера, и проверяется оно на КАЖДОМ действии</b>, а не на
-/// выборке. Забытая пометка <see cref="PublicEndpointAttribute"/> даёт 401 — громко; обратная
+/// выборке. Забытая пометка <see cref="PublicEndpointAttribute"/> даёт 401, забытое объявление доступа —
+/// 403; обратная
 /// ошибка (фильтр перестал работать, действие открылось) не краснеет больше нигде.
 /// </remarks>
 [Collection(SenderHost.Collection)]
@@ -27,9 +28,11 @@ public sealed class ЗакрытоПоУмолчанию(SenderHost host)
 
         var ответ = await host.CreateClient().GetAsync("/api/test/unguarded", Ct);
 
-        ответ.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
+        // ⚠ Действие без объявления доступа закрыто для всех, вошедших тоже: это ошибка разработчика,
+        // и фильтр прав модуля хостинга отвечает отказом в праве, а не просьбой войти.
+        ответ.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
         var тело = JsonNode.Parse(await ответ.Content.ReadAsStringAsync(Ct))!;
-        тело["code"]!.GetValue<string>().ShouldBe("UNAUTHENTICATED");
+        тело["code"]!.GetValue<string>().ShouldBe("PERMISSION_DENIED");
     }
 
     [Fact]

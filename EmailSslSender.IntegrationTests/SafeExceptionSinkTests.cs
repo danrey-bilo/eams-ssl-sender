@@ -1,4 +1,4 @@
-using EmailSslSender.Api.Infrastructure;
+using Modules.Hosting;
 using Serilog;
 using Serilog.Core;
 using Serilog.Events;

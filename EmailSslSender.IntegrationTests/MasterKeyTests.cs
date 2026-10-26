@@ -139,10 +139,10 @@ public sealed class MasterKeyTests
     /// <summary>Тот же ли ключ: запечатать одним рингом, открыть другим.</summary>
     private static bool Same(MasterKeySource source, byte[] expected)
     {
-        var mine = new EmailSslSender.Shared.Crypto.SecretEnvelope(
-            EmailSslSender.Shared.Crypto.MasterKeyRing.FromKeys(new Dictionary<int, byte[]> { [1] = expected }));
+        var mine = new global::Modules.Crypto.SecretEnvelope(
+            global::Modules.Crypto.MasterKeyRing.FromKeys(new Dictionary<int, byte[]> { [1] = expected }));
 
-        var theirs = new EmailSslSender.Shared.Crypto.SecretEnvelope(source.Ring);
+        var theirs = new global::Modules.Crypto.SecretEnvelope(source.Ring);
 
         var wrapped = mine.CreateDataKey();
         var secret = mine.Seal(wrapped, [1, 2, 3], "тест:ключ");

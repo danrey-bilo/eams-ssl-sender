@@ -156,7 +156,13 @@ function InviteDialog({ onClose, onCreated }: { onClose: (done: boolean) => void
       title="Пригласить"
       note="Человек сам задаст пароль по ссылке."
       submit="Пригласить"
-      onSubmit={async () => onCreated(await api.post<UserCreated>('/api/users', { email: email.trim(), display_name: name.trim() || null }))}
+      onSubmit={async () => onCreated(await api.post<UserCreated>('/api/users', {
+        email: email.trim(),
+        display_name: name.trim() || null,
+        // Ролей нет: каждая учётная запись — администратор, а распоряжаться суперпользователем
+        // модуль учётных записей разрешает только суперпользователю.
+        is_superuser: true,
+      }))}
       onClose={onClose}
     >
       <Field label="Почта"><input type="email" required autoFocus placeholder="colleague@example.com" value={email} onChange={e => setEmail(e.target.value)} /></Field>

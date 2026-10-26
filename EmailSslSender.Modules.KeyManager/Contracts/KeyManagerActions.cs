@@ -1,4 +1,4 @@
-using EmailSslSender.Shared.Contracts.Audit;
+using Modules.Core.Contracts.Audit;
 
 namespace EmailSslSender.Modules.KeyManager.Contracts;
 
@@ -32,4 +32,24 @@ public static class KeyManagerActions
     /// <summary>Администратору показан закрытый ключ сертификата.</summary>
     public static readonly AuditAction PrivateKeyViewed =
         new("keymanager.private_key_viewed", "Показан закрытый ключ сертификата");
+
+    /// <summary>Все события модуля — для справочника журнала.</summary>
+    public static IReadOnlyList<AuditAction> All { get; } =
+    [
+        ApiKeySet,
+        SubscriptionCreated,
+        SubscriptionUpdated,
+        SubscriptionDeleted,
+        CertificateSent,
+        CertificateDownloaded,
+        PrivateKeyViewed,
+    ];
+}
+
+/// <summary>События журнала модуля — объявлением, а не строками по коду (решение EAMS 0117).</summary>
+internal sealed class KeyManagerAuditActions : IAuditActionProvider
+{
+    /// <inheritdoc />
+    public IReadOnlyList<AuditActionGroup> Groups { get; } =
+        [new("keymanager", KeyManagerActions.All, "Key Manager Plus")];
 }

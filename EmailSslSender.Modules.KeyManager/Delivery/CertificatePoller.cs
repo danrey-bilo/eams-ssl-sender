@@ -1,6 +1,6 @@
 using EmailSslSender.Modules.KeyManager.Settings;
-using EmailSslSender.Shared.Contracts.Settings;
-using EmailSslSender.Shared.Errors;
+using Modules.Core.Contracts.Settings;
+using Modules.Core.Errors;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;

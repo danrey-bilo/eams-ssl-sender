@@ -1,9 +1,9 @@
 using System.Globalization;
 using EmailSslSender.Modules.KeyManager.Client;
 using EmailSslSender.Modules.KeyManager.Domain;
-using EmailSslSender.Shared.Contracts.Authz;
-using EmailSslSender.Shared.Crypto;
-using EmailSslSender.Shared.Data;
+using Modules.Core.Contracts.Authz;
+using Modules.Crypto;
+using Modules.Core.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -28,7 +28,7 @@ namespace EmailSslSender.Modules.KeyManager.Secrets;
 /// (<see cref="GetForAsync"/>): она пишет сама, условным обновлением.
 /// </remarks>
 internal sealed class ApiKeyStore(
-    SenderDbContext db, ISecretEnvelope envelope, ICurrentUser current, TimeProvider clock, ILogger<ApiKeyStore> log)
+    AppDbContext db, ISecretEnvelope envelope, ICurrentUser current, TimeProvider clock, ILogger<ApiKeyStore> log)
 {
     /// <summary>
     /// Контекст AEAD ключа API.

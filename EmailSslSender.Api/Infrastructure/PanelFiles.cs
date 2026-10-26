@@ -1,5 +1,5 @@
 using System.Text.RegularExpressions;
-using EmailSslSender.Shared.Contracts.Authz;
+using Modules.Core.Contracts.Authz;
 
 namespace EmailSslSender.Api.Infrastructure;
 

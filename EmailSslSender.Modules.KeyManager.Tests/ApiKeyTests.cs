@@ -3,8 +3,8 @@ using EmailSslSender.Modules.KeyManager.Client;
 using EmailSslSender.Modules.KeyManager.Domain;
 using EmailSslSender.Modules.KeyManager.Secrets;
 using EmailSslSender.Modules.KeyManager.Settings;
-using EmailSslSender.Shared.Crypto;
-using EmailSslSender.Shared.Data;
+using Modules.Crypto;
+using Modules.Core.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -38,7 +38,7 @@ public sealed class ApiKeyTests(KeyManagerDatabase база) : IAsyncLifetime
         база.Конверт.Вернуть();
 
         await using var scope = база.Scope();
-        await scope.ServiceProvider.GetRequiredService<SenderDbContext>()
+        await scope.ServiceProvider.GetRequiredService<AppDbContext>()
             .Set<KeyManagerState>().ExecuteDeleteAsync(CancellationToken.None);
     }
 
@@ -124,7 +124,7 @@ public sealed class ApiKeyTests(KeyManagerDatabase база) : IAsyncLifetime
         // первым подменил адрес), а migrate привязывает его к адресу из настроек.
         await using (var scope = база.Scope())
         {
-            var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var ключДанных = база.Конверт.CreateDataKey();
 
             db.Set<KeyManagerState>().Add(new KeyManagerState
@@ -225,7 +225,7 @@ public sealed class ApiKeyTests(KeyManagerDatabase база) : IAsyncLifetime
     private async Task Задать(string значение)
     {
         await using var scope = база.Scope();
-        var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         await scope.ServiceProvider.GetRequiredService<ApiKeyStore>().PutAsync(
             значение,
@@ -240,7 +240,7 @@ public sealed class ApiKeyTests(KeyManagerDatabase база) : IAsyncLifetime
     {
         await using var scope = база.Scope();
 
-        return await scope.ServiceProvider.GetRequiredService<SenderDbContext>()
+        return await scope.ServiceProvider.GetRequiredService<AppDbContext>()
             .Set<KeyManagerState>().AsNoTracking().SingleAsync(Ct);
     }
 }

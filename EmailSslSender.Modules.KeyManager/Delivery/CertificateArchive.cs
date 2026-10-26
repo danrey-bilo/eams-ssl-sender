@@ -1,5 +1,5 @@
 using System.IO.Compression;
-using EmailSslSender.Shared.Contracts.Mail;
+using Modules.Core.Contracts.Mail;
 
 namespace EmailSslSender.Modules.KeyManager.Delivery;
 

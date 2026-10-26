@@ -1,4 +1,4 @@
-using EmailSslSender.Shared.Errors;
+using Modules.Core.Errors;
 using Npgsql;
 
 namespace EmailSslSender.Api.Infrastructure;

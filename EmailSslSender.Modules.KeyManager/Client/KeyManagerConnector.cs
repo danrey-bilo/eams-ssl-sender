@@ -1,9 +1,10 @@
+using EmailSslSender.Modules.KeyManager.Contracts;
 using System.Net;
 using System.Security.Cryptography.X509Certificates;
 using EmailSslSender.Modules.KeyManager.Secrets;
 using EmailSslSender.Modules.KeyManager.Settings;
-using EmailSslSender.Shared.Contracts.Settings;
-using EmailSslSender.Shared.Errors;
+using Modules.Core.Contracts.Settings;
+using Modules.Core.Errors;
 
 namespace EmailSslSender.Modules.KeyManager.Client;
 
@@ -81,7 +82,7 @@ internal sealed class KeyManagerConnector(ISettingsReader settings, ApiKeyStore 
         if (!настройки.Ready)
         {
             throw new AppException(
-                ErrorCodes.KeyManagerNotConfigured,
+                KeyManagerErrorCodes.NotConfigured,
                 "Key Manager Plus не настроен: задайте keymanager.base_url и ключ API.",
                 HttpStatusCode.Conflict);
         }
@@ -106,7 +107,7 @@ internal sealed class KeyManagerConnector(ISettingsReader settings, ApiKeyStore 
         var ключ = await apiKey.GetForAsync(
                 ApiKeyStore.Target(настройки.BaseUrl, настройки.ServerSha256), cancellationToken)
             ?? throw new AppException(
-                ErrorCodes.KeyManagerNotConfigured, "Ключ API Key Manager Plus не задан.", HttpStatusCode.Conflict);
+                KeyManagerErrorCodes.NotConfigured, "Ключ API Key Manager Plus не задан.", HttpStatusCode.Conflict);
 
         var обработчик = new SocketsHttpHandler
         {

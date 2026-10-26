@@ -1,7 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
-using EmailSslSender.Shared.Data;
+using Modules.Core.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -141,8 +141,12 @@ public sealed class SettingsApi(SenderHost host)
         }
     }
 
+    /// <summary>
+    /// Модуль настроек закрывает кодом любую правку, не только ключи защиты: панель сама спрашивает код и
+    /// повторяет запрос.
+    /// </summary>
     [Fact]
-    public async Task Обычный_ключ_правится_и_с_давним_кодом()
+    public async Task Обычный_ключ_с_давним_кодом_просит_подтверждения()
     {
         await using var _ = await SystemSettingsFixture.НачатьAsync(host);
         Войти("settings.read", "settings.manage");
@@ -150,9 +154,11 @@ public sealed class SettingsApi(SenderHost host)
 
         try
         {
-            (await Править(new { values = new Dictionary<string, object?> { [Обычный] = 7 } }))
-                .StatusCode.ShouldBe(HttpStatusCode.OK);
-            (await Править(new { reset = new[] { Обычный } })).StatusCode.ShouldBe(HttpStatusCode.OK);
+            var ответ = await Править(new { values = new Dictionary<string, object?> { [Обычный] = 7 } });
+
+            ответ.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+            (await Код(ответ)).ShouldBe("SECOND_FACTOR_REQUIRED");
+            (await Строк()).ShouldBe(0);
         }
         finally
         {
@@ -169,9 +175,11 @@ public sealed class SettingsApi(SenderHost host)
         await using var _ = await SystemSettingsFixture.НачатьAsync(host);
         Войти("settings.read", "settings.manage", "settings.security.manage");
 
+        // Умолчание модуля — пять минут; десять задаёт набор миграций проекта значением установки.
         var окно = (await Прочитать()).First(строка => Ключ(строка) == "auth.step_up_minutes");
         окно["is_security"]!.GetValue<bool>().ShouldBeTrue();
-        окно["default"]!.GetValue<int>().ShouldBe(10);
+        окно["value"]!.GetValue<int>().ShouldBe(10);
+        окно["source"]!.GetValue<string>().ShouldBe("system");
         окно["minimum"]!.GetValue<double>().ShouldBe(1);
         окно["maximum"]!.GetValue<double>().ShouldBe(120);
 
@@ -301,7 +309,7 @@ public sealed class SettingsApi(SenderHost host)
     private async Task<List<string>> Записи()
     {
         await using var scope = host.Services.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         return await db.Database
             .SqlQueryRaw<string>(

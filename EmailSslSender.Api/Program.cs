@@ -4,24 +4,25 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using System.Text.Unicode;
-using System.Threading.RateLimiting;
 using EmailSslSender.Api.Infrastructure;
-using EmailSslSender.Modules.Identity;
+using EmailSslSender.Api.Schema;
 using EmailSslSender.Modules.KeyManager;
-using EmailSslSender.Modules.Mail;
-using EmailSslSender.Modules.Settings;
-using EmailSslSender.Modules.Tokens;
-using EmailSslSender.Shared.Api;
-using EmailSslSender.Shared.Contracts.Audit;
-using EmailSslSender.Shared.Contracts.Authz;
-using EmailSslSender.Shared.Contracts.Settings;
-using EmailSslSender.Shared.Crypto;
-using EmailSslSender.Shared.Data;
-using EmailSslSender.Shared.Errors;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.HttpOverrides;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Modules.Core.Composition;
+using Modules.Core.Contracts.Audit;
+using Modules.Core.Contracts.Authz;
+using Modules.Core.Contracts.Settings;
+using Modules.Core.Data;
+using Modules.Core.Errors;
+using Modules.Crypto;
+using Modules.Hosting;
+using Modules.Identity;
+using Modules.Mail;
+using Modules.Settings;
+using Modules.Tokens;
+using Npgsql;
 using Serilog;
 
 // ⚠ Проба здоровья контейнера — ДО построения приложения: ей не нужны ни секреты, ни база, и
@@ -48,24 +49,76 @@ builder.Host.UseSerilog((context, config) => config
         .WriteTo.Console(new Serilog.Formatting.Compact.RenderedCompactJsonFormatter())
         .CreateLogger())));
 
-// ⚠ Порядок модулей значим ровно в одном месте: учётные записи раньше токенов не обязательны,
-// но токены обязаны быть — без них вход невозможен, и TokenContractCheck роняет старт.
+// ⚠ Движок прав — ДО модуля токенов, и порядок несущий: токены оборачивают последнюю регистрацию
+// IPermissionChecker, сужая права ключа до прав хозяина. Ролей в проекте нет (AdministratorPermissions).
+builder.Services.AddScoped<IPermissionChecker, AdministratorPermissions>();
+
+// Модули EAMS — по строке на модуль; что в них выключено и почему — у каждого звена. Хост знает,
+// какие модули подключены, но не знает, что внутри.
 builder.Services
     .AddControllers(mvc =>
     {
-        // ⚠ DEFAULT DENY: каждое действие требует входа, кроме помеченных [PublicEndpoint].
-        mvc.Filters.Add<AuthenticationFilter>();
+        // ⚠ DEFAULT DENY: каждое действие объявляет доступ — вход, право или открытость с причиной;
+        // без объявления закрыто (PermissionFilter модуля хостинга).
+        mvc.Filters.Add<PermissionFilter>();
     })
     .AddJsonOptions(json => json.JsonSerializerOptions.Encoder = JavaScriptEncoder.Create(UnicodeRanges.All))
-    .AddIdentityModule(options => options.SignInAttemptsPerMinute = rateLimits.LoginPerMinute)
-    .AddTokensModule()
-    .AddSettingsModule()
-    .AddMailModule(options => options.RunMaintenance = true)
+    .AddIdentityModule(options =>
+    {
+        // ⚠ Предел на пару «адрес + почта» держит модуль: почту знает он.
+        options.SignInAttemptsPerMinute = rateLimits.LoginPerMinute;
+
+        // ⚠ Имя куки — прежнее: сменённое выводит всех на вход. Издатель — имя сервиса в аутентификаторе.
+        options.TotpIssuer = Product.Name;
+        options.RefreshCookieName = "__Host-sender-refresh";
+
+        // Политика входа проекта (решение владельца, решение EAMS 0120): приложение-аутентификатор
+        // обязательно всем, код письмом его не заменяет и лишь пускает в настройку, по одной расписке —
+        // не больше пяти кодов.
+        options.RequireAuthenticatorForEveryone = true;
+        options.AuthenticatorExcludesEmailCode = true;
+        options.ChallengeCodeAttempts = 5;
+        options.RefreshCookieStaysCookie = true;
+        options.LastSuperuserCountsOnlySignInCapable = true;
+
+        // ⚠ Argon2 берёт 64 МиБ на хеш: четыре разом — потолок памяти под пароли в контейнере.
+        options.PasswordHashConcurrency = 4;
+        options.PasswordHashQueueLimit = 32;
+
+        // Нет расширения браузера, настольного клиента и справочника сотрудников; переподтверждение —
+        // только аутентификатором.
+        options.Features.TrustedClients = false;
+        options.Features.ExtensionSignIn = false;
+        options.Features.Directory = false;
+        options.Features.StepUpEmail = false;
+    })
+    .AddTokensModule(options =>
+    {
+        // Ключей интеграции, токенов машин и билетов скачивания проекту не нужно: только вход в панель.
+        options.Features.ApiKeys = false;
+        options.Features.DeviceTokens = false;
+        options.Features.DownloadTickets = false;
+    })
+    .AddSettingsModule(options => options.Features.UserPreferences = false)
+    .AddMailModule(options =>
+    {
+        options.RunMaintenance = true;
+
+        // Письмо — «Hi», содержание, «Thank You,» и имя сервиса (решение владельца 2026-10-26).
+        options.ProductName = Product.Name;
+        options.Frame = true;
+
+        // ⚠ Пароль SMTP уходит только тому серверу, порту, защите и логину, для которых его ввели.
+        options.BindSmtpPassword = true;
+    })
     .AddKeyManagerModule(options => options.RunPoller = true)
     .UseErrorEnvelope();
 
+// ⚠ Набор миграций проекта — ПОСЛЕДНИМ: он правит значения поверх таблиц модулей.
+builder.Services.AddModuleSchema(SenderSchema.Declaration);
+
 // Мастер-ключ: без него нет старта (разбор у MasterKeyFile). Им обёрнуты ключи данных пароля
-// SMTP, секретов TOTP и тел писем в очереди.
+// SMTP, секретов TOTP, ключа API Key Manager Plus и тел писем в очереди.
 var masterKeys = MasterKeyFile.Load(builder.Configuration);
 builder.Services.AddSingleton(masterKeys.Ring);
 builder.Services.AddSingleton<ISecretEnvelope, SecretEnvelope>();
@@ -76,59 +129,40 @@ builder.Services.AddScoped<IPublicOrigin, PublicOrigin>();
 builder.Services.AddScoped<RequestCurrentUser>();
 builder.Services.AddScoped<ICurrentUser>(sp => sp.GetRequiredService<RequestCurrentUser>());
 builder.Services.AddScoped<CurrentUserMiddleware>();
-builder.Services.AddScoped<IAuditWriter, LogAuditWriter>();
 builder.Services.AddSingleton(TimeProvider.System);
 
-// Предел частоты по адресу — потолок против потока; перебор одной учётной записи держат
-// предел на пару «адрес + почта» и блокировка после неудач (RateLimitGroups).
-builder.Services.AddSingleton(rateLimits);
-builder.Services.AddRateLimiter(limiter =>
+// Журнал — строками лога (LogAuditWriter): один писатель на запрос закрывает все контракты журнала.
+builder.Services.AddScoped<IAuditContextAccessor, AuditContextAccessor>();
+builder.Services.AddScoped<LogAuditWriter>();
+builder.Services.AddScoped<IAuditWriter>(sp => sp.GetRequiredService<LogAuditWriter>());
+builder.Services.AddScoped<ISecurityEventWriter>(sp => sp.GetRequiredService<LogAuditWriter>());
+builder.Services.AddScoped<IAuthorizationAuditor>(sp => sp.GetRequiredService<LogAuditWriter>());
+
+// Предел частоты по адресу — потолок против потока; перебор одной учётной записи держат предел на
+// пару «адрес + почта» и блокировка после неудач. Пути объявляют модули, числа — проект.
+builder.Services.AddModuleRateLimits(rateLimits.Policies);
+rateLimits.ChainProjectLimits(builder.Services);
+
+// Пространство замков проекта: проход миграций берёт замок в нём.
+builder.Services.AddSingleton(new AdvisoryLockSpace(0x53454E44));
+
+builder.Services.AddSingleton(new EndpointDocsOptions
 {
-    var поАдресу = PartitionedRateLimiter.Create<HttpContext, string>(context =>
-    {
-        if (rateLimits.Of(context.Request.Path) is not { } group)
-        {
-            return RateLimitPartition.GetNoLimiter("прочее");
-        }
-
-        // ⚠ IPv6 — по сети /64, а не по адресу: своя /64 у абонента — это 2⁶⁴ адресов, и предел
-        // «на адрес» обходился бы сменой адреса на каждую попытку (RateLimitAddress).
-        var address = RateLimitAddress.Key(context.Connection.RemoteIpAddress) ?? "неизвестно";
-
-        return RateLimitPartition.GetFixedWindowLimiter(
-            $"{group.Name}:{address}",
-            _ => new FixedWindowRateLimiterOptions
-            {
-                PermitLimit = group.PerAddress,
-                Window = TimeSpan.FromMinutes(1),
-                QueueLimit = 0,
-            });
-    });
-
-    // ⚠ Второе звено — предел на всех клиентов вместе для групп, где запрос считает argon2 без
-    // входа (ревью безопасности 2026-10-20): предел «на адрес» поток со множества адресов не
-    // держит, а память и процессор у сервера одни.
-    var всего = PartitionedRateLimiter.Create<HttpContext, string>(context =>
-        rateLimits.Of(context.Request.Path) is { Total: { } total } group
-            ? RateLimitPartition.GetFixedWindowLimiter(
-                "всего:" + group.Name,
-                _ => new FixedWindowRateLimiterOptions
-                {
-                    PermitLimit = total,
-                    Window = TimeSpan.FromMinutes(1),
-                    QueueLimit = 0,
-                })
-            : RateLimitPartition.GetNoLimiter("прочее"));
-
-    limiter.GlobalLimiter = PartitionedRateLimiter.CreateChained(поАдресу, всего);
-
-    limiter.OnRejected = (context, token) => new ValueTask(RateLimitGroups.RejectAsync(
-        context.HttpContext,
-        context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter) ? retryAfter : null,
-        token));
+    ExtensionPrefix = "x-sender",
+    Title = $"{Product.Name} API",
+    Description = "Контракт сервера рассылки SSL-сертификатов из ManageEngine Key Manager Plus. "
+        + "Модуль операции — расширение x-sender-module, как она пускает — x-sender-access.",
 });
 
-builder.Services.AddOpenApi(options => options.AddDocumentTransformer<ErrorEnvelopeDocument>());
+builder.Services.AddOpenApi(options =>
+{
+    options.AddDocumentTransformer<ErrorEnvelopeDocument>();
+
+    // ⚠ Описания операций модулей: штатный генератор берёт XML-комментарии только у публичных
+    // членов, а контроллеры модулей internal.
+    options.AddOperationTransformer<EndpointDocsDocument>();
+    options.AddDocumentTransformer<EndpointDocsDocument>();
+});
 
 // ⚠ Тело запроса — не больше 256 КБ (по умолчанию Kestrel ждёт до 30 МБ). Самые большие тела
 // здесь — настройки и подписка на двадцать адресов; файлов API не принимает, а анонимные
@@ -173,6 +207,10 @@ app.UseForwardedHeaders();
 app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseMiddleware<RequestIdMiddleware>();
 app.UseMiddleware<ErrorHandlingMiddleware>();
+
+// После номера обращения и разбора заголовков прокси: журналу нужны оба.
+app.UseMiddleware<AuditContextMiddleware>();
+app.UseMiddleware<TokenInAddressGuard>();
 app.UseRouting();
 app.UseRateLimiter();
 app.UseMiddleware<CurrentUserMiddleware>();
@@ -252,7 +290,7 @@ static async Task<int> RunCommandAsync(WebApplication app, string[] args)
             Bootstrap.Argument(args, "--password-file"),
             args[0] == Bootstrap.ResetAccess ? "Новый пароль: " : "Пароль администратора: ");
 
-        // ⚠ Пароль, фактор, блокировка и сессии — одной транзакцией (разбор у AccessRecovery).
+        // ⚠ Пароль, фактор, блокировка и сессии — одной транзакцией (разбор у модуля учётных записей).
         // Отключённую учётную запись команда не включает и говорит об этом в итоге.
         if (args[0] == Bootstrap.ResetAccess)
         {
@@ -301,7 +339,7 @@ static async Task StartupAccountsAsync(WebApplication app)
     if (config["SENDER_INIT_ADMIN_EMAIL"] is { Length: > 0 } первый
         && config["SENDER_INIT_ADMIN_PASSWORD"] is { Length: > 0 } парольПервого)
     {
-        if (await IdentityModule.AnyUserAsync(app.Services))
+        if (await AnyUserAsync(app))
         {
             Console.WriteLine(
                 $"{Bootstrap.Migrate}: SENDER_INIT_ADMIN_* пропущены — учётные записи уже есть. Уберите их из .env.");
@@ -326,54 +364,71 @@ static async Task StartupAccountsAsync(WebApplication app)
     }
 }
 
+// Есть ли хоть одна учётная запись, включая удалённые: первый администратор заводится только на пустой
+// установке, и удалённая учётная запись — тоже след того, что установка не пуста.
+static async Task<bool> AnyUserAsync(WebApplication app)
+{
+    await using var db = new NpgsqlConnection(app.Services.GetRequiredService<DatabaseStartup.SchemaConnection>().Value);
+    await db.OpenAsync();
+
+    await using var есть = new NpgsqlCommand("SELECT EXISTS (SELECT 1 FROM users)", db);
+
+    return await есть.ExecuteScalarAsync() is true;
+}
+
 static async Task<int> MigrateCommandAsync(WebApplication app)
 {
     try
     {
-        var pending = await app.PendingMigrationsAsync();
+        // ⚠ Наборы модулей и проекта (решение EAMS 0114): существующая установка дотягивается прежними
+        // миграциями хоста до моста к модулям, базовые модулей отмечаются, остальное применяется по
+        // порядку. Отмеченное печатается отдельно: оператор обязан отличить «выполнено» от «отмечено,
+        // схема уже была».
+        var done = await app.MigrateAsync();
 
-        if (pending.Count == 0)
+        if (done.Count == 0)
         {
             Console.WriteLine($"{Bootstrap.Migrate}: схема уже совпадает с кодом, накатывать нечего");
         }
         else
         {
-            Console.WriteLine($"{Bootstrap.Migrate}: применяю {pending.Count}");
+            Console.WriteLine($"{Bootstrap.Migrate}: сделано {done.Count}");
 
-            foreach (var name in pending)
+            foreach (var name in done)
             {
                 Console.WriteLine($"  {name}");
             }
+        }
 
-            await app.MigrateAsync();
+        // ⚠ Секреты прежнего конверта «sender:» перекладываются в конверт модулей — до роли сервиса и
+        // до учётных записей из окружения: им может понадобиться второй фактор (разбор у LegacySecrets).
+        var прежние = new LegacySecrets(
+            app.Services.GetRequiredService<ISecretEnvelope>(),
+            LegacySecrets.Keys(MasterKeyFile.Content(app.Configuration).Content));
+
+        foreach (var итог in await прежние.RunAsync(app.Services.GetRequiredService<DatabaseStartup.SchemaConnection>().Value))
+        {
+            if (итог.Переложено > 0 || итог.НеОткрылось > 0)
+            {
+                Console.WriteLine(
+                    $"{Bootstrap.Migrate}: {итог.Name} — переложено в конверт модулей {итог.Переложено} из {итог.Просмотрено}"
+                    + (итог.НеОткрылось > 0
+                        ? $", ⚠ НЕ ОТКРЫЛОСЬ {итог.НеОткрылось}: значение задаётся заново (аутентификатор — reset-access)"
+                        : string.Empty));
+            }
         }
 
         // ⚠ Роль сервиса приводится в порядок и без новых миграций: сменили файл пароля или
         // ставите поверх старой установки — `migrate` и есть способ это применить.
         if (RuntimeRole.FromConfiguration(app.Configuration) is var (role, password))
         {
-            await using var scope = app.Services.CreateAsyncScope();
-            var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
-            var connection = (Npgsql.NpgsqlConnection)db.Database.GetDbConnection();
+            await using var connection = new NpgsqlConnection(
+                app.Services.GetRequiredService<DatabaseStartup.SchemaConnection>().Value);
 
             await connection.OpenAsync();
             await RuntimeRole.EnsureAsync(connection, role, password);
 
             Console.WriteLine($"{Bootstrap.Migrate}: роль сервиса {role} — только чтение и запись строк");
-        }
-
-        // ⚠ Секреты, заданные до привязки к адресу, привязываются здесь, к текущим настройкам:
-        // консоль установки — доверенное место, а во время работы такой секрет не открывается
-        // (ILegacySecretBinder).
-        await using (var scope = app.Services.CreateAsyncScope())
-        {
-            foreach (var binder in scope.ServiceProvider.GetServices<ILegacySecretBinder>())
-            {
-                if (await binder.BindAsync())
-                {
-                    Console.WriteLine($"{Bootstrap.Migrate}: {binder.Name} привязан к текущим настройкам");
-                }
-            }
         }
 
         await StartupAccountsAsync(app);
@@ -386,7 +441,7 @@ static async Task<int> MigrateCommandAsync(WebApplication app)
         await Console.Error.WriteLineAsync($"Ошибка: {error.Message}");
         return 1;
     }
-    catch (Npgsql.PostgresException error) when (error.SqlState == Npgsql.PostgresErrorCodes.InsufficientPrivilege)
+    catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.InsufficientPrivilege)
     {
         // ⚠ Служба api ходит ролью без права менять схему — и это задумано. Сказать, где её
         // меняют, полезнее, чем «permission denied for schema public».
@@ -414,10 +469,11 @@ static async Task<int> RewrapAsync(WebApplication app, string[] args)
         + $"целей {targets.Count}, порция {batch}");
 
     var всего = 0;
+    var нечитаемыхВсего = 0;
 
     foreach (var target in targets)
     {
-        int просмотрено = 0, переложено = 0;
+        int просмотрено = 0, переложено = 0, нечитаемых = 0;
         string? курсор = null;
 
         do
@@ -425,12 +481,27 @@ static async Task<int> RewrapAsync(WebApplication app, string[] args)
             var порция = await target.RewrapAsync(batch, курсор);
             просмотрено += порция.Seen;
             переложено += порция.Rewrapped;
+            нечитаемых += порция.Unreadable;
             курсор = порция.Next;
         }
         while (курсор is not null);
 
         всего += переложено;
-        Console.WriteLine($"  {target.Name}: просмотрено {просмотрено}, переложено {переложено}");
+        нечитаемыхВсего += нечитаемых;
+
+        Console.WriteLine(
+            $"  {target.Name}: просмотрено {просмотрено}, переложено {переложено}"
+            + (нечитаемых > 0 ? $", НЕ ОТКРЫЛОСЬ {нечитаемых}" : string.Empty));
+    }
+
+    if (нечитаемыхВсего > 0)
+    {
+        // ⚠ Не открывшееся прежней версией ключа не переложено: выбросить её из файла значит потерять
+        // эти значения навсегда.
+        Console.WriteLine(
+            $"{Bootstrap.RewrapKeys}: ⚠ не открылось {нечитаемыхВсего} — прежние версии ключа из файла НЕ убирать, "
+            + "пока не разобрались.");
+        return 1;
     }
 
     Console.WriteLine(всего > 0

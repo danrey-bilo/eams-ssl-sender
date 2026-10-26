@@ -1,4 +1,4 @@
-# Образ хоста Email SSL Sender.
+# Образ хоста EAMS ssl sender.
 #
 # Многоэтапная сборка: SDK нужен только чтобы собрать, в рантайм уезжает ASP.NET-образ.
 #
@@ -32,16 +32,18 @@ WORKDIR /src
 # Сначала только файлы проектов — слой с восстановлением пакетов переиспользуется, пока
 # зависимости не менялись.
 #
-# ⚠ СПИСОК ЗДЕСЬ ОБЯЗАН СОДЕРЖАТЬ КАЖДЫЙ МОДУЛЬ. Забытый не восстанавливается, и сборка падает
-# на `dotnet publish --no-restore`: «Assets file … not found».
+# ⚠ Модули EAMS (`modules/`, подмодули git) копируются ЦЕЛИКОМ и до восстановления: их проекты читают
+# `module.json` и свои `Directory.*.props`, а меняется каталог только сменой закреплённой метки.
+# Контекст сборки обязан нести их содержимое: `git clone --recurse-submodules` или
+# `git submodule update --init` перед сборкой (README, «Модули»).
+#
+# ⚠ СПИСОК СВОИХ ПРОЕКТОВ ЗДЕСЬ ОБЯЗАН СОДЕРЖАТЬ КАЖДЫЙ. Забытый не восстанавливается, и сборка
+# падает на `dotnet publish --no-restore`: «Assets file … not found».
 COPY ["Directory.Build.props", "Directory.Packages.props", "global.json", "./"]
+COPY ["modules/", "modules/"]
 COPY ["EmailSslSender.Api/EmailSslSender.Api.csproj", "EmailSslSender.Api/"]
-COPY ["EmailSslSender.Shared/EmailSslSender.Shared.csproj", "EmailSslSender.Shared/"]
-COPY ["EmailSslSender.Modules.Identity/EmailSslSender.Modules.Identity.csproj", "EmailSslSender.Modules.Identity/"]
-COPY ["EmailSslSender.Modules.Tokens/EmailSslSender.Modules.Tokens.csproj", "EmailSslSender.Modules.Tokens/"]
-COPY ["EmailSslSender.Modules.Settings/EmailSslSender.Modules.Settings.csproj", "EmailSslSender.Modules.Settings/"]
-COPY ["EmailSslSender.Modules.Mail/EmailSslSender.Modules.Mail.csproj", "EmailSslSender.Modules.Mail/"]
 COPY ["EmailSslSender.Modules.KeyManager/EmailSslSender.Modules.KeyManager.csproj", "EmailSslSender.Modules.KeyManager/"]
+RUN test -f modules/core/module.json || { echo "Подмодули modules/ пусты: git submodule update --init" >&2; exit 1; }
 RUN dotnet restore "EmailSslSender.Api/EmailSslSender.Api.csproj"
 
 COPY . .

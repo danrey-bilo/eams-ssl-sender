@@ -1,5 +1,5 @@
-using EmailSslSender.Modules.Mail.Contracts;
-using EmailSslSender.Shared.Contracts.Settings;
+using Modules.Core.Contracts.Settings;
+using Modules.Mail.Contracts;
 
 namespace EmailSslSender.Api.Infrastructure;
 
@@ -18,6 +18,14 @@ internal sealed class PublicOrigin(ISettingsReader settings) : IPublicOrigin
 
         return string.IsNullOrWhiteSpace(адрес) ? null : СоСхемой(адрес.Trim().TrimEnd('/'));
     }
+
+    /// <remarks>
+    /// ⚠ Только настройка, без запасного адреса из запроса: <c>X-Forwarded-Host</c> здесь не
+    /// принимается, а имя хоста из запроса подделывается — ссылка, собранная из него, уехала бы
+    /// вместе с токеном на чужой сервер.
+    /// </remarks>
+    public Task<string?> ResolveAsync(CancellationToken cancellationToken = default) =>
+        ConfiguredAsync(cancellationToken);
 
     /// <summary>
     /// Дописать схему, если администратор её не написал.

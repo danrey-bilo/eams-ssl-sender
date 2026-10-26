@@ -2,7 +2,7 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
-using EmailSslSender.Shared.Data;
+using Modules.Core.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -127,7 +127,7 @@ public sealed class AuthFoundationApi(SenderHost host) : IDisposable
         // окна не упёрся в защиту от повтора после входа в те же тридцать секунд.
         await using (var scope = host.Services.CreateAsyncScope())
         {
-            await scope.ServiceProvider.GetRequiredService<SenderDbContext>().Database.ExecuteSqlInterpolatedAsync(
+            await scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.ExecuteSqlInterpolatedAsync(
                 $"UPDATE user_two_factor SET last_step = -1 WHERE user_id = {userId}", Ct);
         }
 
@@ -153,7 +153,7 @@ public sealed class AuthFoundationApi(SenderHost host) : IDisposable
     private async Task Состарить(params Guid[] sessions)
     {
         await using var scope = host.Services.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var давно = DateTimeOffset.UtcNow.AddMinutes(-30);
 
         foreach (var session in sessions)
@@ -184,7 +184,7 @@ public sealed class AuthFoundationApi(SenderHost host) : IDisposable
     /// защиты (<c>[RequireRecentSecondFactor]</c>); своё — пароль и имя — в этот список не входит.
     /// </remarks>
     [Fact]
-    public async Task Смена_обязательного_пароля_не_требует_повторного_кода()
+    public async Task Смена_обязательного_пароля_требует_кода_этой_сессии()
     {
         Admin("user.create");
         var email = $"password-guard-{Guid.NewGuid():N}@example.com";
@@ -197,19 +197,39 @@ public sealed class AuthFoundationApi(SenderHost host) : IDisposable
         var me = (await (await Request(HttpMethod.Get, "/api/me", access)).Content.ReadFromJsonAsync<JsonObject>(Ct))!;
         await using (var scope = host.Services.CreateAsyncScope())
         {
-            var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             var userId = me["id"]!.GetValue<Guid>();
             var sessionId = tokens["session_id"]!.GetValue<Guid>();
             await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE users SET must_change_password = true WHERE id = {userId}", Ct);
-            var proofAt = DateTimeOffset.UtcNow.AddMinutes(-10);
+            var proofAt = DateTimeOffset.UtcNow.AddMinutes(-11);
             await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE auth_tokens SET step_up_at = {proofAt} WHERE id = {sessionId}", Ct);
         }
+
+        // ⚠ Модуль учётных записей требует к текущему паролю и свежий код: вход с кодом его ставит, так что
+        // обязательная смена сразу после входа проходит, а давняя сессия переподтверждается.
+        var давний = await ChangePasswordAsync(access, Password + "-new");
+        давний.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+        (await давний.Content.ReadFromJsonAsync<JsonObject>(Ct))!["code"]!.GetValue<string>().ShouldBe("SECOND_FACTOR_REQUIRED");
+
+        await using (var scope = host.Services.CreateAsyncScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            var sessionId = tokens["session_id"]!.GetValue<Guid>();
+            var proofAt = DateTimeOffset.UtcNow;
+            await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE auth_tokens SET step_up_at = {proofAt} WHERE id = {sessionId}", Ct);
+        }
+
+        (await ChangePasswordAsync(access, Password + "-new")).StatusCode.ShouldBe(HttpStatusCode.NoContent);
+    }
+
+    private async Task<HttpResponseMessage> ChangePasswordAsync(string access, string newPassword)
+    {
         using var request = new HttpRequestMessage(HttpMethod.Post, "/api/me/password")
         {
-            Content = JsonContent.Create(new { current_password = Password, new_password = Password + "-new" }),
+            Content = JsonContent.Create(new { current_password = Password, new_password = newPassword }),
         };
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", access);
-        var response = await host.CreateClient().SendAsync(request, Ct);
-        response.StatusCode.ShouldBe(HttpStatusCode.NoContent, "смену своего пароля подтверждает текущий пароль, а не свежий код");
+
+        return await host.CreateClient().SendAsync(request, Ct);
     }
 }

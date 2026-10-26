@@ -1,14 +1,21 @@
 using EmailSslSender.Modules.KeyManager.Client;
+using EmailSslSender.Modules.KeyManager.Contracts;
 using EmailSslSender.Modules.KeyManager.Delivery;
 using EmailSslSender.Modules.KeyManager.Export;
+using EmailSslSender.Modules.KeyManager.Schema;
 using EmailSslSender.Modules.KeyManager.Secrets;
 using EmailSslSender.Modules.KeyManager.Settings;
 using EmailSslSender.Modules.KeyManager.Storage;
-using EmailSslSender.Shared.Contracts.Data;
-using EmailSslSender.Shared.Contracts.Mail;
-using EmailSslSender.Shared.Contracts.Settings;
-using EmailSslSender.Shared.Crypto;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Modules.Core.Composition;
+using Modules.Core.Contracts.Audit;
+using Modules.Core.Contracts.Data;
+using Modules.Core.Contracts.Mail;
+using Modules.Core.Contracts.Settings;
+using Modules.Core.Data;
+using Modules.Core.Features;
+using Modules.Crypto;
 
 namespace EmailSslSender.Modules.KeyManager;
 
@@ -24,14 +31,22 @@ public sealed class KeyManagerModuleOptions
     /// второго нет.
     /// </remarks>
     public bool RunPoller { get; set; }
+
+    /// <summary>Переключатели модуля. Своих подвозможностей у модуля нет — модуль целиком.</summary>
+    public KeyManagerModuleFeatures Features { get; } = new();
 }
+
+/// <summary>Переключатели модуля Key Manager Plus (своих подвозможностей нет).</summary>
+public sealed class KeyManagerModuleFeatures() : ModuleFeatures("keymanager");
 
 /// <summary>
 /// Интеграция с ManageEngine Key Manager Plus: опрос SSL-сертификатов и рассылка их файлов по подпискам.
 /// </summary>
 /// <remarks>
-/// ⚠ Модуль не трогает соседей: письма — через <see cref="IMailQueue"/>, настройки — через
-/// <see cref="ISettingsReader"/>, таблицы и шаблоны — объявлениями, которые собирают хост и почта.
+/// ⚠ Модуль проекта на фундаменте модулей EAMS: соседей не трогает — письма через
+/// <see cref="IMailQueue"/>, настройки через <see cref="ISettingsReader"/>, журнал через
+/// <see cref="IAuditWriter"/>; таблицы, настройки, письма и события — объявлениями, которые собирают
+/// хост и модули. Чего не хватает при старте, называет проверка ядра (решение EAMS 0111).
 /// </remarks>
 public static class KeyManagerModule
 {
@@ -46,14 +61,17 @@ public static class KeyManagerModule
 
         var services = mvc.Services;
         services.AddSingleton(options);
+        services.TryAddSingleton(TimeProvider.System);
 
+        // Свои объявления: таблицы, набор миграций, настройки, письмо, события журнала.
         services.AddSingleton<IEntityConfigurationProvider, KeyManagerTables>();
+        services.AddModuleSchema(KeyManagerSchema.Declaration);
         services.AddSingleton<ISettingDeclarationProvider, KeyManagerSettingDeclarations>();
         services.AddSingleton<IMailTemplateProvider, CertificateMail>();
+        services.AddSingleton<IAuditActionProvider, KeyManagerAuditActions>();
 
         // ⚠ Цель ротации регистрируется В ТОМ ЖЕ изменении, что и запечатывание ключа API.
         services.AddScoped<ApiKeyStore>();
-        services.AddScoped<ILegacySecretBinder, ApiKeyLegacyBinding>();
         services.AddScoped<IRewrapTarget, ApiKeyRewrap>();
 
         services.AddScoped<IKeyManagerConnector, KeyManagerConnector>();
@@ -73,13 +91,13 @@ public static class KeyManagerModule
             services.AddHostedService<CertificatePoller>();
         }
 
-        mvc.ConfigureApplicationPartManager(parts =>
-        {
-            parts.ApplicationParts.Add(
-                new Microsoft.AspNetCore.Mvc.ApplicationParts.AssemblyPart(typeof(KeyManagerModule).Assembly));
-            parts.FeatureProviders.Add(new Api.InternalControllerFeatureProvider());
-        });
+        // ⚠ Без этого модуль поднимался бы и падал первым действием, а не при старте.
+        const string модуль = "keymanager";
+        services.Require<IMailQueue>(модуль, "файлы сертификатов некому отправить письмом");
+        services.Require<ISettingsReader>(модуль, "адрес Key Manager Plus и срок опроса некому прочитать");
+        services.Require<ISecretEnvelope>(модуль, "ключ API Key Manager Plus нечем запечатать");
 
-        return mvc;
+        // ⚠ Контроллеры модуля internal: находит их провайдер ядра, подключаемый здесь же.
+        return mvc.AddModule(typeof(KeyManagerModule).Assembly, options.Features);
     }
 }

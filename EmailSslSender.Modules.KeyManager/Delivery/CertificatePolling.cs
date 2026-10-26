@@ -1,8 +1,8 @@
 using EmailSslSender.Modules.KeyManager.Client;
 using EmailSslSender.Modules.KeyManager.Domain;
-using EmailSslSender.Shared.Contracts.Mail;
-using EmailSslSender.Shared.Data;
-using EmailSslSender.Shared.Errors;
+using Modules.Core.Contracts.Mail;
+using Modules.Core.Data;
+using Modules.Core.Errors;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -30,7 +30,7 @@ internal readonly record struct PollRun(bool Polled, int Certificates, int Sent)
 /// её <c>last_error</c>.
 /// </remarks>
 internal sealed class CertificatePolling(
-    SenderDbContext db,
+    AppDbContext db,
     IKeyManagerConnector connector,
     CertificateSnapshots snapshots,
     CertificateDelivery delivery,

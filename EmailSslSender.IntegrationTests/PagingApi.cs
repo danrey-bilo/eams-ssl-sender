@@ -1,6 +1,6 @@
 using System.Net;
 using System.Text.Json;
-using EmailSslSender.Shared.Contracts.Audit;
+using Modules.Core.Contracts.Audit;
 
 namespace EmailSslSender.IntegrationTests;
 

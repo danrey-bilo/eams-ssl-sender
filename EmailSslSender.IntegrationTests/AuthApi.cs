@@ -3,9 +3,9 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using EmailSslSender.Shared.Errors;
+using Modules.Core.Errors;
 using Microsoft.EntityFrameworkCore;
-using EmailSslSender.Shared.Data;
+using Modules.Core.Data;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace EmailSslSender.IntegrationTests;
@@ -150,7 +150,7 @@ public sealed class AuthApi(SenderHost host)
 
         await using (var scope = host.Services.CreateAsyncScope())
         {
-            var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
             // Голым SQL: сущности токенов internal в чужой сборке, открывать модуль ради теста нельзя.
             var затронуто = await db.Database.ExecuteSqlRawAsync(

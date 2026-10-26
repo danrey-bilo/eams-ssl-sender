@@ -1,6 +1,6 @@
 using EmailSslSender.Modules.KeyManager.Domain;
-using EmailSslSender.Shared.Crypto;
-using EmailSslSender.Shared.Data;
+using Modules.Crypto;
+using Modules.Core.Data;
 using Microsoft.EntityFrameworkCore;
 
 namespace EmailSslSender.Modules.KeyManager.Secrets;
@@ -19,7 +19,7 @@ namespace EmailSslSender.Modules.KeyManager.Secrets;
 /// ключ, перезаданный между чтением и записью, иначе получил бы обёртку от старого ключа данных
 /// и перестал бы открываться.
 /// </remarks>
-internal sealed class ApiKeyRewrap(SenderDbContext db, ISecretEnvelope envelope) : IRewrapTarget
+internal sealed class ApiKeyRewrap(AppDbContext db, ISecretEnvelope envelope) : IRewrapTarget
 {
     public string Name => "keymanager_state";
 

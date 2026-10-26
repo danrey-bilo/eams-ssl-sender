@@ -1,4 +1,4 @@
-using EmailSslSender.Shared.Contracts.Settings;
+using Modules.Core.Contracts.Settings;
 
 namespace EmailSslSender.Modules.KeyManager.Settings;
 

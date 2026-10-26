@@ -1,6 +1,6 @@
 using EmailSslSender.Api.Infrastructure;
-using EmailSslSender.Modules.Identity;
-using EmailSslSender.Shared.Errors;
+using Modules.Identity.Contracts;
+using Modules.Core.Errors;
 
 namespace EmailSslSender.IntegrationTests;
 

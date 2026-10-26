@@ -1,7 +1,7 @@
 using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
-using EmailSslSender.Shared.Data;
+using Modules.Core.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -57,7 +57,7 @@ public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
 
         await using (var scope = host.Services.CreateAsyncScope())
         {
-            await scope.ServiceProvider.GetRequiredService<SenderDbContext>().Database.ExecuteSqlInterpolatedAsync(
+            await scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.ExecuteSqlInterpolatedAsync(
                 $"DELETE FROM keymanager_certificates WHERE common_name = {Имя}", CancellationToken.None);
         }
 
@@ -319,7 +319,7 @@ public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
     {
         await using var scope = host.Services.CreateAsyncScope();
 
-        await scope.ServiceProvider.GetRequiredService<SenderDbContext>().Database.ExecuteSqlInterpolatedAsync(
+        await scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.ExecuteSqlInterpolatedAsync(
             $"""
             INSERT INTO keymanager_certificates (common_name, serial_number, expires_on, first_seen_at, last_seen_at)
             VALUES ({Имя}, {серийный}, {new DateOnly(2027, 10, 2)}, now(), now())

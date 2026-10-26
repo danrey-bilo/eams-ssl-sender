@@ -1,10 +1,11 @@
-using System.Globalization;
-using EmailSslSender.Shared.Errors;
+using System.Threading.RateLimiting;
+using Modules.Core.Composition;
+using Modules.Hosting;
 
 namespace EmailSslSender.Api.Infrastructure;
 
 /// <summary>
-/// Дорогие пути и их пределы — одна классификация на оба слоя: по адресу и по человеку.
+/// Пределы частоты проекта: числа для классов дорогих путей и потолки на всех клиентов вместе.
 /// </summary>
 /// <remarks>
 /// ⚠ ⚠ <b>Предел по адресу — потолок, а не единственная мера.</b> Люди одной организации
@@ -15,29 +16,17 @@ namespace EmailSslSender.Api.Infrastructure;
 ///   одной учётной записи держат предел на пару «адрес + почта» в модуле личностей
 ///   (<c>LoginPerMinute</c>, 10) и блокировка после неудач;
 /// - <b>переспрос внутри сессии</b> (код переподтверждения, второй фактор, смена пароля) —
-///   предел на человека после опознания (<see cref="UserRateLimitMiddleware"/>), а по адресу
-///   потолок в <c>AddressFactor</c> (10) раз выше;
+///   предел на человека после опознания, а по адресу потолок в <c>AddressFactor</c> (10) раз выше;
 /// - <b>активация и сброс пароля</b> — по адресу: опознавать там некого.
 ///
-/// Какие пути дорогие — знание хоста, а не модуля: атрибут на действии потребовал бы, чтобы модуль
-/// знал имя политики хоста.
+/// ⚠ <b>Какие пути дорогие, объявляют модули</b> (правила <see cref="RateLimitRule"/>, решение EAMS
+/// 0111), ограничивает набор хостинга (<see cref="ModuleRateLimits"/>). Здесь — только числа и их
+/// прежние ключи конфигурации, чтобы установки не потеряли своих значений.
 /// </remarks>
 internal sealed class RateLimitGroups
 {
-    /// <summary>Группа пути: имя, предел по адресу и предел на человека, если он есть.</summary>
-    /// <param name="Name">Имя группы — часть ключа счётчика.</param>
-    /// <param name="PerAddress">Запросов в минуту с одного адреса (IPv6 — с сети /64).</param>
-    /// <param name="PerUser">Запросов в минуту на учётную запись; <c>null</c> — не считается.</param>
-    /// <param name="Total">
-    /// Предел на всех клиентов вместе. ⚠ Анонимные вход и сброс считают argon2 (64 МиБ на
-    /// хеш): поток со множества адресов иначе съедал бы память и процессор сервера целиком.
-    /// </param>
-    public sealed record Group(string Name, int PerAddress, int? PerUser, int? Total = null);
-
-    private readonly Group _вход;
-    private readonly Group _переспрос;
-    private readonly Group _активация;
-    private readonly Group _проба;
+    private readonly Dictionary<string, int> _всего;
+    private readonly int _проба;
 
     public RateLimitGroups(IConfiguration configuration)
     {
@@ -54,79 +43,70 @@ internal sealed class RateLimitGroups
 
         var множитель = Math.Max(1, configuration.GetValue("RateLimits:AddressFactor", 10));
 
-        _вход = new Group(
-            "вход", входПоАдресу, PerUser: null,
-            Total: configuration.GetValue("RateLimits:LoginTotalPerMinute", 300));
-        _переспрос = new Group("переспрос", LoginPerMinute * множитель, LoginPerMinute);
+        Policies = new Dictionary<string, RateLimitPolicy>(StringComparer.Ordinal)
+        {
+            [RateLimitClasses.SignIn] = new(входПоАдресу, PerUser: null),
+            [RateLimitClasses.Reauthentication] = new(LoginPerMinute * множитель, LoginPerMinute),
+            [RateLimitClasses.OneTimeLink] = new(активация, PerUser: null),
+        };
+
+        // ⚠ Второе звено — предел на всех клиентов вместе для классов, где запрос считает argon2
+        // без входа (ревью безопасности 2026-10-20): предел «на адрес» поток со множества адресов
+        // не держит, а память и процессор у сервера одни.
+        _всего = new Dictionary<string, int>(StringComparer.Ordinal)
+        {
+            [RateLimitClasses.SignIn] = configuration.GetValue("RateLimits:LoginTotalPerMinute", 300),
+            [RateLimitClasses.OneTimeLink] = configuration.GetValue("RateLimits:ActivationTotalPerMinute", 60),
+        };
 
         // ⚠ Готовность открыта без входа и каждый раз спрашивает базу (ревью безопасности
         // 2026-10-20). Проба контейнера ходит раз в полминуты с 127.0.0.1 — предел её не задевает.
-        _проба = new Group("проба", configuration.GetValue("RateLimits:ReadyPerAddressPerMinute", 120), PerUser: null);
-        _активация = new Group(
-            "активация", активация, PerUser: null,
-            Total: configuration.GetValue("RateLimits:ActivationTotalPerMinute", 60));
+        _проба = configuration.GetValue("RateLimits:ReadyPerAddressPerMinute", 120);
     }
 
     /// <summary>Попыток входа в минуту на пару «адрес + почта» — для модуля личностей.</summary>
     public int LoginPerMinute { get; }
 
-    /// <summary>Группа пути или <c>null</c>, если путь не дорогой.</summary>
-    public Group? Of(PathString path)
-    {
-        // ⚠ Второй фактор входа — в той же группе, что и вход: иначе перебор кода упирался бы
-        // лишь в блокировку учётной записи.
-        if (path.StartsWithSegments("/api/auth/login", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWithSegments("/api/auth/two-factor", StringComparison.OrdinalIgnoreCase))
-        {
-            return _вход;
-        }
+    /// <summary>Пределы классов — для ограничителя набора хостинга.</summary>
+    public IReadOnlyDictionary<string, RateLimitPolicy> Policies { get; }
 
-        // ⚠ ⚠ Две двери доказательства личности ВНУТРИ открытой сессии (ревью 2026-09-15, S2):
-        // код переподтверждения и текущий пароль при смене. Счётчик учётной записи их уже
-        // держит; предел дополняет его. Своя группа — чтобы подбор здесь не выжигал квоту формы
-        // входа и наоборот.
-        // мутация 2026-09-15: оба пути подменены несуществующими → покраснели оба случая
-        // AuthApi.Переспрос_внутри_сессии_режется_частотой.
-        if (path.StartsWithSegments("/api/me/step-up", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWithSegments("/api/me/two-factor", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWithSegments("/api/me/password", StringComparison.OrdinalIgnoreCase))
-        {
-            return _переспрос;
-        }
-
-        if (path.StartsWithSegments("/api/ready", StringComparison.OrdinalIgnoreCase))
-        {
-            return _проба;
-        }
-
-        return path.StartsWithSegments("/api/activation", StringComparison.OrdinalIgnoreCase)
-            || path.StartsWithSegments("/api/password-reset", StringComparison.OrdinalIgnoreCase)
-                ? _активация
-                : null;
-    }
-
-    /// <summary>Ответить 429 тем же конвертом, что и всё остальное.</summary>
+    /// <summary>
+    /// Достроить ограничитель набора хостинга звеньями проекта: потолок на всех и проба готовности.
+    /// </summary>
     /// <remarks>
-    /// По умолчанию отказ ограничителя — 503, и это ровно тот случай, когда умолчание вводит в
-    /// заблуждение: клиент решит, что сервер лежит, и начнёт повторять.
+    /// ⚠ Зовётся <b>после</b> <c>AddModuleRateLimits</c>: настройки ограничителя применяются по
+    /// порядку, и здесь цепочка надевается на уже собранный ограничитель классов, а не заменяет его.
     /// </remarks>
-    public static async Task RejectAsync(HttpContext context, TimeSpan? retryAfter, CancellationToken cancellationToken)
+    public void ChainProjectLimits(IServiceCollection services)
     {
-        ArgumentNullException.ThrowIfNull(context);
+        ArgumentNullException.ThrowIfNull(services);
 
-        context.Response.StatusCode = StatusCodes.Status429TooManyRequests;
-
-        if (retryAfter is { } через)
+        services.AddRateLimiter(limiter =>
         {
-            context.Response.Headers.RetryAfter = ((int)через.TotalSeconds).ToString(CultureInfo.InvariantCulture);
-        }
+            var классы = limiter.GlobalLimiter
+                ?? throw new InvalidOperationException(
+                    "Ограничитель классов не собран: AddModuleRateLimits должен стоять раньше.");
 
-        await context.Response.WriteAsJsonAsync(
-            new ErrorResponse(
-                ErrorCodes.RateLimited,
-                "Слишком много попыток. Подождите немного.",
-                null,
-                context.Items.TryGetValue(RequestIdMiddleware.ItemKey, out var id) ? id as string ?? string.Empty : string.Empty),
-            cancellationToken);
+            var всего = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+                context.RequestServices.GetRequiredService<ModuleRateLimits>().Of(context.Request.Path) is { } найдено
+                && _всего.TryGetValue(найдено.Class, out var предел)
+                    ? RateLimitPartition.GetFixedWindowLimiter("всего:" + найдено.Class, _ => Окно(предел))
+                    : RateLimitPartition.GetNoLimiter("прочее"));
+
+            var проба = PartitionedRateLimiter.Create<HttpContext, string>(context =>
+                context.Request.Path.StartsWithSegments("/api/ready", StringComparison.OrdinalIgnoreCase)
+                    ? RateLimitPartition.GetFixedWindowLimiter(
+                        "проба:" + ModuleRateLimits.AddressKey(context.Connection.RemoteIpAddress), _ => Окно(_проба))
+                    : RateLimitPartition.GetNoLimiter("прочее"));
+
+            limiter.GlobalLimiter = PartitionedRateLimiter.CreateChained(классы, всего, проба);
+        });
     }
+
+    private static FixedWindowRateLimiterOptions Окно(int предел) => new()
+    {
+        PermitLimit = предел,
+        Window = TimeSpan.FromMinutes(1),
+        QueueLimit = 0,
+    };
 }

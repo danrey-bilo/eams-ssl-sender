@@ -5,8 +5,8 @@ using EmailSslSender.Modules.KeyManager.Client;
 using EmailSslSender.Modules.KeyManager.Contracts;
 using EmailSslSender.Modules.KeyManager.Domain;
 using EmailSslSender.Modules.KeyManager.Export;
-using EmailSslSender.Shared.Data;
-using EmailSslSender.Shared.Errors;
+using Modules.Core.Data;
+using Modules.Core.Errors;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -43,7 +43,7 @@ public sealed class ExportTests(KeyManagerDatabase база) : IAsyncLifetime
     public async ValueTask DisposeAsync()
     {
         await using var scope = база.Scope();
-        await scope.ServiceProvider.GetRequiredService<SenderDbContext>()
+        await scope.ServiceProvider.GetRequiredService<AppDbContext>()
             .Set<KnownCertificate>().ExecuteDeleteAsync(CancellationToken.None);
     }
 
@@ -60,7 +60,7 @@ public sealed class ExportTests(KeyManagerDatabase база) : IAsyncLifetime
         var строка = база.Аудит.Записи.ShouldHaveSingleItem();
         строка.Action.ShouldBe(KeyManagerActions.CertificateDownloaded);
         строка.ResourceType.ShouldBe(KeyManagerActions.CertificateResource);
-        строка.LogChanges.ShouldBeTrue();
+        строка.Action.Name.ShouldStartWith("keymanager.", Case.Sensitive, "значения изменений журнал хоста пишет по приставке события");
         строка.Changes!["common_name"].ShouldBe(Имя);
         строка.Changes["serial_number"].ShouldBe(Серийный);
         строка.Changes["format"].ShouldBe("PEM");
@@ -90,11 +90,11 @@ public sealed class ExportTests(KeyManagerDatabase база) : IAsyncLifetime
     {
         var отказ = await Should.ThrowAsync<AppException>(() => Выгрузить(имя, серийный, "PEM"));
 
-        отказ.Code.ShouldBe(ErrorCodes.KeyManagerCertificateNotFound);
+        отказ.Code.ShouldBe(KeyManagerErrorCodes.CertificateNotFound);
         отказ.Status.ShouldBe(HttpStatusCode.NotFound);
 
         var ключом = await Should.ThrowAsync<AppException>(() => Показать(имя, серийный));
-        ключом.Code.ShouldBe(ErrorCodes.KeyManagerCertificateNotFound);
+        ключом.Code.ShouldBe(KeyManagerErrorCodes.CertificateNotFound);
 
         база.Kmp.Выгрузок.ShouldBe(0, "до Key Manager Plus дошёл запрос по паре, которой нет в снимке");
         база.Аудит.Записи.ShouldBeEmpty();
@@ -122,9 +122,9 @@ public sealed class ExportTests(KeyManagerDatabase база) : IAsyncLifetime
         база.Kmp.Настройки = база.Kmp.Настройки with { ApiKeySet = false };
 
         (await Should.ThrowAsync<AppException>(() => Выгрузить(Имя, Серийный, "PEM"))).Code
-            .ShouldBe(ErrorCodes.KeyManagerNotConfigured);
+            .ShouldBe(KeyManagerErrorCodes.NotConfigured);
         (await Should.ThrowAsync<AppException>(() => Показать(Имя, Серийный))).Code
-            .ShouldBe(ErrorCodes.KeyManagerNotConfigured);
+            .ShouldBe(KeyManagerErrorCodes.NotConfigured);
     }
 
     [Fact]
@@ -230,7 +230,7 @@ public sealed class ExportTests(KeyManagerDatabase база) : IAsyncLifetime
     private async Task Снимок(string имя, string серийный)
     {
         await using var scope = база.Scope();
-        var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         db.Set<KnownCertificate>().Add(new KnownCertificate
         {

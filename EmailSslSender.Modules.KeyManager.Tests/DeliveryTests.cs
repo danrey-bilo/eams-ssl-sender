@@ -4,9 +4,9 @@ using EmailSslSender.Modules.KeyManager.Client;
 using EmailSslSender.Modules.KeyManager.Contracts;
 using EmailSslSender.Modules.KeyManager.Delivery;
 using EmailSslSender.Modules.KeyManager.Domain;
-using EmailSslSender.Shared.Contracts.Audit;
-using EmailSslSender.Shared.Contracts.Mail;
-using EmailSslSender.Shared.Data;
+using Modules.Core.Contracts.Audit;
+using Modules.Core.Contracts.Mail;
+using Modules.Core.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
@@ -37,7 +37,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
     public async ValueTask DisposeAsync()
     {
         await using var scope = база.Scope();
-        var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await db.Set<CertificateSubscription>().ExecuteDeleteAsync(CancellationToken.None);
         await db.Set<KnownCertificate>().ExecuteDeleteAsync(CancellationToken.None);
         await db.Set<KeyManagerState>().ExecuteDeleteAsync(CancellationToken.None);
@@ -57,12 +57,13 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         база.Почта.Письма.Select(п => п.To).ShouldBe(["a@example.com", "b@example.com"]);
 
         var письмо = база.Почта.Письма[0];
-        письмо.Kind.ShouldBe(CertificateMail.Kind);
+        письмо.Kind.ShouldBe(CertificateMail.KindFor(2), "вид письма несёт число файлов в архиве");
         письмо.Values["serial_number"].ShouldBe("aa01");
         письмо.Values["expires_on"].ShouldBe("01.01.2027");
         письмо.Values["formats"].ShouldBe("PEM, KEY");
         письмо.Values["archive"].ShouldBe("site.example.com.zip");
-        письмо.Values["files"].ShouldBe("  • site.example.com.pem\n  • site.example.com.key");
+        письмо.Values["file1"].ShouldBe("site.example.com.pem");
+        письмо.Values["file2"].ShouldBe("site.example.com.key");
 
         // ⚠ Одно вложение — архив: Outlook блокирует .crt, .cer и .der отдельными файлами.
         var архив = письмо.Attachments.ShouldHaveSingleItem();
@@ -394,14 +395,14 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
     private async Task<string[]> Текущие()
     {
         await using var scope = база.Scope();
-        var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         return [.. await CertificateSnapshots.Current(db).Select(с => с.CommonName).Distinct().ToListAsync(Ct)];
     }
 
     private async Task<string[]> ВсеВСнимке()
     {
         await using var scope = база.Scope();
-        var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         return [.. await db.Set<KnownCertificate>().Select(с => с.CommonName).Distinct().ToListAsync(Ct)];
     }
 
@@ -437,7 +438,8 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
 
         // ⚠ Пароль — вложением: тело письма живёт в очереди до уборки, вложения стираются сразу.
         var a = база.Почта.Письма.Single(п => п.To == "a@example.com");
-        a.Values["files"].ShouldEndWith(CertificateMail.PassphraseFile);
+        a.Kind.ShouldBe(CertificateMail.KindFor(3));
+        a.Values["file3"].ShouldBe(CertificateMail.PassphraseFile);
         a.Values.Values.ShouldNotContain(з => з.Contains("пароль-a", StringComparison.Ordinal));
         Encoding.UTF8.GetString(Распаковать(a.Attachments.ShouldHaveSingleItem())
                 .Single(ф => ф.Name == CertificateMail.PassphraseFile).Content)
@@ -456,6 +458,33 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
     {
         CertificateMail.ExpiresOn(new DateOnly(2027, 1, 8), язык).ShouldBe(ожидается);
         CertificateMail.ExpiresOn(null, язык).ShouldBe("—");
+    }
+
+    /// <summary>
+    /// Список файлов — строками шаблона: модуль почты вырезает переводы строк из значений, и список
+    /// одним значением слипся бы в строку (найдено живой проверкой перехода на модули).
+    /// </summary>
+    [Fact]
+    public void Шаблон_на_каждое_число_файлов_и_язык_со_строкой_на_файл()
+    {
+        var письма = new CertificateMail();
+
+        письма.Templates.Count.ShouldBe(CertificateMail.MaxFiles * MailLocales.All.Count);
+        письма.UnthrottledKinds.Count.ShouldBe(CertificateMail.MaxFiles);
+
+        for (var n = 1; n <= CertificateMail.MaxFiles; n++)
+        {
+            foreach (var язык in MailLocales.All)
+            {
+                var шаблон = письма.Templates.Single(т => т.Kind == CertificateMail.KindFor(n) && т.Locale == язык);
+
+                шаблон.Body.Split('\n').Count(строка => строка.StartsWith("  • {file", StringComparison.Ordinal)).ShouldBe(n);
+                шаблон.Body.ShouldContain("{file" + n + "}");
+                шаблон.Body.ShouldNotContain("{file" + (n + 1) + "}");
+            }
+        }
+
+        Should.Throw<ArgumentOutOfRangeException>(() => CertificateMail.KindFor(CertificateMail.MaxFiles + 1));
     }
 
     [Fact]
@@ -537,7 +566,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         await Опросить();
 
         await using var scope = база.Scope();
-        var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         var снимок = await db.Set<KnownCertificate>().AsNoTracking().OrderBy(с => с.SerialNumber).ToListAsync(Ct);
         снимок.Select(с => с.SerialNumber).ShouldBe(["aa01", "bb02"]);
@@ -560,7 +589,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         (await Опросить()).Polled.ShouldBeFalse();
 
         await using var scope = база.Scope();
-        var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         (await db.Set<KeyManagerState>().AsNoTracking().SingleAsync(Ct)).LastPollError
             .ShouldNotBeNull().ShouldContain("недоступен");
 
@@ -582,7 +611,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         string[]? formats = null)
     {
         await using var scope = база.Scope();
-        var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         var подписка = new CertificateSubscription
         {
@@ -624,7 +653,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
     private async Task<CertificateSubscription> Прочитать(Guid id)
     {
         await using var scope = база.Scope();
-        var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         return await db.Set<CertificateSubscription>().AsNoTracking().SingleAsync(п => п.Id == id, Ct);
     }

@@ -1,9 +1,8 @@
 using System.Net;
 using System.Net.Http.Json;
 using EmailSslSender.Api.Infrastructure;
-using EmailSslSender.Shared.Contracts.Audit;
-using EmailSslSender.Shared.Crypto;
-using Microsoft.AspNetCore.Http;
+using Modules.Core.Contracts.Audit;
+using Modules.Crypto;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -13,23 +12,24 @@ using Microsoft.Extensions.Logging;
 namespace EmailSslSender.IntegrationTests;
 
 /// <summary>
-/// Журнал говорит, ЧТО изменилось, — там, где вызывающий поручился, что это можно писать.
+/// Журнал говорит, ЧТО изменилось: значения — у настроек и Key Manager Plus, у прочих — имена полей.
 /// </summary>
 /// <remarks>
-/// ⚠ ⚠ Прежде <c>LogAuditWriter</c> выбрасывал <c>Changes</c> целиком: строка
-/// «settings.system.update» не говорила, какой ключ и с чего на что, — то есть после подмены
-/// <c>mail.smtp_host</c> или <c>keymanager.base_url</c> журнал молчал о главном. Писать всё
-/// подряд тоже нельзя: у учётных записей в <c>Changes</c> лежат адреса почты.
+/// ⚠ ⚠ Без значений строка «settings.system.update» не говорила бы, какой ключ и с чего на что, —
+/// то есть после подмены <c>mail.smtp_host</c> или <c>keymanager.base_url</c> журнал молчал бы о
+/// главном. Писать всё подряд тоже нельзя: у учётных записей в изменениях лежат адреса почты.
 /// </remarks>
 [Collection(SenderHost.Collection)]
 public sealed class AuditChangesTests(SenderHost host)
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    private static readonly AuditAction Событие = new("test.audit");
+    private static readonly AuditAction Событие = new("user.update");
+
+    private static readonly AuditAction Настройка = new("settings.system.update");
 
     [Fact]
-    public void Без_поручительства_изменения_в_лог_не_идут()
+    public void У_прочих_событий_пишутся_только_имена_полей()
     {
         var перо = new Перо();
 
@@ -38,16 +38,16 @@ public sealed class AuditChangesTests(SenderHost host)
             Changes: new Dictionary<string, object?>(StringComparer.Ordinal) { ["email"] = "кто@example.com" }));
 
         перо.Строки.Single().ShouldNotContain("кто@example.com");
-        перо.Поля.Single().ContainsKey("audit_changes").ShouldBeFalse();
+        перо.Поля.Single()["audit_changes"].ShouldBe("""["email"]""");
     }
 
     [Fact]
-    public void С_поручительством_изменения_пишутся_ключами_и_значениями()
+    public void У_настроек_изменения_пишутся_ключами_и_значениями()
     {
         var перо = new Перо();
 
         Журнал(перо).Write(new AuditEntry(
-            Событие,
+            Настройка,
             Changes: new Dictionary<string, object?>(StringComparer.Ordinal)
             {
                 ["mail.smtp_host"] = new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -55,22 +55,33 @@ public sealed class AuditChangesTests(SenderHost host)
                     ["from"] = "smtp.example.com",
                     ["to"] = "чужой.example.com",
                 },
-            },
-            LogChanges: true));
+            }));
 
         var строка = перо.Строки.Single();
-        строка.ShouldContain("test.audit");
+        строка.ShouldContain("settings.system.update");
         строка.ShouldContain("""{"mail.smtp_host":{"from":"smtp.example.com","to":"чужой.example.com"}}""");
         перо.Поля.Single()["audit_changes"].ShouldBeOfType<string>();
     }
 
     [Fact]
+    public void Отказ_в_праве_пишется_а_разрешение_нет()
+    {
+        var перо = new Перо();
+        var журнал = Журнал(перо);
+
+        журнал.RecordAsync(null, new AuditDecision(true, "users.manage", "суперпользователь", Bypass: true), null, null, Ct);
+        перо.Строки.ShouldBeEmpty("разрешений с обходом было бы по строке на каждый экран");
+
+        журнал.RecordAsync(null, new AuditDecision(false, "users.manage", "права нет"), "user", null, Ct);
+        перо.Строки.Single().ShouldContain("authz.denied");
+    }
+
+    [Fact]
     public void Перевод_строки_в_значении_не_рвёт_строку_лога()
     {
-        var изменения = LogAuditWriter.Изменения(new AuditEntry(
-            Событие,
-            Changes: new Dictionary<string, object?>(StringComparer.Ordinal) { ["x"] = "a\naudit поддельная строка" },
-            LogChanges: true));
+        var изменения = LogAuditWriter.Изменения(
+            Настройка,
+            new Dictionary<string, object?>(StringComparer.Ordinal) { ["x"] = "a\naudit поддельная строка" });
 
         изменения.ShouldNotBeNull().ShouldNotContain('\n');
     }
@@ -78,10 +89,9 @@ public sealed class AuditChangesTests(SenderHost host)
     [Fact]
     public void Длинные_изменения_обрезаются()
     {
-        var изменения = LogAuditWriter.Изменения(new AuditEntry(
-            Событие,
-            Changes: new Dictionary<string, object?>(StringComparer.Ordinal) { ["x"] = new string('я', 10_000) },
-            LogChanges: true));
+        var изменения = LogAuditWriter.Изменения(
+            Настройка,
+            new Dictionary<string, object?>(StringComparer.Ordinal) { ["x"] = new string('я', 10_000) });
 
         изменения.ShouldNotBeNull().Length.ShouldBe(LogAuditWriter.ПотолокИзменений + 1);
     }
@@ -108,19 +118,21 @@ public sealed class AuditChangesTests(SenderHost host)
 
         var строка = перо.Строки.Single(с => с.Contains("settings.system.update", StringComparison.Ordinal));
         строка.ShouldContain("\"mail.smtp_host\"");
-        строка.ShouldContain("\"to\":\"чужой.example.com\"");
+        строка.ShouldContain("чужой.example.com");
     }
 
     [Fact]
-    public async Task Ротация_ключей_хоста_доходит_до_очереди_писем()
+    public async Task Ротация_ключей_хоста_доходит_до_всех_запечатанных()
     {
         await using var scope = host.Services.CreateAsyncScope();
 
-        scope.ServiceProvider.GetServices<IRewrapTarget>().Select(цель => цель.Name)
-            .ShouldContain("mail_outbox", "без этой цели rewrap-keys не трогал ключи писем в очереди");
+        var цели = scope.ServiceProvider.GetServices<IRewrapTarget>().Select(цель => цель.Name).ToList();
+
+        цели.ShouldContain("mail_outbox", "без этой цели rewrap-keys не трогал ключи писем в очереди");
+        цели.ShouldContain("keymanager_state", "без этой цели rewrap-keys не трогал ключ API Key Manager Plus");
     }
 
-    private static LogAuditWriter Журнал(Перо перо) => new(new TestUser(), new HttpContextAccessor(), перо);
+    private static LogAuditWriter Журнал(Перо перо) => new(new TestUser(), new AuditContextAccessor(), перо);
 
     /// <summary>Логгер журнала, запоминающий строки и структурные поля.</summary>
     private sealed class Перо : ILogger<LogAuditWriter>

@@ -55,8 +55,8 @@ public sealed class RuntimeRoleTests(SenderHost host)
         }
 
         await using var сервис = await ПодключитьсяAsync(роль, пароль);
-        (await ЗначениеAsync<long>(сервис, "SELECT count(*) FROM \"__EFMigrationsHistory\"")).ShouldBeGreaterThan(0);
-        (await Should.ThrowAsync<PostgresException>(() => ВыполнитьAsync(сервис, "DELETE FROM \"__EFMigrationsHistory\"")))
+        (await ЗначениеAsync<long>(сервис, "SELECT count(*) FROM __ef_history_identity")).ShouldBeGreaterThan(0);
+        (await Should.ThrowAsync<PostgresException>(() => ВыполнитьAsync(сервис, "DELETE FROM __ef_history_keymanager")))
             .SqlState.ShouldBe(PostgresErrorCodes.InsufficientPrivilege);
     }
 

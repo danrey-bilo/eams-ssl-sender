@@ -1,5 +1,5 @@
 using EmailSslSender.Modules.KeyManager.Domain;
-using EmailSslSender.Shared.Contracts.Data;
+using Modules.Core.Contracts.Data;
 using Microsoft.EntityFrameworkCore;
 
 namespace EmailSslSender.Modules.KeyManager.Storage;

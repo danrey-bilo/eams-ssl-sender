@@ -2,7 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
-using EmailSslSender.Shared.Data;
+using Modules.Core.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -157,7 +157,7 @@ public sealed class MailApi(SenderHost host)
 
             await using (var scope = host.Services.CreateAsyncScope())
             {
-                await scope.ServiceProvider.GetRequiredService<SenderDbContext>().Database.ExecuteSqlRawAsync(
+                await scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.ExecuteSqlRawAsync(
                     "UPDATE system_secrets SET sealed = sealed || '\\x00'::bytea WHERE key = 'smtp_password'", Ct);
             }
 
@@ -185,7 +185,7 @@ public sealed class MailApi(SenderHost host)
     /// указано куда», а не 403.
     /// </remarks>
     [Fact]
-    public async Task Пароль_SMTP_без_свежего_кода_отвергается_а_проверка_нет()
+    public async Task Пароль_SMTP_и_проверочное_письмо_без_свежего_кода_отвергаются()
     {
         Войти();
         host.User.StepUpAt = DateTimeOffset.UtcNow.AddMinutes(-11);
@@ -198,9 +198,12 @@ public sealed class MailApi(SenderHost host)
             (await Код(ответ)).ShouldBe("SECOND_FACTOR_REQUIRED");
             (await ответ.Content.ReadAsStringAsync(Ct)).ShouldNotContain("очень-секретный-пароль");
 
+            // ⚠ Модуль почты закрывает кодом и проверочное письмо: оно уходит с паролем SMTP на сервер из
+            // настроек, и подменённый сервер узнал бы пароль.
             var проверка = await host.CreateClient().PostAsJsonAsync(Проверка, new { to = "" }, Ct);
 
-            проверка.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+            проверка.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+            (await Код(проверка)).ShouldBe("SECOND_FACTOR_REQUIRED");
         }
         finally
         {
@@ -288,7 +291,7 @@ public sealed class MailApi(SenderHost host)
     private async Task<List<string>> Записи()
     {
         await using var scope = host.Services.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         return await db.Database
             .SqlQueryRaw<string>(

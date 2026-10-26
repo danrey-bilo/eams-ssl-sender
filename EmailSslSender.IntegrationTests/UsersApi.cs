@@ -2,7 +2,7 @@ using System.Net;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Text.Json.Nodes;
-using EmailSslSender.Shared.Errors;
+using Modules.Core.Errors;
 
 namespace EmailSslSender.IntegrationTests;
 
@@ -200,6 +200,7 @@ public sealed class UsersApi(SenderHost host)
                 (HttpMethod.Delete, кто),
                 (HttpMethod.Delete, $"{кто}/two-factor"),
                 (HttpMethod.Delete, $"{кто}/sessions"),
+                (HttpMethod.Patch, кто),
             };
 
             foreach (var (метод, путь) in действия)
@@ -215,9 +216,7 @@ public sealed class UsersApi(SenderHost host)
                 (await Envelope(ответ)).Code.ShouldBe(ErrorCodes.SecondFactorRequired, $"{метод} {путь}");
             }
 
-            // Правка имени доступа не даёт и кода не спрашивает: здесь 404 — такого человека нет.
-            (await Client().PatchAsJsonAsync(кто, new { display_name = "Имя" }, Ct))
-                .StatusCode.ShouldBe(HttpStatusCode.NotFound);
+            // Чтение кода не спрашивает. Правку учётной записи модуль закрывает кодом целиком — и имя тоже.
             (await Client().GetAsync("/api/users", Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
         }
         finally

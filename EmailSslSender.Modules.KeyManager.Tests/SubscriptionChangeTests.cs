@@ -4,8 +4,8 @@ using EmailSslSender.Modules.KeyManager.Client;
 using EmailSslSender.Modules.KeyManager.Contracts;
 using EmailSslSender.Modules.KeyManager.Delivery;
 using EmailSslSender.Modules.KeyManager.Domain;
-using EmailSslSender.Shared.Contracts.Mail;
-using EmailSslSender.Shared.Data;
+using Modules.Core.Contracts.Mail;
+using Modules.Core.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -35,7 +35,7 @@ public sealed class SubscriptionChangeTests(KeyManagerDatabase база) : IAsyn
     public async ValueTask DisposeAsync()
     {
         await using var scope = база.Scope();
-        var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await db.Set<CertificateSubscription>().ExecuteDeleteAsync(CancellationToken.None);
         await db.Set<KnownCertificate>().ExecuteDeleteAsync(CancellationToken.None);
         await db.Set<KeyManagerState>().ExecuteDeleteAsync(CancellationToken.None);
@@ -66,7 +66,7 @@ public sealed class SubscriptionChangeTests(KeyManagerDatabase база) : IAsyn
         подписка.LastSentSerial.ShouldBe("aa01", "остальным отправка засчитана");
 
         var запись = база.Аудит.Записи.Single(з => з.Action == KeyManagerActions.SubscriptionUpdated);
-        запись.LogChanges.ShouldBeTrue();
+        запись.Action.Name.ShouldStartWith("keymanager.", Case.Sensitive, "значения изменений журнал хоста пишет по приставке события");
 
         var получатели = запись.Changes.ShouldNotBeNull()["recipients"]
             .ShouldBeAssignableTo<IReadOnlyDictionary<string, object?>>().ShouldNotBeNull();
@@ -96,7 +96,7 @@ public sealed class SubscriptionChangeTests(KeyManagerDatabase база) : IAsyn
         (await Судьбы(номера)).Values.ShouldAllBe(п => п.State == MailLetterState.Dead && п.LastError == "Отменено: подписка удалена");
 
         var запись = база.Аудит.Записи.Single(з => з.Action == KeyManagerActions.SubscriptionDeleted);
-        запись.LogChanges.ShouldBeTrue();
+        запись.Action.Name.ShouldStartWith("keymanager.", Case.Sensitive, "значения изменений журнал хоста пишет по приставке события");
         запись.Changes.ShouldNotBeNull()["cancelled_letters"].ShouldBe(2);
         запись.Changes["recipients"].ShouldBe(2);
         JsonSerializer.Serialize(запись.Changes).ShouldNotContain("@");
@@ -179,7 +179,7 @@ public sealed class SubscriptionChangeTests(KeyManagerDatabase база) : IAsyn
         await Контроллер(scope).Create(
             new SubscriptionIn { CommonName = "site.example.com", Recipients = адреса }, Ct);
 
-        var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         var id = await db.Set<CertificateSubscription>().AsNoTracking().Select(п => п.Id).SingleAsync(Ct);
 
         база.Аудит.Записи.Clear();
@@ -210,7 +210,7 @@ public sealed class SubscriptionChangeTests(KeyManagerDatabase база) : IAsyn
     {
         await using var scope = база.Scope();
 
-        return await scope.ServiceProvider.GetRequiredService<SenderDbContext>()
+        return await scope.ServiceProvider.GetRequiredService<AppDbContext>()
             .Set<CertificateSubscription>().AsNoTracking().SingleAsync(п => п.Id == id, Ct);
     }
 }

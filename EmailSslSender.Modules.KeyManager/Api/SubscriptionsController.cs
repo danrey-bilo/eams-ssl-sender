@@ -5,11 +5,11 @@ using EmailSslSender.Modules.KeyManager.Client;
 using EmailSslSender.Modules.KeyManager.Contracts;
 using EmailSslSender.Modules.KeyManager.Delivery;
 using EmailSslSender.Modules.KeyManager.Domain;
-using EmailSslSender.Shared.Contracts.Audit;
-using EmailSslSender.Shared.Contracts.Authz;
-using EmailSslSender.Shared.Contracts.Mail;
-using EmailSslSender.Shared.Data;
-using EmailSslSender.Shared.Errors;
+using Modules.Core.Contracts.Audit;
+using Modules.Core.Contracts.Authz;
+using Modules.Core.Contracts.Mail;
+using Modules.Core.Data;
+using Modules.Core.Errors;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -122,9 +122,10 @@ internal sealed record SubscriptionOut(
 /// получателя — сведение о человеке, а строка журнала уходит в общий лог.
 /// </remarks>
 [ApiController]
+[AuthenticatedEndpoint("ролей в проекте нет: каждая учётная запись — администратор Key Manager Plus")]
 [Route("api/certificate-subscriptions")]
 internal sealed class SubscriptionsController(
-    SenderDbContext db,
+    AppDbContext db,
     IKeyManagerConnector connector,
     CertificateSnapshots snapshots,
     CertificateDelivery delivery,
@@ -210,8 +211,7 @@ internal sealed class SubscriptionsController(
                         ["on_change"] = подписка.OnChange,
                         ["interval_days"] = подписка.IntervalDays,
                         ["enabled"] = подписка.Enabled,
-                    },
-                    LogChanges: true));
+                    }));
 
                 await db.SaveChangesAsync(token);
             },
@@ -342,8 +342,7 @@ internal sealed class SubscriptionsController(
                     KeyManagerActions.SubscriptionUpdated,
                     ResourceType: KeyManagerActions.SubscriptionResource,
                     ResourceId: строка.Id,
-                    Changes: изменения.Count > 0 ? изменения : null,
-                    LogChanges: true));
+                    Changes: изменения.Count > 0 ? изменения : null));
 
                 await db.SaveChangesAsync(token);
 
@@ -382,8 +381,7 @@ internal sealed class SubscriptionsController(
                         ["common_name"] = строка.CommonName,
                         ["recipients"] = строка.Recipients.Length,
                         ["cancelled_letters"] = отменено,
-                    },
-                    LogChanges: true));
+                    }));
 
                 await db.SaveChangesAsync(token);
             },
@@ -458,11 +456,11 @@ internal sealed class SubscriptionsController(
             DeliveryOutcome.Sent => await ВыдатьAsync(await НайтиAsync(id, tracked: false, cancellationToken), cancellationToken),
             DeliveryOutcome.Gone => throw AppException.NotFound("Подписка не найдена."),
             DeliveryOutcome.Busy => throw new AppException(
-                ErrorCodes.DeliveryInProgress,
+                KeyManagerErrorCodes.DeliveryInProgress,
                 "Эту подписку прямо сейчас отправляет опрос — повторите через минуту.",
                 HttpStatusCode.Conflict),
             DeliveryOutcome.CertificateMissing => throw new AppException(
-                ErrorCodes.KeyManagerCertificateNotFound, итог.Error!, HttpStatusCode.Conflict),
+                KeyManagerErrorCodes.CertificateNotFound, итог.Error!, HttpStatusCode.Conflict),
             DeliveryOutcome.KeyManagerFailed => throw KeyManagerController.Unavailable(
                 new KeyManagerException(итог.Error!)),
             DeliveryOutcome.MailNotConfigured => throw new AppException(

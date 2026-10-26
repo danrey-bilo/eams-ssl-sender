@@ -27,9 +27,16 @@ jobs:
     steps:
       # ⚠ Действия закреплены хешем коммита, а не тегом: тег можно переставить, а у задачи есть
       # право писать релиз и образ. Токен в .git/config не остаётся — он попал бы в контекст сборки.
+      #
+      # ⚠ ⚠ Модули EAMS — подмодули modules/<имя> из ЗАКРЫТЫХ репозиториев danrey-bilo/module-*: токен
+      # задачи (GITHUB_TOKEN) читает только этот репозиторий. Нужен секрет MODULES_TOKEN — fine-grained
+      # токен с правом Contents: Read-only на этот репозиторий и семь module-* (README, «Модули EAMS»).
+      # Подмодули встают на закреплённые в репозитории коммиты, не на свежие ветки.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          submodules: true
+          token: ${{ secrets.MODULES_TOKEN }}
 
       - name: Версия и имя образа
         id: v

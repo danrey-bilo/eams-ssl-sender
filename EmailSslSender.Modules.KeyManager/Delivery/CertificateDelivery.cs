@@ -2,10 +2,10 @@ using System.Text;
 using EmailSslSender.Modules.KeyManager.Client;
 using EmailSslSender.Modules.KeyManager.Contracts;
 using EmailSslSender.Modules.KeyManager.Domain;
-using EmailSslSender.Shared.Contracts.Audit;
-using EmailSslSender.Shared.Contracts.Mail;
-using EmailSslSender.Shared.Data;
-using EmailSslSender.Shared.Errors;
+using Modules.Core.Contracts.Audit;
+using Modules.Core.Contracts.Mail;
+using Modules.Core.Data;
+using Modules.Core.Errors;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 
@@ -78,7 +78,7 @@ internal sealed class DownloadCache
 /// всем остальным, и администратор не узнал бы, почему сертификат не приходит.
 /// </remarks>
 internal sealed class CertificateDelivery(
-    SenderDbContext db,
+    AppDbContext db,
     IMailQueue mail,
     IAuditWriter audit,
     TimeProvider clock,
@@ -252,11 +252,15 @@ internal sealed class CertificateDelivery(
                 ["expires_on"] = CertificateMail.ExpiresOn(текущий.ExpiresOn, подписка.Locale),
                 ["formats"] = CertificateMail.Formats(подписка.Formats),
                 ["archive"] = архив.FileName,
-                ["files"] = CertificateMail.Files(файлы),
             };
 
+            foreach (var (имя, файл) in CertificateMail.Files(файлы))
+            {
+                значения[имя] = файл;
+            }
+
             var итог = await mail.EnqueueAsync(
-                адрес, CertificateMail.Kind, подписка.Locale, значения, [архив], token);
+                адрес, CertificateMail.KindFor(файлы.Count), подписка.Locale, значения, [архив], cancellationToken: token);
 
             if (итог.Result != MailQueueResult.Queued || итог.Id is not { } номер)
             {

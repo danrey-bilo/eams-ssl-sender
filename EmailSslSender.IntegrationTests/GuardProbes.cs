@@ -1,4 +1,4 @@
-using EmailSslSender.Shared.Contracts.Authz;
+using Modules.Core.Contracts.Authz;
 using Microsoft.AspNetCore.Mvc;
 
 namespace EmailSslSender.IntegrationTests;
@@ -32,7 +32,7 @@ public sealed class GuardProbeController : ControllerBase
 /// Внутренний контроллер <b>чужой</b> сборки.
 /// </summary>
 /// <remarks>
-/// ⚠ Проверяет, что <c>InternalControllerFeatureProvider</c> журнала поднимает внутренние
+/// ⚠ Проверяет, что отбор контроллеров ядра модулей (<c>ModuleControllers</c>) поднимает внутренние
 /// контроллеры <b>только своей</b> сборки. Провайдер попадает в общий список и его
 /// спрашивают про каждый тип каждой подключённой части — без ограничения он сделал бы
 /// маршрутизируемым любой непубличный класс с именем на «Controller» во всём приложении,

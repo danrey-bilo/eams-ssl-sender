@@ -1,5 +1,5 @@
-using EmailSslSender.Shared.Crypto;
-using EmailSslSender.Shared.Errors;
+using Modules.Crypto;
+using Modules.Core.Errors;
 
 namespace EmailSslSender.Api.Infrastructure;
 
@@ -60,18 +60,33 @@ internal static class MasterKeyFile
     /// <exception cref="InvalidOperationException">Ключа нет, файл не читается или формат не тот.</exception>
     public static MasterKeySource Load(IConfiguration configuration)
     {
+        var (content, origin, fromEnvironment) = Content(configuration);
+
+        return new MasterKeySource(MasterKeyRing.Parse(content, Hint), origin, fromEnvironment);
+    }
+
+    /// <summary>Подсказка для текста отказа: откуда ключ и чем создать файл.</summary>
+    private const string Hint = $"{FileKey} (создать: ./scripts/gen-secrets.sh)";
+
+    /// <summary>Содержимое источника мастер-ключа как есть.</summary>
+    /// <remarks>
+    /// ⚠ Только для разового перехода на конверт модулей EAMS (<see cref="LegacySecrets"/>): связка
+    /// модулей ключей наружу не отдаёт, а открыть прежний конверт «sender:» без них нечем.
+    /// </remarks>
+    internal static (string Content, string Origin, bool FromEnvironment) Content(IConfiguration configuration)
+    {
         var path = configuration[FileKey];
 
         if (!string.IsNullOrWhiteSpace(path))
         {
-            return new MasterKeySource(MasterKeyRing.Parse(Read(path)), path, FromEnvironment: false);
+            return (Read(path), path, false);
         }
 
         var inline = configuration[InlineKey];
 
         if (!string.IsNullOrWhiteSpace(inline))
         {
-            return new MasterKeySource(MasterKeyRing.Parse(inline), InlineKey, FromEnvironment: true);
+            return (inline, InlineKey, true);
         }
 
         throw new InvalidOperationException(

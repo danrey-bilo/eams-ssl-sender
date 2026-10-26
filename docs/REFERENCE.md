@@ -27,28 +27,37 @@
 
 ## Что внутри
 
-| Проект | Что делает | Откуда в EAMS |
-|---|---|---|
-| `EmailSslSender.Api` | Хост: конвейер запросов, фильтр входа, команды консоли, миграции, отдача веб-панели | `Eams.Api` |
-| `EmailSslSender.Web` | Веб-панель: React + TypeScript (Vite) — вход с 2FA, рассылка, Key Manager, почта, пользователи | — |
-| `EmailSslSender.Shared` | Контракты между модулями, коды ошибок, шифрование секретов (мастер-ключ, конверты AES-GCM), общий `SenderDbContext` | `Eams.Shared` |
-| `EmailSslSender.Modules.Identity` | Учётные записи, пароли (Argon2id), вход, TOTP, коды письмом, приглашения, сброс пароля, блокировка после неудачных попыток | `Eams.Modules.Identity` |
-| `EmailSslSender.Modules.Tokens` | Сессии: непрозрачные токены доступа и обновления, ротация, обнаружение кражи, отметка переподтверждения | `Eams.Modules.ApiTokens` |
-| `EmailSslSender.Modules.Settings` | Настройки установки в базе (`system_settings`), справочник с границами и умолчаниями | `Eams.Modules.Settings` |
-| `EmailSslSender.Modules.Mail` | SMTP через MailKit, очередь писем в базе, вложения, пределы частоты, шаблоны на трёх языках, зашифрованный пароль SMTP | `Eams.Modules.Mail` |
-| `EmailSslSender.Modules.KeyManager` | Опрос ManageEngine Key Manager Plus, подписки на сертификаты, рассылка файлов сертификата письмом | — |
-| `*.Tests`, `EmailSslSender.IntegrationTests` | Около 600 тестов: модульные и живые на PostgreSQL в Testcontainers | тесты тех же модулей |
+С версии 2.0 сервис — модульный монолит на **модулях EAMS**: учётные записи, сессии, настройки и
+почта — готовые модули из репозиториев `danrey-bilo/module-*`, подключённые подмодулями git с
+закреплёнными версиями. Своё у проекта — хост, модуль Key Manager Plus и веб-панель.
+
+| Проект | Что делает |
+|---|---|
+| `EmailSslSender.Api` | Хост: конвейер запросов (из модуля хостинга), движок прав проекта, журнал строками лога, команды консоли, прежние миграции и мост к модулям, набор миграций проекта, отдача веб-панели |
+| `EmailSslSender.Web` | Веб-панель: React + TypeScript (Vite) — вход с 2FA, рассылка, Key Manager, почта, пользователи |
+| `EmailSslSender.Modules.KeyManager` | Опрос ManageEngine Key Manager Plus, подписки на сертификаты, рассылка файлов сертификата письмом; свой набор миграций |
+| `modules/core` | Ядро модулей: контракты (почта, настройки, журнал, права, учётные записи), общий `AppDbContext`, коды ошибок, проверка зависимостей модулей при старте |
+| `modules/crypto` | Мастер-ключ, конверт секретов AES-GCM, подпись значений (HMAC) |
+| `modules/hosting` | Конвейер: номер обращения, конверт ошибок, контекст журнала, личность запроса, фильтр прав, пределы частоты, проверка готовности, безопасный вывод исключений в лог |
+| `modules/identity` | Учётные записи, пароли (Argon2id), вход, TOTP, коды письмом, приглашения, сброс пароля, блокировка, переподтверждение |
+| `modules/tokens` | Сессии: непрозрачные токены доступа и обновления, ротация, обнаружение кражи, отметка переподтверждения, список своих сессий |
+| `modules/settings` | Настройки установки в базе (`system_settings`), справочник с границами и умолчаниями |
+| `modules/mail` | SMTP через MailKit, очередь писем в базе, вложения, пределы частоты, шаблоны на трёх языках, рамка письма, зашифрованный и привязанный к серверу пароль SMTP |
+| `EmailSslSender.Modules.KeyManager.Tests`, `EmailSslSender.IntegrationTests` | Около 280 тестов: модуль Key Manager и живые проверки хоста на PostgreSQL в Testcontainers. Модули EAMS проверяются своими тестами в своих репозиториях |
 
 Модули подключаются в [Program.cs](../EmailSslSender.Api/Program.cs) цепочкой
 `AddIdentityModule()` → `AddTokensModule()` → `AddSettingsModule()` → `AddMailModule()` →
-`AddKeyManagerModule()`.
-Модуль не трогает хост: он объявляет свои таблицы, настройки и шаблоны писем через интерфейсы
-из `EmailSslSender.Shared`.
+`AddKeyManagerModule()`. Модуль не трогает хост и соседей: свои таблицы, настройки, шаблоны писем,
+события журнала и пределы частоты он объявляет через контракты `modules/core`, а чего ему не хватает
+(почты, настроек, крипты), называет проверка ядра при старте — сервис не поднимется с недостающей
+зависимостью.
 
 ### Модули EAMS подмодулями
 
 Модули EAMS живут каждый в своём репозитории `danrey-bilo/module-<имя>` и подключены подмодулями
-git в каталог `modules/<имя>`. Версия каждого **закреплена коммитом метки** и сама не обновляется:
+git в каталог `modules/<имя>`. Используются только нужные проекту: ядро, крипта, хостинг, учётные
+записи, сессии, настройки и почта (журнал, доступ, хранилища, устройства и прочие модули EAMS не
+подключены). Версия каждого **закреплена коммитом метки** и сама не обновляется:
 
 | Каталог | Репозиторий | Метка |
 |---|---|---|
@@ -64,32 +73,116 @@ git в каталог `modules/<имя>`. Версия каждого **закр
 
 ```bash
 git clone --recurse-submodules https://github.com/danrey-bilo/email_ssl_sender.git
-# или в уже склонированном
+```
+
+В уже склонированном:
+
+```bash
 git submodule update --init
 ```
 
 Перейти на другую версию модуля — только явно: перейти в подмодуле на метку и закоммитить новый
-коммит подмодуля в этом репозитории.
+коммит подмодуля в этом репозитории. Затем — полный прогон тестов: у модуля могли появиться новые
+миграции и новые требования к хосту.
 
 ```bash
 git -C modules/mail fetch --tags
+```
+
+```bash
 git -C modules/mail checkout v0.10.0
+```
+
+```bash
 git add modules/mail
 ```
 
-> Переход проекта с собственных модулей `EmailSslSender.Modules.*` на модули из `modules/` идёт
-> по шагам; пока сборка сервиса их не использует. Ход работы — в [CHANGELOG.md](../CHANGELOG.md).
+**Сборка образа в GitHub Actions** (`.github/workflows/release.yml`) забирает подмодули секретом
+репозитория `MODULES_TOKEN`: токен задачи читает только свой репозиторий, а модули закрытые. Токен —
+fine-grained, владелец `danrey-bilo`, доступ к репозиториям `email_ssl_sender` и семи `module-*`,
+право `Contents: Read-only`: GitHub → Settings → Developer settings → Fine-grained tokens, затем в
+репозитории Settings → Secrets and variables → Actions → `MODULES_TOKEN`. Локальная сборка образа
+(`docker compose build`) берёт модули из рабочей копии: подмодули должны быть забраны.
+
+### Что проект задаёт модулям
+
+Модули EAMS по умолчанию ведут себя как в EAMS; поведение версии 1.x проект возвращает опциями в
+`Program.cs`:
+
+| Модуль | Опция | Значение | Зачем |
+|---|---|---|---|
+| identity | `TotpIssuer` | `EAMS ssl sender` | Подпись записи в приложении-аутентификаторе |
+| identity | `RefreshCookieName` | `__Host-sender-refresh` | Прежнее имя куки |
+| identity | `RequireAuthenticatorForEveryone` | да | Приложение-аутентификатор обязательно всем; код письмом пускает только в настройку |
+| identity | `AuthenticatorExcludesEmailCode` | да | У кого подключено приложение, код письмом не принимается |
+| identity | `ChallengeCodeAttempts` | 5 | Не больше 5 кодов на одну попытку входа |
+| identity | `RefreshCookieStaysCookie` | да | Половина обновления из куки уходит только кукой |
+| identity | `LastSuperuserCountsOnlySignInCapable` | да | «Последний администратор» — только тот, кто может войти |
+| identity | `PasswordHashConcurrency` / `PasswordHashQueueLimit` | 4 / 32 | Потолок памяти под Argon2 (64 МиБ на хеш) |
+| identity | `Features.TrustedClients`, `ExtensionSignIn`, `Directory`, `StepUpEmail` | выкл. | Нет доверенных браузеров, расширения, справочника людей; переподтверждение — только приложением |
+| tokens | `Features.ApiKeys`, `DeviceTokens`, `DownloadTickets` | выкл. | Ключей интеграции, токенов машин и билетов скачивания проекту не нужно |
+| settings | `Features.UserPreferences` | выкл. | Личных предпочтений в панели нет |
+| mail | `ProductName` | `EAMS ssl sender` | Имя в подписи письма и отправитель по умолчанию |
+| mail | `Frame` | да | «Здравствуйте!» … «Спасибо,» и имя сервиса в каждом письме |
+| mail | `BindSmtpPassword` | да | Пароль SMTP уходит только тому серверу, порту, защите и логину, для которых введён |
+| mail | `RunMaintenance` | да | Уборка отправленных писем и стирание вложений у неотправленных |
+| keymanager | `RunPoller` | да | Опрос Key Manager Plus в этом процессе |
+
+Свои решения проекта поверх модулей:
+
+- **Движок прав** — [AdministratorPermissions.cs](../EmailSslSender.Api/Infrastructure/AdministratorPermissions.cs):
+  ролей нет, любая активная учётная запись может всё. Каждая учётная запись к тому же
+  суперпользователь: модуль учётных записей разрешает распоряжаться суперпользователем только
+  суперпользователю, а в проекте администраторы равны.
+- **Журнал** — [LogAuditWriter.cs](../EmailSslSender.Api/Infrastructure/LogAuditWriter.cs): строки
+  `audit` в логе вместо модуля журнала EAMS. Значения изменений пишутся только у событий настроек и
+  Key Manager Plus; у прочих — имена полей (у учётных записей там адреса почты). Из решений о праве
+  пишутся только отказы.
+- **Окно свежего кода — 10 минут**: умолчание модуля 5, значение 10 кладёт набор миграций проекта
+  (`EmailSslSender.Api/Schema`), администратор меняет его на экране «Безопасность».
+- **Ссылка приглашения не принимается в адресе** (`GET /api/activation?token=` → 405,
+  [TokenInAddressGuard.cs](../EmailSslSender.Api/Infrastructure/TokenInAddressGuard.cs)): модуль держит
+  этот путь ради клиентов EAMS, панель шлёт токен телом.
+- **Пределы частоты** — числа для классов путей, которые объявили модули, и общие потолки на вход и
+  активацию со всех адресов ([RateLimitGroups.cs](../EmailSslSender.Api/Infrastructure/RateLimitGroups.cs)).
+- **Письмо с сертификатом — вид на число файлов** (`certificate_delivery_1` … `_9`): модуль почты
+  вырезает переводы строк из подставляемых значений, поэтому список файлов живёт в шаблоне, строка на
+  файл.
+
+### Схема базы: прежние миграции, мост и наборы модулей
+
+Каждый модуль несёт свой набор миграций и свою таблицу истории `__ef_history_<модуль>`; набор проекта
+`sender` идёт последним. Команда `migrate`
+([SchemaMigrator.cs](../EmailSslSender.Api/Infrastructure/SchemaMigrator.cs)) проходит под одним
+замком:
+
+1. **Новая установка** — выполняет базовые миграции модулей, затем остальные.
+2. **Установка 1.x** — дотягивает прежние миграции хоста (`__EFMigrationsHistory`) до моста
+   `ModulesBridge`. Мост доводит прежнюю схему до базовых миграций модулей: недостающие колонки,
+   ограничения и индексы, таблица `user_preferences`; каждая учётная запись становится
+   суперпользователем; неотправленные письма умирают (их тела запечатаны прежним конвертом), прежние
+   вложения снимаются. Затем базовые миграции модулей **отмечаются** применёнными (схема уже есть),
+   остальные выполняются.
+3. **Перекладка секретов** ([LegacySecrets.cs](../EmailSslSender.Api/Infrastructure/LegacySecrets.cs)):
+   конверт модулей тот же по устройству и мастер-ключу, но с другими строками разделения ключей
+   (`eams:` вместо `sender:`). Секреты TOTP, пароль SMTP и ключ API Key Manager Plus открываются
+   прежним конвертом и запечатываются конвертом модулей. Идемпотентно: открывшееся конвертом модулей
+   не трогается, повторный `migrate` ничего не меняет.
+
+Что две дороги дают одну схему, проверяет тест `ModulesBridgeTests` сравнением каталога; там же —
+что секреты после перекладки открываются.
 
 ---
 
 ## Модель доступа
 
-- **Каждая учётная запись — администратор.** Ролей и прав нет. Кто вошёл, тот может всё.
-- **Закрыто по умолчанию.** Любое действие требует входа, если оно не помечено
-  `[PublicEndpoint]`. Публичны только вход, обновление токена, второй шаг входа, активация,
-  сброс пароля и проверки здоровья. Проверяет это
-  [AuthenticationFilter.cs](../EmailSslSender.Api/Infrastructure/AuthenticationFilter.cs), а тест
-  `ЗакрытоПоУмолчанию` обходит все действия и требует 401 от каждого непомеченного.
+- **Каждая учётная запись — администратор и суперпользователь.** Ролей и прав нет. Кто вошёл, тот
+  может всё (движок прав проекта — `AdministratorPermissions`).
+- **Закрыто по умолчанию.** Каждое действие объявляет доступ: `[PublicEndpoint("причина")]`,
+  `[AuthenticatedEndpoint("причина")]` или `[RequirePermission(...)]`. Публичны только вход,
+  обновление токена, второй шаг входа, активация, сброс пароля и проверки здоровья. Проверяет это
+  фильтр прав модуля хостинга (`PermissionFilter`): невошедшему — 401, действию без объявления —
+  403 всем. Тест `ЗакрытоПоУмолчанию` обходит все действия и требует 401 от каждого непубличного.
 - **Второй фактор обязателен.** Основной фактор — приложение-аутентификатор (TOTP: Google
   Authenticator, Aegis, 1Password и подобные).
   - Первый вход (аутентификатора ещё нет) даёт **сессию настройки**: в ней открыто только
@@ -102,12 +195,13 @@ git add modules/mail
   - На одну расписку входа — не больше 5 кодов, дальше вход начинается заново с пароля.
     Неудачи считаются атомарно до проверки: параллельные запросы лишних догадок не дают.
 - **Свежий код перед важными действиями** (решение владельца, 2026-10-20). Действия с пометкой
-  `[RequireRecentSecondFactor]` — выгрузка сертификата и ключа, ключ API, пароль SMTP, подписки,
-  управление пользователями — и изменение настроек защиты (`PATCH /api/settings/system` с любым
-  ключом, кроме `ui.*`) требуют кода, подтверждённого в ЭТОЙ сессии за последние
-  `auth.step_up_minutes` минут (по умолчанию 10); иначе `403 SECOND_FACTOR_REQUIRED`. Вход с
-  кодом уже свежий; обновить — `POST /api/me/step-up` с кодом из приложения. Почему и подписки:
-  иначе код на скачивание обходился бы добавлением своего адреса в рассылку.
+  `[RequireRecentSecondFactor]` — выгрузка сертификата и ключа, ключ API, пароль SMTP и проверочное
+  письмо, подписки, управление пользователями (включая правку имени), любое изменение настроек
+  (`PATCH /api/settings/system`) — и смена своего пароля требуют кода, подтверждённого в ЭТОЙ сессии
+  за последние `auth.step_up_minutes` минут (в проекте 10); иначе `403 SECOND_FACTOR_REQUIRED` с
+  `details.window_minutes`. Панель сама спрашивает код и повторяет запрос. Вход с кодом уже свежий;
+  обновить — `POST /api/me/step-up` с кодом из приложения. Почему и подписки: иначе код на
+  скачивание обходился бы добавлением своего адреса в рассылку.
 - **Последнюю активную учётную запись нельзя отключить или удалить** (`409 LAST_SUPERADMIN`):
   иначе в систему некому будет войти.
 - **Пароль администратор не задаёт.** Новую учётную запись заводят приглашением, и пароль
@@ -547,8 +641,8 @@ curl -s "$API/api/users?limit=50" -H "Authorization: Bearer $TOKEN"
 Все тела — JSON. Токен передаётся заголовком `Authorization: Bearer ...`.
 Пометки: **П** — публичный, **Н** — открыт и в сессии настройки, **Ф** — нужен свежий код
 (подтверждён в этой сессии за последние `auth.step_up_minutes` минут), иначе
-`403 SECOND_FACTOR_REQUIRED`. `PATCH /api/settings/system` требует его, если среди ключей есть
-настройка защиты (все, кроме `ui.*`).
+`403 SECOND_FACTOR_REQUIRED`. С версии 2.0 код требуют и правка любой настройки, и правка учётной
+записи, и проверочное письмо, и смена своего пароля (правила модулей EAMS).
 
 | Метод | Путь | | Назначение |
 |---|---|---|---|
@@ -560,7 +654,7 @@ curl -s "$API/api/users?limit=50" -H "Authorization: Bearer $TOKEN"
 | GET | `/api/auth/password-policy` | Н | Требования к паролю |
 | GET | `/api/me` | Н | Кто я: `id`, `email`, `must_change_password`, `must_enroll_two_factor`, `step_up_until` (до какого времени код не спросят; `null` — спросят) |
 | PATCH | `/api/me` | | Своё имя: `display_name` |
-| POST | `/api/me/password` | Н | Сменить свой пароль: `current_password`, `new_password` |
+| POST | `/api/me/password` | Н, Ф | Сменить свой пароль: `current_password`, `new_password`; в сессии настройки код не нужен |
 | GET | `/api/me/two-factor` | Н | Состояние фактора и доступные способы |
 | POST | `/api/me/two-factor/totp/setup` | Н | Завести секрет TOTP |
 | POST | `/api/me/two-factor/totp/confirm` | Н | Подтвердить секрет кодом |
@@ -570,8 +664,8 @@ curl -s "$API/api/users?limit=50" -H "Authorization: Bearer $TOKEN"
 | DELETE | `/api/me/sessions/{id}` | | Закрыть свою сессию |
 | GET | `/api/users` | | Список учётных записей |
 | GET | `/api/users/{id}` | | Одна учётная запись |
-| POST | `/api/users` | Ф | Пригласить: `email`, `display_name` |
-| PATCH | `/api/users/{id}` | | `display_name`, `must_change_password` |
+| POST | `/api/users` | Ф | Пригласить: `email`, `display_name`, `is_superuser` (панель шлёт `true`: ролей нет) |
+| PATCH | `/api/users/{id}` | Ф | `display_name`, `must_change_password` |
 | POST | `/api/users/{id}/disable`, `/enable` | Ф | Отключить / включить |
 | DELETE | `/api/users/{id}` | Ф | Удалить |
 | POST | `/api/users/{id}/unlock` | Ф | Снять блокировку входа |
@@ -579,7 +673,7 @@ curl -s "$API/api/users?limit=50" -H "Authorization: Bearer $TOKEN"
 | DELETE | `/api/users/{id}/sessions` | Ф | Закрыть все сессии человека |
 | POST | `/api/users/{id}/reset-password` | Ф | Выдать ссылку сброса |
 | POST | `/api/users/{id}/invite` | Ф | Повторить приглашение |
-| POST | `/api/activation/info` | П | Чья ссылка и требования к паролю: `token` (в теле, не в адресе) |
+| POST | `/api/activation/info` | П | Чья ссылка и требования к паролю: `token` (в теле; `GET /api/activation?token=` — `405`) |
 | POST | `/api/activation` | П | Задать пароль по приглашению: `token`, `password` |
 | POST | `/api/password-reset/request` | П | «Забыл пароль»: `email` |
 | POST | `/api/password-reset/info` | П | Проверить ссылку сброса: `token` |
@@ -588,7 +682,7 @@ curl -s "$API/api/users?limit=50" -H "Authorization: Bearer $TOKEN"
 | PATCH | `/api/settings/system` | Ф | `{"values": {...}, "reset": ["ключ", ...]}` — шлите только изменённые ключи |
 | GET | `/api/mail` | | Состояние почты и очереди |
 | PUT | `/api/mail/password` | Ф | Пароль SMTP: `password` |
-| POST | `/api/mail/test` | | Проверочное письмо: `to`, `locale` (`ru`, `uk`, `en`) |
+| POST | `/api/mail/test` | Ф | Проверочное письмо: `to`, `locale` (`ru`, `uk`, `en`) |
 | GET | `/api/keymanager` | | Состояние Key Manager Plus: включено, ключ задан, последний опрос |
 | PUT | `/api/keymanager/api-key` | Ф | Ключ API Key Manager Plus: `api_key` |
 | POST | `/api/keymanager/test` | | Проверить связь: число сертификатов или `409` с причиной |
@@ -637,7 +731,9 @@ curl -s "$API/api/users?limit=50" -H "Authorization: Bearer $TOKEN"
 | `RATE_LIMITED` | 429 | Слишком часто |
 | `VALIDATION_ERROR` | 400 | Тело запроса не прошло проверку |
 
-Полный список — в [ErrorCodes.cs](../EmailSslSender.Shared/Errors/ErrorCodes.cs).
+Полный список — общие коды ядра в `modules/core/src/Modules.Core/Errors/ErrorCodes.cs`, коды модулей —
+в их `Contracts/*ErrorCodes.cs` (учётные записи, почта) и в
+[KeyManagerErrorCodes.cs](../EmailSslSender.Modules.KeyManager/Contracts/KeyManagerErrorCodes.cs).
 
 ---
 
@@ -683,13 +779,18 @@ curl -s "$API/api/users?limit=50" -H "Authorization: Bearer $TOKEN"
 
 ## Своё письмо из кода
 
-Шаблон объявляет тот, кто шлёт. Почтовый модуль при этом не правится.
+Шаблон объявляет тот, кто шлёт. Модуль почты при этом не правится.
 
 **1. Шаблоны.** Нужны все три языка: при старте справочник проверяет, что у каждого вида
-есть `ru`, `uk` и `en`. Подстановки пишутся как `{имя}`.
+есть `ru`, `uk` и `en`. Подстановки пишутся как `{имя}`. Приветствие и подпись с именем сервиса
+добавляет рамка модуля почты — в шаблоне их не пишут.
+
+⚠ Модуль почты **вырезает переводы строк и невидимые знаки из подставляемых значений** (иначе чужое
+значение подкладывало бы абзац в тело или заголовок в тему). Список — строками шаблона, а не одним
+значением; образец — `CertificateMail` модуля Key Manager (вид на число файлов).
 
 ```csharp
-using EmailSslSender.Shared.Contracts.Mail;
+using Modules.Core.Contracts.Mail;
 
 internal sealed class ReportMailTemplates : IMailTemplateProvider
 {
@@ -712,10 +813,11 @@ builder.Services.AddSingleton<IMailTemplateProvider, ReportMailTemplates>();
 
 **3. Отправка.** `EnqueueAsync` не сохраняет сам: письмо уезжает в базу с вашим
 `SaveChangesAsync`, в одной транзакции с вашим действием. Метод не бросает исключений, а
-возвращает результат.
+возвращает результат. Токен отмены — именованным аргументом: перед ним стоит необязательный срок
+жизни письма `expiresAt`.
 
 ```csharp
-public sealed class ReportService(IMailQueue mail, SenderDbContext db)
+public sealed class ReportService(IMailQueue mail, AppDbContext db)
 {
     public async Task NotifyAsync(string to, string name, string link, CancellationToken ct)
     {
@@ -724,7 +826,7 @@ public sealed class ReportService(IMailQueue mail, SenderDbContext db)
             ReportMailTemplates.ReportReady,
             MailLocales.Ru,
             new Dictionary<string, string> { ["name"] = name, ["link"] = link },
-            ct);
+            cancellationToken: ct);
 
         // Queued — уйдёт насосом; NotConfigured — почта не настроена; RateLimited — предел адреса
         await db.SaveChangesAsync(ct);
@@ -732,52 +834,60 @@ public sealed class ReportService(IMailQueue mail, SenderDbContext db)
 }
 ```
 
-`IMailQueue.CanSendAsync()` заранее отвечает, настроена ли почта.
+`IMailQueue.CanSendAsync()` заранее отвечает, настроена ли почта. Вложения, номер письма, его
+состояние и отмена — перегрузка `EnqueueAsync(..., attachments, ...)`, `StatusAsync`, `CancelAsync`.
 
 ---
 
 ## Свой эндпоинт
 
-Обычный контроллер ASP.NET Core в `EmailSslSender.Api` (или в своём модуле по образцу
-`MailModule.cs`). Действие **закрыто по умолчанию**: без пометок оно требует входа и
-полноценной сессии.
+Контроллер ASP.NET Core в своём модуле по образцу `EmailSslSender.Modules.KeyManager`
+(`mvc.AddModule(сборка, переключатели)` подключает внутренние контроллеры модуля). Действие
+**обязано объявить доступ**, иначе фильтр прав отвечает `403` всем:
+
+- `[AuthenticatedEndpoint("причина")]` — нужен вход (ролей в проекте нет, этого достаточно);
+- `[RequireRecentSecondFactor]` — вдобавок свежий код второго фактора;
+- `[PublicEndpoint("причина")]` — открыто без входа; причина обязательна.
 
 ```csharp
-using EmailSslSender.Shared.Contracts.Audit;
-using EmailSslSender.Shared.Contracts.Authz;
 using Microsoft.AspNetCore.Mvc;
+using Modules.Core.Contracts.Audit;
+using Modules.Core.Contracts.Authz;
 
 [ApiController]
+[AuthenticatedEndpoint("ролей в проекте нет: каждая учётная запись — администратор")]
 [Route("api/reports")]
-public sealed class ReportsController(ICurrentUser me, IAuditWriter audit) : ControllerBase
+internal sealed class ReportsController(ICurrentUser me, IAuditWriter audit) : ControllerBase
 {
     [HttpGet]
     public object List() => new { owner = me.Id };
 
     [HttpDelete("{id:guid}")]
+    [RequireRecentSecondFactor]
     public IActionResult Delete(Guid id)
     {
-        audit.Write(new AuditEntry(new AuditAction("report.delete", "Удалён отчёт"),
+        audit.Write(new AuditEntry(ReportActions.Deleted,
             ActorId: me.Id, ResourceType: "report", ResourceId: id));
         return NoContent();
     }
-
-    [HttpGet("public-status")]
-    [PublicEndpoint("статус для мониторинга, данных не содержит")]
-    public object Status() => new { ok = true };
 }
 ```
 
-- `ICurrentUser.Id` — кто вошёл, `SessionId` — его сессия.
-- `IAuditWriter` пишет строку `audit ...` в журнал приложения.
-- Тест `ЗакрытоПоУмолчанию` сам проверит, что новое непомеченное действие отвечает
-  невошедшему `401`.
+- `ICurrentUser.Id` — кто вошёл, `SessionId` — его сессия, `StepUpAt` — когда подтверждён код.
+- События журнала модуль объявляет (`IAuditActionProvider`, образец — `KeyManagerAuditActions`);
+  `IAuditWriter` пишет строку `audit ...` в журнал приложения.
+- Тест `ЗакрытоПоУмолчанию` сам проверит, что новое непубличное действие отвечает невошедшему `401`.
 
 ---
 
 ## Разработка и тесты
 
-Нужны .NET SDK 10.0.400 или новее (см. `global.json`), Node.js 22+ и Docker.
+Нужны .NET SDK 10.0.400 или новее (см. `global.json`), Node.js 22+, Docker и доступ к закрытым
+репозиториям модулей `danrey-bilo/module-*`. Клонировать — с подмодулями:
+
+```bash
+git clone --recurse-submodules https://github.com/danrey-bilo/email_ssl_sender.git
+```
 
 **Панель** собирается в `EmailSslSender.Api/wwwroot`, откуда её отдаёт `dotnet run`. Для правки с
 мгновенной перезагрузкой — `npm run dev` (http://localhost:5173, запросы к `/api` уходят на `:8001`).
@@ -826,7 +936,8 @@ dotnet run --project EmailSslSender.Api
 `mail.smtp_security` = `none`. Письма видны в Mailpit.
 
 **Сборка и тесты.** Тесты с базой сами поднимают PostgreSQL через Testcontainers и требуют
-запущенного Docker.
+запущенного Docker. Решение собирает и модули из `modules/` (по правилам проекта), но их тесты —
+в их репозиториях.
 
 ```bash
 dotnet build EmailSslSender.slnx
@@ -836,14 +947,21 @@ dotnet build EmailSslSender.slnx
 dotnet test --solution EmailSslSender.slnx
 ```
 
-**Новая миграция** после изменения сущностей. Нужен инструмент `dotnet-ef`
-(`dotnet tool install --global dotnet-ef`) и те же две переменные окружения, что для
-`dotnet run`: инструмент поднимает хост, а хост без мастер-ключа и строки подключения не
-стартует. Базу при этом трогать не нужно.
+**Новая миграция.** Прежний набор хоста (`EmailSslSender.Api/Migrations`) заморожен мостом
+`ModulesBridge` — новых миграций в нём не бывает. Таблицы Key Manager Plus — набор модуля:
 
 ```bash
-dotnet ef migrations add ИмяМиграции --project EmailSslSender.Api --output-dir Migrations
+dotnet ef migrations add ИмяМиграции --project EmailSslSender.Modules.KeyManager --startup-project EmailSslSender.Api --context KeyManagerSchema --output-dir Schema/Migrations
 ```
+
+Значения и правки проекта поверх таблиц модулей — набор проекта `sender`:
+
+```bash
+dotnet ef migrations add ИмяМиграции --project EmailSslSender.Api --context SenderSchema --output-dir Schema/Migrations
+```
+
+Контексты наборов собираются фабриками времени разработки: ни база, ни мастер-ключ инструменту не
+нужны. Таблицы модулей EAMS меняются только в EAMS — новой версией модуля.
 
 ---
 
@@ -896,34 +1014,40 @@ mkdir -p backups && docker compose exec -T postgres pg_dump -U sender sender > b
 ```
 
 **Журнал действий.** Отдельной таблицы нет. События входа, отзыва сессий, изменений учётных
-записей и настроек пишутся строкой `audit <действие> <итог> actor=... resource=... ip=...`
-в журнал приложения (JSON, Serilog). Секреты и значения изменений туда не попадают.
+записей, настроек и подписок пишутся строкой `audit <действие> <итог> actor=... resource=... ip=...`
+в журнал приложения (JSON, Serilog). Значения изменений (было → стало) пишутся только у настроек и
+Key Manager Plus, у прочих — имена полей; секреты туда не попадают. Из решений о праве пишутся только
+отказы (`authz.denied`).
 
 ```bash
 docker compose logs api | grep '"audit '
 ```
 
 **Обновление:** `docker compose pull api` (или `docker compose build` из исходников), затем
-`docker compose run --rm migrate`, затем `docker compose up -d`.
+`docker compose run --rm migrate`, затем `docker compose up -d`. Переход с 1.x на 2.0 — README,
+«Обновление до 2.0»: копия базы обязательна, все входят заново.
 
 ---
 
 ## Что учесть
 
-- **Порядок модулей в `Program.cs` несущий.** Токены оборачивают проверку личности, а
-  настройки собирают объявления соседей последними. Причины записаны комментариями у
-  каждого звена.
-- **Код письмом не заменяет аутентификатор** (ревью безопасности 2026-10-20): правило в
-  `SecondFactorPolicy` и `SignInService`. Разрешить его снова — значит сделать почтовый ящик
-  единственным ключом ко входу: сброс пароля и код приходят туда же.
-- **Свежий код — на важных действиях** (`[RequireRecentSecondFactor]`, `IStepUpFreshness`,
-  настройка `auth.step_up_minutes`). Новое опасное действие помечается атрибутом; изменение
-  настроек защиты проверяется в `SettingsService` по признаку `IsSecurity`. Отметка свежести —
-  на токене сессии (`StepUpAt`), а не на человеке: код в одной вкладке не открывает другие.
+- **Порядок модулей в `Program.cs` несущий.** Движок прав регистрируется до модуля токенов (тот
+  оборачивает последнюю регистрацию), набор миграций проекта — после модулей. Причины записаны
+  комментариями у каждого звена.
+- **Поведение модулей EAMS меняется только новой версией модуля.** Правка в `modules/<имя>` руками
+  уйдёт при следующем обновлении подмодуля и разойдётся с репозиторием модуля; модуль дорабатывается в
+  EAMS, выпускается меткой и закрепляется здесь заново (раздел «Модули EAMS подмодулями»).
+- **Код письмом не заменяет аутентификатор** (ревью безопасности 2026-10-20) — опция
+  `AuthenticatorExcludesEmailCode` модуля учётных записей. Выключить её — значит сделать почтовый
+  ящик единственным ключом ко входу: сброс пароля и код приходят туда же.
+- **Свежий код — на важных действиях** (`[RequireRecentSecondFactor]`, окно — настройка
+  `auth.step_up_minutes`). Новое опасное действие помечается атрибутом. Отметка свежести — на токене
+  сессии (`StepUpAt`), а не на человеке: код в одной вкладке не открывает другие.
 - **Комментарии в коде** ссылаются на этапы, решения и правила EAMS: «решение 0061»,
   «правило 14», «вскрытие 43». Документы EAMS сюда не перенесены. Ссылки оставлены как
   история причин, и смысл каждого комментария понятен без них.
-- **Строки разделения ключей** (`sender:secret:v1`, `sender:mail-body` и подобные) входят в
-  зашифрованные данные. После первой установки их менять нельзя: прежние секреты перестанут
-  открываться.
+- **Строки разделения ключей** входят в зашифрованные данные. У модулей EAMS — `eams:secret:v1`,
+  `eams:system-secret:…`, `eams:mail-body` и подобные; у модуля Key Manager — `sender:keymanager:api-key`.
+  После установки их менять нельзя: прежние секреты перестанут открываться (переход 1.x → 2.0
+  перекладывает их один раз командой `migrate`).
 - **Лицензия** — собственная: пользоваться бесплатно; копировать, изменять и распространять код нельзя ([LICENSE](../LICENSE)).

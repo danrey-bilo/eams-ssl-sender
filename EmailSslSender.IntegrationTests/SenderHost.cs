@@ -1,15 +1,14 @@
 using System.Net.Http.Json;
 using EmailSslSender.Api.Infrastructure;
-using EmailSslSender.Shared.Contracts.Authz;
-using EmailSslSender.Shared.Contracts.Settings;
-using EmailSslSender.Shared.Data;
+using Modules.Core.Contracts.Authz;
+using Modules.Core.Contracts.Settings;
+using Modules.Core.Data;
+using Modules.Hosting;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Testcontainers.PostgreSql;
 
@@ -52,7 +51,7 @@ public sealed class SenderHost : WebApplicationFactory<Program>, IAsyncLifetime
             // Раздельные положительные входы в пределах одного 30-секундного шага иначе упёрлись
             // бы в защиту от повтора кода — она проверяется своими тестами.
             await using var scope = Services.CreateAsyncScope();
-            await scope.ServiceProvider.GetRequiredService<SenderDbContext>().Database.ExecuteSqlInterpolatedAsync(
+            await scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.ExecuteSqlInterpolatedAsync(
                 $"UPDATE user_two_factor SET last_step = -1 WHERE user_id IN (SELECT id FROM users WHERE email = {email})", cancellationToken);
             response.Dispose();
             return await client.PostAsJsonAsync("/api/auth/two-factor",
@@ -156,48 +155,41 @@ public sealed class SenderHost : WebApplicationFactory<Program>, IAsyncLifetime
         await _postgres.StartAsync();
 
         await MigrateAsync();
+
+        User.Завести = id => ЗавестиУчётнуюЗаписьAsync(id).GetAwaiter().GetResult();
+    }
+
+    /// <summary>Активная учётная запись администратора без пароля — под подставную личность.</summary>
+    private async Task ЗавестиУчётнуюЗаписьAsync(Guid id)
+    {
+        await using var db = new Npgsql.NpgsqlConnection(_postgres.GetConnectionString());
+        await db.OpenAsync();
+
+        await using var команда = new Npgsql.NpgsqlCommand(
+            "INSERT INTO users (id, email, password_hash, is_superuser, activated_at) "
+            + "VALUES (@id, @email, '!', true, now())",
+            db);
+        команда.Parameters.AddWithValue("id", id);
+        команда.Parameters.AddWithValue("email", $"test-{id:N}@example.test");
+
+        await команда.ExecuteNonQueryAsync();
     }
 
     /// <summary>
-    /// Накатить схему ДО поднятия приложения.
+    /// Накатить схему ДО поднятия приложения — настоящей командой <c>migrate</c>.
     /// </summary>
     /// <remarks>
     /// ⚠ Приложение схему не накатывает и при отставании не стартует: миграция — отдельный
-    /// шаг (команда <c>migrate</c>). Обвязка повторяет боевой порядок: сначала схема, потом
-    /// сервер.
-    ///
-    /// Шага два. Схему накатывает отдельный контекст с ПУСТОЙ моделью (миграции — классы
-    /// сборки хоста, модель им не нужна), а сверку модели с миграциями делает настоящее
-    /// приложение явным утверждением.
+    /// шаг. Обвязка повторяет боевой порядок: сначала команда <c>migrate</c> того же хоста (наборы
+    /// модулей, набор проекта, перекладка секретов), потом сервер. Сверку модели каждого набора
+    /// с его миграциями держат тесты модулей.
     /// </remarks>
-    private async Task MigrateAsync()
-    {
-        // ⚠ Предупреждение «у модели есть неприменённые изменения» здесь глушится: у пустой
-        // модели расхождение со снимком есть по построению. Настоящую сверку делает шаг 2.
-        var options = new DbContextOptionsBuilder<SenderDbContext>()
-            .UseNpgsql(
-                _postgres.GetConnectionString(),
-                npgsql => npgsql.MigrationsAssembly(typeof(DatabaseStartup).Assembly.FullName))
-            .ConfigureWarnings(предупреждения =>
-                предупреждения.Ignore(RelationalEventId.PendingModelChangesWarning))
-            .Options;
+    private async Task MigrateAsync() =>
+        (await MigrateCommand.RunAsync(_postgres.GetConnectionString(), _мастерКлюч))
+            .ShouldBe(0, "команда migrate не прошла на чистой базе");
 
-        await using (var миграции = new SenderDbContext(options, []))
-        {
-            await миграции.Database.MigrateAsync();
-        }
-
-        // Шаг 2: сверка модели. Сущность правили, а миграцию не завели — красная строка здесь,
-        // а не отказ при выкатке. Фоновые службы сняты, чтобы не мешали.
-        await using var migrator = WithWebHostBuilder(builder =>
-            builder.ConfigureTestServices(services => services.RemoveAll<IHostedService>()));
-
-        await using var scope = migrator.Services.CreateAsyncScope();
-        var контекст = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
-
-        контекст.Database.HasPendingModelChanges().ShouldBeFalse(
-            "модель разошлась с миграциями: сущность правили, а миграцию не завели");
-    }
+    /// <summary>Мастер-ключ прогона — один на команду migrate и на сервер, заведомо одноразовый.</summary>
+    private readonly string _мастерКлюч = MigrateCommand.NewMasterKey();
 
     public override async ValueTask DisposeAsync()
     {
@@ -235,32 +227,39 @@ public sealed class SenderHost : WebApplicationFactory<Program>, IAsyncLifetime
     /// </remarks>
     public bool НастоящиеНастройки { get; set; }
 
-    /// <summary>Убрать всё, что тесты записали в таблицу настроек.</summary>
+    /// <summary>
+    /// Убрать всё, что тесты записали в таблицу настроек, — и вернуть строки набора миграций проекта.
+    /// </summary>
     public async Task ОчиститьНастройкиAsync(CancellationToken cancellationToken = default)
     {
         await using var scope = Services.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        await db.Database.ExecuteSqlRawAsync("DELETE FROM system_settings;", cancellationToken);
+        await db.Database.ExecuteSqlRawAsync(
+            "DELETE FROM system_settings; "
+            + "INSERT INTO system_settings (key, value, updated_at) VALUES ('auth.step_up_minutes', '10', now());",
+            cancellationToken);
     }
 
     /// <summary>Записать настройку мимо фикстуры — нужен одному тесту обвязки.</summary>
     public async Task ЗаписатьМимоФикстурыAsync()
     {
         await using var scope = Services.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await db.Database.ExecuteSqlRawAsync(
             "INSERT INTO system_settings (key, value, updated_at) VALUES ('auth.lockout_threshold', '1', now())");
     }
 
-    /// <summary>Сколько строк в таблице настроек.</summary>
+    /// <summary>Сколько строк в таблице настроек сверх строк набора миграций проекта.</summary>
     public async Task<int> СтрокНастроекAsync(CancellationToken cancellationToken = default)
     {
         await using var scope = Services.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         var значения = await db.Database
-            .SqlQueryRaw<int>("SELECT count(*)::int AS \"Value\" FROM system_settings")
+            .SqlQueryRaw<int>(
+                "SELECT count(*)::int AS \"Value\" FROM system_settings "
+                + "WHERE NOT (key = 'auth.step_up_minutes' AND value = '10'::jsonb)")
             .ToListAsync(cancellationToken);
 
         return значения[0];
@@ -278,10 +277,8 @@ public sealed class SenderHost : WebApplicationFactory<Program>, IAsyncLifetime
         builder.UseSetting("RateLimits:LoginPerAddressPerMinute", "1000");
         builder.UseSetting("RateLimits:ActivationPerMinute", "10000");
 
-        // Мастер-ключ свой на прогон и заведомо одноразовый.
-        builder.UseSetting(
-            MasterKeyFile.InlineKey,
-            Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(32)));
+        // Мастер-ключ свой на прогон и заведомо одноразовый — тот же, что у команды migrate.
+        builder.UseSetting(MasterKeyFile.InlineKey, _мастерКлюч);
 
         builder.ConfigureTestServices(services =>
         {

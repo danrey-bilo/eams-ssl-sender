@@ -3,7 +3,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json.Nodes;
-using EmailSslSender.Shared.Data;
+using Modules.Core.Data;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -69,8 +69,8 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
 
         await using (var scope = host.Services.CreateAsyncScope())
         {
-            await scope.ServiceProvider.GetRequiredService<SenderDbContext>().Database.ExecuteSqlRawAsync(
-                "DELETE FROM mail_outbox WHERE kind = 'certificate_delivery'", CancellationToken.None);
+            await scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.ExecuteSqlRawAsync(
+                "DELETE FROM mail_outbox WHERE starts_with(kind, 'certificate_delivery')", CancellationToken.None);
         }
 
         host.User.SignOut();
@@ -202,11 +202,11 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
         подписка["last_error"].ShouldBeNull();
 
         await using var scope = host.Services.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
         var письма = await db.Database
             .SqlQueryRaw<byte[]>(
-                "SELECT attachments AS \"Value\" FROM mail_outbox WHERE kind = 'certificate_delivery' ORDER BY to_address")
+                "SELECT attachments AS \"Value\" FROM mail_outbox WHERE starts_with(kind, 'certificate_delivery') ORDER BY to_address")
             .ToListAsync(Ct);
 
         письма.Count.ShouldBe(2, "по письму на адрес");
@@ -353,7 +353,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
     {
         await using var scope = host.Services.CreateAsyncScope();
 
-        await scope.ServiceProvider.GetRequiredService<SenderDbContext>().Database.ExecuteSqlRawAsync(
+        await scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.ExecuteSqlRawAsync(
             """
             INSERT INTO keymanager_certificates (common_name, serial_number, expires_on, first_seen_at, last_seen_at)
             VALUES ('site.example.com', '0a1b2c', '2027-10-02', now(), now())
@@ -443,18 +443,18 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
     /// меняться, а вложения стираются только на последней попытке — до неё далеко.
     /// </remarks>
     private Task<int> ЖдутAsync(string адрес) => СчётAsync(
-        "attachments IS NOT NULL AND next_attempt_at < '9999-01-01'", адрес);
+        "length(attachments) > 0 AND next_attempt_at < '9999-01-01'", адрес);
 
-    /// <summary>Отменённых писем на адрес: вложения стёрты, срок — «никогда».</summary>
+    /// <summary>Отменённых писем на адрес: вложения стёрты (модуль почты оставляет пустой массив), срок — «никогда».</summary>
     private Task<int> ОтменёнAsync(string адрес) => СчётAsync(
-        "attachments IS NULL AND next_attempt_at >= '9999-01-01'", адрес);
+        "coalesce(length(attachments), 0) = 0 AND next_attempt_at >= '9999-01-01'", адрес);
 
     private async Task<int> СчётAsync(string условие, string адрес)
     {
         await using var scope = host.Services.CreateAsyncScope();
-        var db = scope.ServiceProvider.GetRequiredService<SenderDbContext>();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-        var запрос = "SELECT count(*)::int AS \"Value\" FROM mail_outbox WHERE kind = 'certificate_delivery' "
+        var запрос = "SELECT count(*)::int AS \"Value\" FROM mail_outbox WHERE starts_with(kind, 'certificate_delivery') "
             + "AND sent_at IS NULL AND to_address = {0} AND " + условие;
 
         var строки = await db.Database.SqlQueryRaw<int>(запрос, адрес).ToListAsync(Ct);

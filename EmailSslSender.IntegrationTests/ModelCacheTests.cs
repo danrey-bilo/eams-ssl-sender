@@ -1,6 +1,6 @@
 using EmailSslSender.Api.Infrastructure;
-using EmailSslSender.Shared.Contracts.Data;
-using EmailSslSender.Shared.Data;
+using Modules.Core.Contracts.Data;
+using Modules.Core.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -11,7 +11,7 @@ namespace EmailSslSender.IntegrationTests;
 /// </summary>
 /// <remarks>
 /// ⚠ ⚠ <b>Заведён по следу настоящего дефекта, который локальный прогон не ловит по
-/// построению.</b> EF кэширует модель по ТИПУ контекста, а модель <see cref="SenderDbContext"/>
+/// построению.</b> EF кэширует модель по ТИПУ контекста, а модель <see cref="AppDbContext"/>
 /// собирается из внедрённых <see cref="IEntityConfigurationProvider"/> — то есть зависит от
 /// содержимого контейнера, о котором ключ по умолчанию не знает. Два контекста одного типа с
 /// разными наборами делили одну модель, и доставалась она тому, кто построил её первым.
@@ -75,7 +75,7 @@ public sealed class ModelCacheTests
             .AddSenderDatabase(Строка)
             .BuildServiceProvider();
 
-        var пустая = мигратор.GetRequiredService<SenderDbContext>().Model;
+        var пустая = мигратор.GetRequiredService<AppDbContext>().Model;
 
         // Шаг 2 — как приложение: та же регистрация, но конфигурация есть.
         using var приложение = new ServiceCollection()
@@ -83,7 +83,7 @@ public sealed class ModelCacheTests
             .AddSingleton<IEntityConfigurationProvider, Отличие>()
             .BuildServiceProvider();
 
-        var своя = приложение.GetRequiredService<SenderDbContext>().Model;
+        var своя = приложение.GetRequiredService<AppDbContext>().Model;
 
         // Зеркальные факты: без первого проверка зеленела бы и от «первая модель тоже полная»,
         // без второго — от «кэш вообще выключен», а это другая цена и другой дефект.
@@ -118,8 +118,8 @@ public sealed class ModelCacheTests
             .AddSingleton<IEntityConfigurationProvider, ДругоеОтличие>()
             .BuildServiceProvider();
 
-        var модельПервого = первый.GetRequiredService<SenderDbContext>().Model;
-        var модельВторого = второй.GetRequiredService<SenderDbContext>().Model;
+        var модельПервого = первый.GetRequiredService<AppDbContext>().Model;
+        var модельВторого = второй.GetRequiredService<AppDbContext>().Model;
 
         Assert.Contains(модельПервого.GetEntityTypes(), тип => тип.ClrType == typeof(Метка));
         Assert.Contains(модельВторого.GetEntityTypes(), тип => тип.ClrType == typeof(ВтораяМетка));
