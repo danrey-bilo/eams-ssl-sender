@@ -45,6 +45,41 @@
 Модуль не трогает хост: он объявляет свои таблицы, настройки и шаблоны писем через интерфейсы
 из `EmailSslSender.Shared`.
 
+### Модули EAMS подмодулями
+
+Модули EAMS живут каждый в своём репозитории `danrey-bilo/module-<имя>` и подключены подмодулями
+git в каталог `modules/<имя>`. Версия каждого **закреплена коммитом метки** и сама не обновляется:
+
+| Каталог | Репозиторий | Метка |
+|---|---|---|
+| `modules/core` | `module-core` | `v0.8.0` |
+| `modules/crypto` | `module-crypto` | `v0.5.0` |
+| `modules/hosting` | `module-hosting` | `v0.5.0` |
+| `modules/identity` | `module-identity` | `v0.9.0` |
+| `modules/tokens` | `module-tokens` | `v0.8.0` |
+| `modules/settings` | `module-settings` | `v0.8.0` |
+| `modules/mail` | `module-mail` | `v0.8.0` |
+
+Клонировать вместе с модулями (репозитории модулей закрытые — нужен доступ к ним):
+
+```bash
+git clone --recurse-submodules https://github.com/danrey-bilo/email_ssl_sender.git
+# или в уже склонированном
+git submodule update --init
+```
+
+Перейти на другую версию модуля — только явно: перейти в подмодуле на метку и закоммитить новый
+коммит подмодуля в этом репозитории.
+
+```bash
+git -C modules/mail fetch --tags
+git -C modules/mail checkout v0.9.0
+git add modules/mail
+```
+
+> Переход проекта с собственных модулей `EmailSslSender.Modules.*` на модули из `modules/` идёт
+> по шагам; пока сборка сервиса их не использует. Ход работы — в [CHANGELOG.md](../CHANGELOG.md).
+
 ---
 
 ## Модель доступа

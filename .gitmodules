@@ -1,0 +1,21 @@
+[submodule "modules/core"]
+	path = modules/core
+	url = https://github.com/danrey-bilo/module-core.git
+[submodule "modules/crypto"]
+	path = modules/crypto
+	url = https://github.com/danrey-bilo/module-crypto.git
+[submodule "modules/hosting"]
+	path = modules/hosting
+	url = https://github.com/danrey-bilo/module-hosting.git
+[submodule "modules/identity"]
+	path = modules/identity
+	url = https://github.com/danrey-bilo/module-identity.git
+[submodule "modules/tokens"]
+	path = modules/tokens
+	url = https://github.com/danrey-bilo/module-tokens.git
+[submodule "modules/settings"]
+	path = modules/settings
+	url = https://github.com/danrey-bilo/module-settings.git
+[submodule "modules/mail"]
+	path = modules/mail
+	url = https://github.com/danrey-bilo/module-mail.git
