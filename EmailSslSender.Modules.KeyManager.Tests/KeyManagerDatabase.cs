@@ -333,6 +333,12 @@ internal sealed class ПодставнойKmp : IKeyManagerConnector, IKeyManage
     /// <summary>На каком типе файла отказывать.</summary>
     public string? ПадатьНаФормате { get; set; }
 
+    /// <summary>Чем падать при открытии клиента (не открылся ключ API, сбой базы).</summary>
+    public Exception? ОткрытиеПадает { get; set; }
+
+    /// <summary>Отказывать в выгрузке любого файла этого Common Name.</summary>
+    public string? ПадатьНаИмени { get; set; }
+
     /// <summary>Отказывать ли в списке.</summary>
     public bool СписокПадает { get; set; }
 
@@ -371,6 +377,8 @@ internal sealed class ПодставнойKmp : IKeyManagerConnector, IKeyManage
         Файлы.Clear();
         Настройки = Готово;
         ПадатьНаФормате = null;
+        ПадатьНаИмени = null;
+        ОткрытиеПадает = null;
         СписокПадает = false;
         ПарольПадает = false;
         _выгрузок = 0;
@@ -385,7 +393,8 @@ internal sealed class ПодставнойKmp : IKeyManagerConnector, IKeyManage
 
     /// <summary>Как настоящий соединитель: без адреса или ключа — «не настроено».</summary>
     public Task<IKeyManagerClient> OpenAsync(CancellationToken cancellationToken = default) =>
-        Настройки.Ready
+        ОткрытиеПадает is { } сбой ? throw сбой
+        : Настройки.Ready
             ? Task.FromResult<IKeyManagerClient>(this)
             : throw new AppException(
                 KeyManagerErrorCodes.NotConfigured,
@@ -410,6 +419,11 @@ internal sealed class ПодставнойKmp : IKeyManagerConnector, IKeyManage
         if (Задвижка is { } ждём)
         {
             await ждём.Task.WaitAsync(cancellationToken);
+        }
+
+        if (string.Equals(commonName, ПадатьНаИмени, StringComparison.Ordinal))
+        {
+            throw new KeyManagerException($"Key Manager Plus отказал в выгрузке {format} {commonName} (подставной отказ).");
         }
 
         if (string.Equals(format, ПадатьНаФормате, StringComparison.Ordinal))

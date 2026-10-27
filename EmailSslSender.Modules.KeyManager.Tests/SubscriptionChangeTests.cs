@@ -185,6 +185,50 @@ public sealed class SubscriptionChangeTests(KeyManagerDatabase база) : IAsyn
         подписка.SentSerials.Keys.ToList().ShouldBe(["site.example.com"], "новый сертификат уйдёт ближайшим опросом");
     }
 
+    public static TheoryData<string> Сужения => new() { "formats", "include_passphrase", "enabled" };
+
+    /// <summary>
+    /// Сервер почты лежит, письмо с ключом ждёт повтора — а администратор убрал KEY, снял пароль ключа
+    /// или отключил подписку. Письмо не уходит (ревью безопасности 2026-10-27).
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(Сужения))]
+    public async Task Сужение_подписки_отменяет_письма_в_очереди(string поле)
+    {
+        var id = await Создать("a@example.com");
+        await Изменить(id, new SubscriptionIn { IncludePassphrase = true });
+        await Опросить();
+        var номер = база.Почта.Номера.Single();
+
+        await Изменить(id, поле switch
+        {
+            "formats" => new SubscriptionIn { Formats = ["PEM"] },
+            "include_passphrase" => new SubscriptionIn { IncludePassphrase = false },
+            _ => new SubscriptionIn { Enabled = false },
+        });
+
+        база.Почта.Отменённые.ShouldBe([номер]);
+
+        var подписка = await Прочитать(id);
+        подписка.PendingMailIds.ShouldBeNull();
+        подписка.SentSerials.ShouldBeEmpty("отменённое письмо не дошло — оставшееся уйдёт заново по новым правилам");
+
+        база.Аудит.Записи.Single(з => з.Action == KeyManagerActions.SubscriptionUpdated)
+            .Changes.ShouldNotBeNull()["cancelled_letters"].ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task Добавленный_формат_и_включение_пароля_писем_не_отменяют()
+    {
+        var id = await Создать("a@example.com");
+        await Опросить();
+
+        await Изменить(id, new SubscriptionIn { Formats = ["PEM", "KEY", "PKCS"], IncludePassphrase = true, Enabled = true });
+
+        база.Почта.Отменённые.ShouldBeEmpty("право только расширилось");
+        (await Прочитать(id)).PendingMailIds!.Length.ShouldBe(1);
+    }
+
     [Fact]
     public async Task Подписка_без_способа_отправки_не_сохраняется()
     {
@@ -195,6 +239,27 @@ public sealed class SubscriptionChangeTests(KeyManagerDatabase база) : IAsyn
 
         отказ.Details!["field"].ShouldBe("on_change");
         (await Прочитать(id)).OnChange.ShouldBeTrue("отказ ничего не поменял");
+    }
+
+    /// <summary>
+    /// Подписка 2.0 без способа отправки (тогда проверки не было) остаётся правимой: убрать получателя —
+    /// действие безопасности, и отказ «выберите способ» его не должен блокировать.
+    /// </summary>
+    [Fact]
+    public async Task Подписку_без_способа_из_прежней_версии_можно_сузить()
+    {
+        var id = await Создать("a@example.com", "b@example.com");
+
+        await using (var scope = база.Scope())
+        {
+            await scope.ServiceProvider.GetRequiredService<AppDbContext>().Set<CertificateSubscription>()
+                .Where(п => п.Id == id)
+                .ExecuteUpdateAsync(set => set.SetProperty(п => п.OnChange, false).SetProperty(п => п.IntervalDays, (int?)null), Ct);
+        }
+
+        await Изменить(id, new SubscriptionIn { Recipients = ["a@example.com"] });
+
+        (await Прочитать(id)).Recipients.ShouldBe(["a@example.com"]);
     }
 
     // --- обвязка ---------------------------------------------------------------------------

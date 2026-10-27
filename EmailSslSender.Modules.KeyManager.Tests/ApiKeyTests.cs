@@ -142,8 +142,19 @@ public sealed class ApiKeyTests(KeyManagerDatabase база) : IAsyncLifetime
 
             (await Should.ThrowAsync<KeyManagerException>(() => хранилище.GetForAsync(Цель, Ct)))
                 .Message.ShouldContain("migrate");
-            (await хранилище.BindLegacyAsync(Цель, Ct)).ShouldBeTrue();
-            (await хранилище.BindLegacyAsync(Цель, Ct)).ShouldBeFalse("уже привязан — повторно нечего");
+            // Привязывает команда migrate хоста — через точку входа модуля, по адресу из настроек.
+            база.Настройки.Значения[KeyManagerSettings.BaseUrl.Name] = Адрес;
+
+            try
+            {
+                (await KeyManagerModule.BindLegacyApiKeyAsync(база.Services, Ct)).ShouldBeTrue();
+                (await KeyManagerModule.BindLegacyApiKeyAsync(база.Services, Ct)).ShouldBeFalse("уже привязан — повторно нечего");
+            }
+            finally
+            {
+                база.Настройки.Значения.Remove(KeyManagerSettings.BaseUrl.Name);
+            }
+
             (await хранилище.GetForAsync(Цель, Ct)).ShouldBe(Ключ);
         }
 

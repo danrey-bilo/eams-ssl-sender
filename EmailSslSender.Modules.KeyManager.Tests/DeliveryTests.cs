@@ -276,6 +276,37 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         (await Прочитать(id)).LastError.ShouldBeNull();
     }
 
+    /// <summary>
+    /// Один сертификат подписки не выгружается (в Key Manager Plus нет его ключа) — остальные уходят, а
+    /// его «при обновлении» пробует снова (ревью надёжности 2026-10-27).
+    /// </summary>
+    [Fact]
+    public async Task Невыгружаемый_сертификат_не_останавливает_остальные()
+    {
+        База("a.example.com", "aa01", Год);
+        База("b.example.com", "bb01", Год);
+        var id = await Подписка("a.example.com", ["x@example.com"], also: ["b.example.com"]);
+        база.Kmp.ПадатьНаИмени = "b.example.com";
+
+        (await Опросить()).Sent.ShouldBe(1);
+
+        var письмо = база.Почта.Письма.ShouldHaveSingleItem();
+        письмо.Values["names"].ShouldBe("a.example.com");
+
+        var подписка = await Прочитать(id);
+        подписка.SentSerials.Keys.ToList().ShouldBe(["a.example.com"]);
+        подписка.LastError.ShouldNotBeNull().ShouldStartWith("b.example.com не выгрузился:");
+        подписка.LastError.ShouldEndWith("— отправлены остальные.");
+
+        база.Почта.Сброс();
+        база.Kmp.ПадатьНаИмени = null;
+        база.Часы.Вперёд(TimeSpan.FromMinutes(15));
+
+        (await Опросить()).Sent.ShouldBe(1);
+        база.Почта.Письма.ShouldHaveSingleItem().Values["names"].ShouldBe("b.example.com", "повтор — только не ушедший");
+        (await Прочитать(id)).LastError.ShouldBeNull();
+    }
+
     [Fact]
     public async Task Ненастроенная_почта_не_отмечает_отправку()
     {
@@ -716,7 +747,52 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         (await Прочитать(id)).LastError.ShouldBeNull("подписка не виновата, что сервер лёг");
     }
 
+    /// <summary>
+    /// Не только отказ Key Manager Plus: любая ошибка открытия клиента видна в состоянии, а не только в
+    /// логе (ревью надёжности 2026-10-27).
+    /// </summary>
+    [Fact]
+    public async Task Ошибка_открытия_клиента_записывается_в_состояние()
+    {
+        база.Kmp.ОткрытиеПадает = new System.Security.Cryptography.CryptographicException("ключ API не открылся");
+
+        (await Опросить()).Polled.ShouldBeFalse();
+
+        await using var scope = база.Scope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+        (await db.Set<KeyManagerState>().AsNoTracking().SingleAsync(Ct)).LastPollError
+            .ShouldNotBeNull().ShouldStartWith("Опрос не удался");
+    }
+
+    /// <summary>
+    /// Перерыв в опросе дольше месяца (интеграция выключена, сервис стоял) не стирает «впервые
+    /// увиден» у пар, которые в Key Manager Plus есть, — по нему выбирается текущий сертификат.
+    /// </summary>
+    [Fact]
+    public async Task Перерыв_в_опросе_дольше_месяца_не_забывает_когда_пару_увидели_впервые()
+    {
+        База("site.example.com", "aa01", Год);
+        await Опросить();
+        var впервые = await Впервые("site.example.com", "aa01");
+
+        база.Часы.Вперёд(CertificateSnapshots.Хранить + TimeSpan.FromDays(1));
+        await Опросить();
+
+        (await Впервые("site.example.com", "aa01")).ShouldBe(впервые, "пара была в Key Manager Plus весь перерыв");
+    }
+
     // --- обвязка ---------------------------------------------------------------------------
+
+    private async Task<DateTimeOffset> Впервые(string commonName, string serial)
+    {
+        await using var scope = база.Scope();
+        var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+
+        return await db.Set<KnownCertificate>().AsNoTracking()
+            .Where(с => с.CommonName == commonName && с.SerialNumber == serial)
+            .Select(с => с.FirstSeenAt)
+            .SingleAsync(Ct);
+    }
 
     /// <summary>Сколько дней до даты по часам обвязки: часы общие для коллекции и двигаются тестами.</summary>
     private string Дней(DateOnly дата) =>

@@ -87,9 +87,17 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
         var корень = await JsonAsync(ответ, cancellationToken);
         Проверить(корень, "список сертификатов");
 
+        // ⚠ ⚠ Нераспознанный ответ — отказ, а не пустой список: «успех с нулём сертификатов» молча
+        // писал бы всем подпискам «сертификата нет», а через месяц очистил бы снимок (ревью надёжности
+        // 2026-10-27). В тексте — только имена полей: значения могут нести что угодно.
+        var детали = корень["details"] ?? throw new KeyManagerException(
+            "Key Manager Plus ответил на запрос списка сертификатов без поля details — формат ответа не "
+            + $"распознан (поля ответа: {string.Join(", ", корень.Select(поле => поле.Key))}).");
+
+        var элементы = Элементы(детали).ToList();
         var список = new List<KmpCertificate>();
 
-        foreach (var элемент in Элементы(корень["details"]))
+        foreach (var элемент in элементы)
         {
             var имя = Строка(элемент, "Common Name");
             var серийный = Строка(элемент, "serialNumber");
@@ -102,6 +110,14 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
             }
 
             список.Add(new KmpCertificate(имя.Trim(), серийный.Trim(), Дата(элемент)));
+        }
+
+        if (элементы.Count > 0 && список.Count == 0)
+        {
+            throw new KeyManagerException(
+                $"Key Manager Plus вернул {элементы.Count} записей о сертификатах, но ни в одной нет полей "
+                + "«Common Name» и «serialNumber» — формат ответа не распознан (поля записи: "
+                + $"{string.Join(", ", элементы[0].Select(поле => поле.Key))}).");
         }
 
         return список;

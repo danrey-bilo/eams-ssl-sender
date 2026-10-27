@@ -163,6 +163,23 @@ public sealed class ClientTests
         await Should.ThrowAsync<KeyManagerException>(() => Клиент(заглушка).ListAsync(Ct));
     }
 
+    /// <summary>
+    /// Нераспознанный список — отказ, а не «ноль сертификатов»: иначе всем подпискам писалось бы
+    /// «сертификата нет», а через месяц снимок очистился бы (ревью надёжности 2026-10-27).
+    /// </summary>
+    [Theory]
+    [InlineData("""{"result":{"status":"Success"}}""", "без поля details")]
+    [InlineData("""{"result":{"status":"Success"},"details":[{"commonName":"a","serial":"01"}]}""", "commonName, serial")]
+    public async Task Нераспознанный_список_отказ_а_не_ноль_сертификатов(string ответ, string вТексте)
+    {
+        var заглушка = new Заглушка(_ => Json(ответ));
+
+        var ошибка = await Should.ThrowAsync<KeyManagerException>(() => Клиент(заглушка).ListAsync(Ct));
+
+        ошибка.Message.ShouldContain(вТексте);
+        ошибка.Message.ShouldNotContain("01", Case.Sensitive, "значения полей в текст не идут");
+    }
+
     [Fact]
     public async Task HTTP_401_говорит_про_ключ()
     {

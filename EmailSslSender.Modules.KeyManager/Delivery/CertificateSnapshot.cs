@@ -101,17 +101,15 @@ internal sealed class CertificateSnapshots(AppDbContext db, TimeProvider clock)
     /// <remarks>
     /// ⚠ <c>ON CONFLICT</c>, а не «прочитать и добавить недостающие»: два процесса, опросившие
     /// одновременно, иначе споткнулись бы о первичный ключ друг друга.
+    ///
+    /// ⚠ <c>GREATEST</c>, а не присваивание: опрос и ручная отправка, зафиксировавшие снимки в обратном
+    /// порядке, иначе вернули бы <c>last_seen_at</c> назад, и <see cref="Current"/> (по наибольшему
+    /// <c>last_seen_at</c>) временно потерял бы пары, бывшие в обоих списках (ревью надёжности 2026-10-27).
     /// </remarks>
     private Task ЗапомнитьAsync(IReadOnlyList<KmpCertificate> список, DateTimeOffset когда, CancellationToken cancellationToken) =>
         db.InTransactionAsync(
             async token =>
             {
-                // Пары, которых в Key Manager Plus нет уже месяц, забываются (разбор у Хранить).
-                var давно = когда - Хранить;
-                await db.Set<KnownCertificate>()
-                    .Where(с => с.LastSeenAt < давно)
-                    .ExecuteDeleteAsync(token);
-
                 foreach (var с in список.DistinctBy(с => (с.CommonName, с.SerialNumber)))
                 {
                     await db.Database.ExecuteSqlAsync(
@@ -120,10 +118,21 @@ internal sealed class CertificateSnapshots(AppDbContext db, TimeProvider clock)
                             (common_name, serial_number, expires_on, first_seen_at, last_seen_at)
                         VALUES ({с.CommonName}, {с.SerialNumber}, {с.ExpiresOn}, {когда}, {когда})
                         ON CONFLICT (common_name, serial_number) DO UPDATE
-                        SET expires_on = EXCLUDED.expires_on, last_seen_at = EXCLUDED.last_seen_at
+                        SET expires_on = EXCLUDED.expires_on,
+                            last_seen_at = GREATEST(keymanager_certificates.last_seen_at, EXCLUDED.last_seen_at)
                         """,
                         token);
                 }
+
+                // Пары, которых в Key Manager Plus нет уже месяц, забываются (разбор у Хранить).
+                // ⚠ ⚠ ПОСЛЕ отметки увиденных, а не до: после перерыва в опросе дольше месяца (интеграция
+                // выключена, ключ API отвергается, сервис стоял) удаление первым стёрло бы и пары, которые в
+                // Key Manager Plus есть, — они вернулись бы с «впервые» = сейчас, и текущим Common Name
+                // мог стать старый сертификат (ревью надёжности 2026-10-27).
+                var давно = когда - Хранить;
+                await db.Set<KnownCertificate>()
+                    .Where(с => с.LastSeenAt < давно)
+                    .ExecuteDeleteAsync(token);
             },
             cancellationToken);
 }

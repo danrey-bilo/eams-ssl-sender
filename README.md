@@ -401,7 +401,7 @@ git clone --recurse-submodules https://github.com/danrey-bilo/email_ssl_sender.g
 ```
 
 ```bash
-docker compose build
+docker compose build --pull
 ```
 
 Лицензия — [EAMS ssl sender License](LICENSE): пользоваться бесплатно; копировать, изменять и распространять код нельзя.

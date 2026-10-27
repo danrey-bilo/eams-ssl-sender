@@ -260,21 +260,44 @@ internal sealed class CertificateDelivery(
         }
 
         var комплекты = new List<CertificateFiles>(отправить.Count);
+        var ушедшие = new List<Сертификат>(отправить.Count);
+        var невыгружены = new List<(string Name, KeyManagerException Error)>();
 
         foreach (var сертификат in отправить)
         {
-            var файлы = await ВыгрузитьAsync(client, сертификат.Certificate, подписка.Formats, cache, token);
+            List<MailAttachment> файлы;
 
-            // ⚠ Пароль ключа — файлом в архиве, а не строкой в теле: тело письма живёт в очереди
-            // до уборки, а вложения стираются, как только письмо ушло.
-            if (подписка.IncludePassphrase
-                && await ПарольAsync(client, сертификат.Certificate, cache, token) is { } пароль)
+            // ⚠ ⚠ Отказ выгрузки одного сертификата — как его отсутствие в Key Manager Plus: остальные уходят,
+            // его серийный не отмечается, и «при обновлении» попробует его снова (ревью надёжности
+            // 2026-10-27). Прежде один сертификат без закрытого ключа в Key Manager Plus навсегда
+            // останавливал всю подписку, а каждый опрос заново выгружал ключи остальных.
+            try
             {
-                файлы.Add(new MailAttachment(
-                    CertificateMail.PassphraseFile, "text/plain; charset=utf-8", Encoding.UTF8.GetBytes(пароль + Environment.NewLine)));
+                файлы = await ВыгрузитьAsync(client, сертификат.Certificate, подписка.Formats, cache, token);
+
+                // ⚠ Пароль ключа — файлом в архиве, а не строкой в теле: тело письма живёт в очереди
+                // до уборки, а вложения стираются, как только письмо ушло.
+                if (подписка.IncludePassphrase
+                    && await ПарольAsync(client, сертификат.Certificate, cache, token) is { } пароль)
+                {
+                    файлы.Add(new MailAttachment(
+                        CertificateMail.PassphraseFile, "text/plain; charset=utf-8", Encoding.UTF8.GetBytes(пароль + Environment.NewLine)));
+                }
+            }
+            catch (KeyManagerException ошибка)
+            {
+                невыгружены.Add((сертификат.Name, ошибка));
+                continue;
             }
 
             комплекты.Add(new CertificateFiles(сертификат.Certificate, файлы));
+            ушедшие.Add(сертификат);
+        }
+
+        // Не выгрузился ни один — скорее всего, Key Manager Plus недоступен: отказ целиком, как прежде.
+        if (комплекты.Count == 0)
+        {
+            throw new KeyManagerException(невыгружены[0].Error.Message, невыгружены[0].Error);
         }
 
         // ⚠ ⚠ Одним архивом ZIP на письмо (решение владельца): Outlook блокирует вложения .crt, .cer и .der;
@@ -307,7 +330,7 @@ internal sealed class CertificateDelivery(
 
         var ушли = new Dictionary<string, string>(подписка.SentSerials, StringComparer.OrdinalIgnoreCase);
 
-        foreach (var сертификат in отправить)
+        foreach (var сертификат in ушедшие)
         {
             ушли[сертификат.Name] = сертификат.Certificate.SerialNumber;
         }
@@ -320,9 +343,11 @@ internal sealed class CertificateDelivery(
 
         подписка.SentSerials = ушли;
         подписка.LastSentAt = сейчас;
+        // Полная — все найденные пробовали отправить; не выгрузившиеся считаются как отсутствующие, иначе
+        // расписание пересылало бы всю подписку каждый опрос.
         подписка.LastFullSentAt = отправить.Count == текущие.Count ? сейчас : подписка.LastFullSentAt;
         подписка.LastAttemptAt = сейчас;
-        подписка.LastError = нет.Count > 0 ? $"{Перечень(нет)} нет в Key Manager Plus — отправлены остальные." : null;
+        подписка.LastError = Неполная(нет, невыгружены);
         подписка.PendingMailIds = [.. номера];
 
         // ⚠ В журнал — подписка, причина и какие сертификаты, без адресов и без содержимого: адрес
@@ -335,7 +360,7 @@ internal sealed class CertificateDelivery(
             Reason: причина.ToString().ToLowerInvariant(),
             Changes: new Dictionary<string, object?>(StringComparer.Ordinal)
             {
-                ["certificates"] = отправить
+                ["certificates"] = ушедшие
                     .Select(с => $"{с.Certificate.CommonName} {с.Certificate.SerialNumber}")
                     .ToArray(),
                 ["recipients"] = подписка.Recipients.Length,
@@ -344,6 +369,22 @@ internal sealed class CertificateDelivery(
         await db.SaveChangesAsync(token);
 
         return new DeliveryResult(DeliveryOutcome.Sent, причина, подписка.LastError);
+    }
+
+    /// <summary>Что из подписки не ушло и почему; <c>null</c> — ушло всё.</summary>
+    private static string? Неполная(
+        IReadOnlyList<string> нет, IReadOnlyList<(string Name, KeyManagerException Error)> невыгружены)
+    {
+        var беды = new List<string>(невыгружены.Count + 1);
+
+        if (нет.Count > 0)
+        {
+            беды.Add($"{Перечень(нет)} нет в Key Manager Plus");
+        }
+
+        беды.AddRange(невыгружены.Select(н => $"{н.Name} не выгрузился: {н.Error.Message.TrimEnd('.')}"));
+
+        return беды.Count > 0 ? string.Join("; ", беды) + " — отправлены остальные." : null;
     }
 
     /// <summary>Имена через запятую: «Сертификата a» или «Сертификатов a, b».</summary>

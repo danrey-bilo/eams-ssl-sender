@@ -422,6 +422,13 @@ static async Task<int> MigrateCommandAsync(WebApplication app)
             }
         }
 
+        // Ключ API Key Manager Plus, заданный в 1.x до привязки к адресу, привязывается к текущему адресу —
+        // без этого опрос отказывал бы до повторного ввода ключа (так было в 1.x, шаг потерялся в 2.0).
+        if (await KeyManagerModule.BindLegacyApiKeyAsync(app.Services))
+        {
+            Console.WriteLine($"{Bootstrap.Migrate}: ключ API Key Manager Plus привязан к текущему адресу");
+        }
+
         // ⚠ Роль сервиса приводится в порядок и без новых миграций: сменили файл пароля или
         // ставите поверх старой установки — `migrate` и есть способ это применить.
         if (RuntimeRole.FromConfiguration(app.Configuration) is var (role, password))

@@ -24,6 +24,9 @@ public sealed class SecurityHeadersTests(SenderHost host)
     public async Task Ответ_с_ошибкой_тоже_несёт_заголовки_защиты()
     {
         // Обработчик ошибок очищает ответ (Response.Clear) — заголовки обязаны пережить это.
+        // ⚠ Личность обвязки общая на коллекцию: без выхода запрос пришёл бы от соседа, вошедшего раньше
+        // (порядок тестов в Release другой — так тест и падал).
+        host.User.SignOut();
         var ответ = await host.CreateClient().GetAsync("/api/me", Ct);
 
         ответ.StatusCode.ShouldBe(System.Net.HttpStatusCode.Unauthorized);

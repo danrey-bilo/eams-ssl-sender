@@ -56,10 +56,9 @@ internal sealed class CertificatePolling(
         {
             клиент = await connector.OpenAsync(cancellationToken);
         }
-        catch (KeyManagerException ошибка)
+        catch (Exception ошибка) when (!(ошибка is OperationCanceledException && cancellationToken.IsCancellationRequested))
         {
-            await ЗаписатьОпросAsync(null, ошибка.Message);
-            log.LogWarning("keymanager_poll_failed {Error}", ошибка.Message);
+            await НеудачаОпросаAsync(ошибка);
             return default;
         }
 
@@ -69,10 +68,9 @@ internal sealed class CertificatePolling(
             {
                 снимок = await snapshots.TakeAsync(клиент, cancellationToken);
             }
-            catch (KeyManagerException ошибка)
+            catch (Exception ошибка) when (!(ошибка is OperationCanceledException && cancellationToken.IsCancellationRequested))
             {
-                await ЗаписатьОпросAsync(null, ошибка.Message);
-                log.LogWarning("keymanager_poll_failed {Error}", ошибка.Message);
+                await НеудачаОпросаAsync(ошибка);
                 return default;
             }
 
@@ -183,6 +181,20 @@ internal sealed class CertificatePolling(
         + ". Отправьте повторно, когда причина устранена.";
 
     /// <summary>Итог опроса в строку состояния; сбой записи — в лог, не наверх.</summary>
+    /// <summary>Неудачный опрос — в <c>last_poll_error</c>, чтобы панель его показала, и в лог.</summary>
+    /// <remarks>
+    /// ⚠ Любая ошибка, а не только отказ Key Manager Plus: не открывшийся ключ API (сменили файл
+    /// мастер-ключа), сбой базы при записи снимка — иначе панель показывала бы прежний удачный опрос без
+    /// ошибки, а причина жила бы только в логе (ревью надёжности 2026-10-27).
+    /// </remarks>
+    private async Task НеудачаОпросаAsync(Exception ошибка)
+    {
+        var текст = ошибка is KeyManagerException ? ошибка.Message : $"Опрос не удался: {SafeError.Describe(ошибка)}.";
+
+        await ЗаписатьОпросAsync(null, текст);
+        log.LogWarning("keymanager_poll_failed {Error}", текст);
+    }
+
     private async Task ЗаписатьОпросAsync(int? сколько, string? ошибка)
     {
         try

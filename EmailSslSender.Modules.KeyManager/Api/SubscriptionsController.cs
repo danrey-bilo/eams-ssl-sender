@@ -240,7 +240,8 @@ internal sealed class SubscriptionsController(
     /// <remarks>
     /// ⚠ Добавленный сертификат с <c>on_change</c> уйдёт на ближайшем опросе: для него ещё ничего не
     /// отправлено. Убранный — отменяет неотправленные письма подписки: они несут и его файлы; тогда
-    /// подписка забывает отправленное, и оставшиеся сертификаты уходят заново ближайшим опросом.
+    /// подписка забывает отправленное, и оставшиеся сертификаты уходят заново ближайшим опросом. Так же
+    /// отменяют письма убранный формат, снятый пароль ключа и отключение подписки.
     /// </remarks>
     [HttpPatch("{id:guid}")]
     [RequireRecentSecondFactor]
@@ -282,19 +283,7 @@ internal sealed class SubscriptionsController(
                     {
                         // ⚠ Письма в очереди несут файлы и убранного сертификата: его получатели на него
                         // больше не подписаны.
-                        var отменены = await mail.CancelAsync(
-                            строка.PendingMailIds ?? [], "сертификат убран из подписки", token);
-
-                        отменено += отменены;
-                        строка.PendingMailIds = null;
-
-                        // Отменённые письма несли и оставшиеся сертификаты — их получатели их не получат;
-                        // забыть отправленное значит прислать их заново ближайшим опросом.
-                        if (отменены > 0)
-                        {
-                            строка.SentSerials = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-                            строка.LastFullSentAt = null;
-                        }
+                        отменено += await ОтменитьВсеAsync(строка, "сертификат убран из подписки", token);
                     }
 
                     строка.SentSerials = new Dictionary<string, string>(
@@ -332,12 +321,33 @@ internal sealed class SubscriptionsController(
                 {
                     var форматы = Форматы(body.Formats);
                     Поле("formats", string.Join(",", строка.Formats), string.Join(",", форматы));
+
+                    // ⚠ ⚠ Убранный формат (чаще всего KEY — закрытый ключ) — то же сужение права, что убранный
+                    // сертификат: письма в очереди несут его файлы (ревью безопасности 2026-10-27).
+                    if (строка.Formats.Except(форматы, StringComparer.OrdinalIgnoreCase).Any())
+                    {
+                        отменено += await ОтменитьВсеAsync(строка, "формат убран из подписки", token);
+                    }
+
                     строка.Formats = форматы;
                 }
 
                 Поле("include_passphrase", строка.IncludePassphrase, body.IncludePassphrase ?? строка.IncludePassphrase);
                 Поле("on_change", строка.OnChange, body.OnChange ?? строка.OnChange);
                 Поле("enabled", строка.Enabled, body.Enabled ?? строка.Enabled);
+
+                // ⚠ ⚠ Снятый пароль ключа и отключённая подписка тоже отнимают право: письмо, ждущее в очереди
+                // (сервер почты лежит), иначе унесло бы passphrase.txt или ключ уже после того, как
+                // администратор передумал.
+                if (строка.IncludePassphrase && body.IncludePassphrase == false)
+                {
+                    отменено += await ОтменитьВсеAsync(строка, "пароль ключа больше не отправляется", token);
+                }
+
+                if (строка.Enabled && body.Enabled == false)
+                {
+                    отменено += await ОтменитьВсеAsync(строка, "подписка отключена", token);
+                }
 
                 строка.IncludePassphrase = body.IncludePassphrase ?? строка.IncludePassphrase;
                 строка.OnChange = body.OnChange ?? строка.OnChange;
@@ -362,7 +372,12 @@ internal sealed class SubscriptionsController(
                     изменения["cancelled_letters"] = отменено;
                 }
 
-                Способ(строка);
+                // ⚠ Способ отправки проверяется, только когда его меняют: подписку 2.0 без способа иначе
+                // нельзя было бы и сузить — убрать получателя или формат (ревью надёжности 2026-10-27).
+                if (body.OnChange is not null || body.IntervalDays is not null)
+                {
+                    Способ(строка);
+                }
 
                 строка.UpdatedAt = clock.GetUtcNow();
                 строка.UpdatedBy = me.Id;
@@ -420,6 +435,29 @@ internal sealed class SubscriptionsController(
     }
 
     /// <summary>
+    /// Отменить все неотправленные письма подписки и забыть их номера.
+    /// </summary>
+    /// <remarks>
+    /// Отменённые письма несли и то, что в подписке осталось, — их получатели этого не получат. Поэтому
+    /// подписка забывает отправленное, и ближайший опрос пришлёт оставшееся заново уже по новым правилам
+    /// (отключённая — после включения).
+    /// </remarks>
+    private async Task<int> ОтменитьВсеAsync(CertificateSubscription строка, string причина, CancellationToken token)
+    {
+        var отменены = await mail.CancelAsync(строка.PendingMailIds ?? [], причина, token);
+
+        строка.PendingMailIds = null;
+
+        if (отменены > 0)
+        {
+            строка.SentSerials = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            строка.LastFullSentAt = null;
+        }
+
+        return отменены;
+    }
+
+    /// <summary>
     /// Отменить письма подписки, адресованные убранным получателям, и забыть их номера.
     /// </summary>
     /// <remarks>
@@ -459,6 +497,11 @@ internal sealed class SubscriptionsController(
     /// <remarks>
     /// ⚠ Синхронно: администратор видит отказ Key Manager Plus или почты в ответе, а не в логе.
     /// Письма при этом ложатся в очередь, как и при опросе.
+    ///
+    /// ⚠ ⚠ Начатая отправка доводится до конца и без того, кто её начал: выгрузка большой подписки
+    /// (до 50 сертификатов в нескольких форматах) может пережить терпение Cloudflare (100 с), и обрыв
+    /// запроса иначе откатывал бы её каждый раз — такую подписку нельзя было бы отправить вручную
+    /// никогда (ревью надёжности 2026-10-27).
     /// </remarks>
     [HttpPost("{id:guid}/send")]
     [RequireRecentSecondFactor]
@@ -470,10 +513,10 @@ internal sealed class SubscriptionsController(
 
         try
         {
-            using var клиент = await connector.OpenAsync(cancellationToken);
-            var снимок = await snapshots.TakeAsync(клиент, cancellationToken);
+            using var клиент = await connector.OpenAsync(CancellationToken.None);
+            var снимок = await snapshots.TakeAsync(клиент, CancellationToken.None);
 
-            итог = await delivery.DeliverAsync(id, клиент, снимок, manual: true, new DownloadCache(), cancellationToken);
+            итог = await delivery.DeliverAsync(id, клиент, снимок, manual: true, new DownloadCache(), CancellationToken.None);
         }
         catch (KeyManagerException ошибка)
         {

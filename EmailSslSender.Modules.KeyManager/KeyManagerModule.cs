@@ -100,4 +100,32 @@ public static class KeyManagerModule
         // ⚠ Контроллеры модуля internal: находит их провайдер ядра, подключаемый здесь же.
         return mvc.AddModule(typeof(KeyManagerModule).Assembly, options.Features);
     }
+
+    /// <summary>
+    /// Привязать ключ API, заданный до привязки к адресу (1.x), к текущему адресу и отпечатку Key Manager Plus.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Зовёт только команда <c>migrate</c> хоста: «доверие с первого раза» — тому адресу, что задан при
+    /// обновлении, а не тому, что окажется в настройках при первом опросе. Адреса нет — привязывать не к
+    /// чему: ключ откроется после ввода заново. Повторный вызов ничего не меняет.
+    /// </remarks>
+    /// <returns><c>true</c> — ключ привязан сейчас.</returns>
+    public static async Task<bool> BindLegacyApiKeyAsync(IServiceProvider services, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        await using var scope = services.CreateAsyncScope();
+        var settings = scope.ServiceProvider.GetRequiredService<ISettingsReader>();
+        var адрес = await settings.GetAsync(KeyManagerSettings.BaseUrl, cancellationToken);
+
+        if (string.IsNullOrWhiteSpace(адрес))
+        {
+            return false;
+        }
+
+        var отпечаток = await settings.GetAsync(KeyManagerSettings.ServerSha256, cancellationToken);
+
+        return await scope.ServiceProvider.GetRequiredService<ApiKeyStore>()
+            .BindLegacyAsync(ApiKeyStore.Target(адрес, отпечаток), cancellationToken);
+    }
 }
