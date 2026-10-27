@@ -13,6 +13,33 @@ import { useOverlay } from '../ui/Overlay';
 const FORMATS = ['PEM', 'KEY', 'CRT', 'CER', 'DER', 'P7B', 'PKCS', 'JKS'];
 const LOCALES: Array<[string, string]> = [['ru', 'Русский'], ['uk', 'Українська'], ['en', 'English']];
 
+/** Сертификаты подписки коротко: первый и «+N». */
+function namesText(s: Subscription): string {
+  return s.common_names[0] + (s.common_names.length > 1 ? ' +' + (s.common_names.length - 1) : '');
+}
+
+/** «1 сертификат», «2 сертификата», «5 сертификатов». */
+function certificatesText(n: number): string {
+  const last = n % 10, tens = n % 100;
+  const word = last === 1 && tens !== 11 ? 'сертификат'
+    : last >= 2 && last <= 4 && (tens < 12 || tens > 14) ? 'сертификата' : 'сертификатов';
+  return n + ' ' + word;
+}
+
+/** Разобрать ввод имён: через пробел, запятую, точку с запятой или с новой строки. */
+function splitNames(text: string): string[] {
+  return text.split(/[\s,;]+/).map(v => v.trim()).filter(Boolean);
+}
+
+/** Добавить имена без повторов (без учёта регистра — это имена DNS). */
+function withNames(list: string[], more: string[]): string[] {
+  const result = [...list];
+  for (const name of more) {
+    if (!result.some(x => x.toLowerCase() === name.toLowerCase())) result.push(name);
+  }
+  return result;
+}
+
 function scheduleText(s: Subscription): string {
   const parts: string[] = [];
   if (s.on_change) parts.push('при обновлении');
@@ -38,6 +65,12 @@ export function DeliveryPage() {
     return map;
   }, [data]);
 
+  // Ближайший срок среди сертификатов подписки — его и видно в списке.
+  const soonest = (s: Subscription) => s.common_names
+    .map(n => expiry.get(n.toLowerCase()))
+    .filter((d): d is string => !!d)
+    .sort()[0];
+
   if (error) return <Failed text={error} />;
   if (!data) return <Spinner />;
 
@@ -54,7 +87,8 @@ export function DeliveryPage() {
   };
 
   const send = async (s: Subscription) => {
-    if (!await confirm('Отправить ' + s.common_name + '?', 'Файлы уйдут сейчас: ' + s.recipients.join(', '), 'Отправить')) return;
+    const what = s.common_names.length > 1 ? certificatesText(s.common_names.length) : s.common_names[0];
+    if (!await confirm('Отправить ' + what + '?', 'Файлы уйдут сейчас: ' + s.recipients.join(', '), 'Отправить')) return;
     await run(() => api.post('/api/certificate-subscriptions/' + s.id + '/send'), 'Отправлено в очередь');
     reload();
   };
@@ -65,7 +99,7 @@ export function DeliveryPage() {
   };
 
   const remove = async (s: Subscription) => {
-    if (!await confirm('Удалить подписку?', s.common_name + ' больше не будет рассылаться.', 'Удалить', true)) return;
+    if (!await confirm('Удалить подписку?', s.common_names.join(', ') + ' больше не будет рассылаться.', 'Удалить', true)) return;
     if (await run(() => api.del('/api/certificate-subscriptions/' + s.id), 'Подписка удалена')) reload();
   };
 
@@ -81,24 +115,24 @@ export function DeliveryPage() {
 
       {subscriptions.length === 0 ? (
         <div className="card">
-          <Empty title="Подписок пока нет" hint="Подписка — какой сертификат, кому и когда отправлять.">{add}</Empty>
+          <Empty title="Подписок пока нет" hint="Подписка — какие сертификаты, кому и когда отправлять.">{add}</Empty>
         </div>
       ) : isMobile ? (
         <div className="card flush">
           <div className="list">
             {subscriptions.map(s => {
-              const expires = expiry.get(s.common_name.toLowerCase());
+              const expires = soonest(s);
               return (
                 <div key={s.id} className={'item' + (s.enabled ? '' : ' off')}>
                   <div className="item-main">
-                    <div className="item-title">{s.common_name}</div>
+                    <div className="item-title">{namesText(s)}</div>
                     <div className="item-meta">
                       {s.recipients[0]}{s.recipients.length > 1 && ' +' + (s.recipients.length - 1)}
                     </div>
                     <div className="item-meta">{scheduleText(s)}{expires && ' · до ' + fmtDate(expires)}</div>
                     <div className="item-status"><LastDelivery s={s} /></div>
                   </div>
-                  <Menu title={s.common_name} items={[
+                  <Menu title={namesText(s)} items={[
                     { text: 'Отправить сейчас', action: () => send(s) },
                     { text: 'Изменить', action: () => edit(s) },
                     { text: s.enabled ? 'Отключить' : 'Включить', action: () => toggle(s) },
@@ -124,11 +158,12 @@ export function DeliveryPage() {
             </thead>
             <tbody>
               {subscriptions.map(s => {
-                const expires = expiry.get(s.common_name.toLowerCase());
+                const expires = soonest(s);
                 return (
                   <tr key={s.id} className={s.enabled ? '' : 'off'}>
-                    <td>
-                      <span className="strong">{s.common_name}</span>
+                    <td title={s.common_names.join('\n')}>
+                      <span className="strong">{s.common_names[0]}</span>
+                      {s.common_names.length > 1 && <span className="muted"> +{s.common_names.length - 1}</span>}
                       {expires && <span className="sub">до {fmtDate(expires)}</span>}
                     </td>
                     <td title={s.recipients.join('\n')}>
@@ -174,7 +209,7 @@ function LastDelivery({ s }: { s: Subscription }) {
         <button
           className="link status"
           title={s.last_error ?? ''}
-          onClick={() => show(close => <FormModal title={s.common_name} note={s.last_error} submit="Понятно" cancel={null} onClose={close} />)}
+          onClick={() => show(close => <FormModal title={namesText(s)} note={s.last_error} submit="Понятно" cancel={null} onClose={close} />)}
         >
           <Dot kind="err" />Ошибка
         </button>
@@ -182,7 +217,11 @@ function LastDelivery({ s }: { s: Subscription }) {
     case 'queued':
       return <span title="Письма ждут отправки"><Status kind="warn">В очереди</Status></span>;
     case 'sent':
-      return <span title={'Серийный ' + (s.last_sent_serial ?? '')}><Status kind="ok">{fmtDateTime(s.last_sent_at)}</Status></span>;
+      return (
+        <span title={Object.entries(s.sent_serials).map(([n, serial]) => n + ': ' + serial).join('\n')}>
+          <Status kind="ok">{fmtDateTime(s.last_sent_at)}</Status>
+        </span>
+      );
     default:
       return <span className="muted">ещё не отправлялся</span>;
   }
@@ -193,7 +232,8 @@ function SubscriptionDialog({ subscription: s, known, onClose }: {
   known: KnownCertificate[];
   onClose: (done: boolean) => void;
 }) {
-  const [name, setName] = useState(s?.common_name ?? '');
+  const [names, setNames] = useState<string[]>(s?.common_names ?? []);
+  const [draft, setDraft] = useState('');
   const [recipients, setRecipients] = useState((s?.recipients ?? []).join('\n'));
   const [formats, setFormats] = useState<string[]>(s?.formats ?? ['PEM', 'KEY']);
   const [onChange, setOnChange] = useState(s ? s.on_change : true);
@@ -201,14 +241,24 @@ function SubscriptionDialog({ subscription: s, known, onClose }: {
   const [passphrase, setPassphrase] = useState(s?.include_passphrase ?? false);
   const [enabled, setEnabled] = useState(s ? s.enabled : true);
   const [locale, setLocale] = useState(s?.locale ?? 'ru');
-  const names = useMemo(() => [...new Set(known.map(c => c.common_name))].sort(), [known]);
+  const knownNames = useMemo(() => [...new Set(known.map(c => c.common_name))].sort(), [known]);
+  const offered = knownNames.filter(n => !names.some(x => x.toLowerCase() === n.toLowerCase()));
 
   const toggle = (f: string) => setFormats(list => (list.includes(f) ? list.filter(x => x !== f) : [...list, f]));
 
+  const addDraft = () => {
+    setNames(list => withNames(list, splitNames(draft)));
+    setDraft('');
+  };
+
   const submit = async () => {
+    // Набранное, но не добавленное имя тоже идёт в подписку: Enter нажимают не все.
+    const all = withNames(names, splitNames(draft));
+    if (all.length === 0) throw new Invalid('Добавьте хотя бы один сертификат.');
     if (formats.length === 0) throw new Invalid('Выберите хотя бы один файл.');
+    if (!onChange && !days) throw new Invalid('Выберите, когда отправлять: при обновлении, раз в N дней или оба варианта.');
     const body = {
-      common_name: name.trim(),
+      common_names: all,
       recipients: recipients.split(/[\s,;]+/).map(v => v.trim()).filter(Boolean),
       formats: FORMATS.filter(f => formats.includes(f)),
       on_change: onChange,
@@ -223,10 +273,30 @@ function SubscriptionDialog({ subscription: s, known, onClose }: {
 
   return (
     <FormModal title={s ? 'Подписка' : 'Новая подписка'} submit={s ? 'Сохранить' : 'Добавить'} onSubmit={submit} onClose={onClose}>
-      <datalist id="known-names">{names.map(n => <option key={n} value={n} />)}</datalist>
-      <Field label="Сертификат (Common Name)">
-        <input type="text" list="known-names" required placeholder="*.example.com" autoFocus value={name} onChange={e => setName(e.target.value)} />
-      </Field>
+      <datalist id="known-names">{offered.map(n => <option key={n} value={n} />)}</datalist>
+      <Group label="Сертификаты (Common Name)">
+        <div className="stack tight">
+          {names.length > 0 && (
+            <div className="chips">
+              {names.map(n => (
+                <span key={n} className="chip removable">
+                  {n}
+                  <button type="button" className="chip-x" aria-label={'Убрать ' + n} title="Убрать"
+                    onClick={() => setNames(list => list.filter(x => x !== n))}>×</button>
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="add-row">
+            <input type="text" list="known-names" placeholder="*.example.com" autoFocus={!s} value={draft}
+              aria-label="Common Name сертификата"
+              onChange={e => setDraft(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addDraft(); } }} />
+            <button type="button" onClick={addDraft} disabled={!draft.trim()}><Icon name="plus" />Добавить</button>
+          </div>
+          <small className="muted">Один или несколько. При обновлении уходит только обновлённый, по расписанию и вручную — все.</small>
+        </div>
+      </Group>
       <Field label="Кому — по адресу в строке">
         <textarea rows={3} placeholder={'admin@example.com\nops@example.com'} value={recipients} onChange={e => setRecipients(e.target.value)} />
       </Field>

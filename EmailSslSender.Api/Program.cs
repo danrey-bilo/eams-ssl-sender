@@ -108,6 +108,10 @@ builder.Services
         options.ProductName = Product.Name;
         options.Frame = true;
 
+        // Письма уходят текстом и HTML: перечень сертификатов — таблицей, как в уведомлении Key Manager Plus
+        // (решение владельца 2026-10-27). Текстовая часть остаётся — таблица в ней строкой на сертификат.
+        options.Html = true;
+
         // ⚠ Пароль SMTP уходит только тому серверу, порту, защите и логину, для которых его ввели.
         options.BindSmtpPassword = true;
     })

@@ -28,10 +28,10 @@ namespace EmailSslSender.Modules.KeyManager.Schema.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
-                    b.Property<string>("CommonName")
+                    b.PrimitiveCollection<string[]>("CommonNames")
                         .IsRequired()
-                        .HasColumnType("text")
-                        .HasColumnName("common_name");
+                        .HasColumnType("text[]")
+                        .HasColumnName("common_names");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .ValueGeneratedOnAdd()
@@ -68,13 +68,13 @@ namespace EmailSslSender.Modules.KeyManager.Schema.Migrations
                         .HasColumnType("text")
                         .HasColumnName("last_error");
 
+                    b.Property<DateTimeOffset?>("LastFullSentAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("last_full_sent_at");
+
                     b.Property<DateTimeOffset?>("LastSentAt")
                         .HasColumnType("timestamptz")
                         .HasColumnName("last_sent_at");
-
-                    b.Property<string>("LastSentSerial")
-                        .HasColumnType("text")
-                        .HasColumnName("last_sent_serial");
 
                     b.Property<string>("Locale")
                         .IsRequired()
@@ -94,6 +94,11 @@ namespace EmailSslSender.Modules.KeyManager.Schema.Migrations
                         .HasColumnType("text[]")
                         .HasColumnName("recipients");
 
+                    b.Property<string>("SentSerials")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("sent_serials");
+
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .ValueGeneratedOnAdd()
                         .HasColumnType("timestamptz")
@@ -107,11 +112,10 @@ namespace EmailSslSender.Modules.KeyManager.Schema.Migrations
                     b.HasKey("Id")
                         .HasName("pk_certificate_subscriptions");
 
-                    b.HasIndex("CommonName")
-                        .HasDatabaseName("ix_certificate_subscriptions_common_name");
-
                     b.ToTable("certificate_subscriptions", null, t =>
                         {
+                            t.HasCheckConstraint("ck_certificate_subscriptions_common_names", "cardinality(common_names) BETWEEN 1 AND 50");
+
                             t.HasCheckConstraint("ck_certificate_subscriptions_formats", "cardinality(formats) >= 1");
 
                             t.HasCheckConstraint("ck_certificate_subscriptions_interval", "interval_days IS NULL OR interval_days BETWEEN 1 AND 365");

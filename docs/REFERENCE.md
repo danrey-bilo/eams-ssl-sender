@@ -61,13 +61,13 @@ git в каталог `modules/<имя>`. Используются только 
 
 | Каталог | Репозиторий | Метка |
 |---|---|---|
-| `modules/core` | `module-core` | `v0.9.0` |
+| `modules/core` | `module-core` | `v0.10.0` |
 | `modules/crypto` | `module-crypto` | `v0.5.0` |
-| `modules/hosting` | `module-hosting` | `v0.6.0` |
-| `modules/identity` | `module-identity` | `v0.10.0` |
-| `modules/tokens` | `module-tokens` | `v0.8.1` |
-| `modules/settings` | `module-settings` | `v0.8.1` |
-| `modules/mail` | `module-mail` | `v0.9.0` |
+| `modules/hosting` | `module-hosting` | `v0.6.1` |
+| `modules/identity` | `module-identity` | `v0.10.1` |
+| `modules/tokens` | `module-tokens` | `v0.8.2` |
+| `modules/settings` | `module-settings` | `v0.8.2` |
+| `modules/mail` | `module-mail` | `v0.10.0` |
 
 Клонировать вместе с модулями (репозитории модулей закрытые — нужен доступ к ним):
 
@@ -125,6 +125,7 @@ fine-grained, владелец `danrey-bilo`, доступ к репозитор
 | mail | `ProductName` | `EAMS ssl sender` | Имя в подписи письма и отправитель по умолчанию |
 | mail | `Frame` | да | «Здравствуйте!» … «Спасибо,» и имя сервиса в каждом письме |
 | mail | `BindSmtpPassword` | да | Пароль SMTP уходит только тому серверу, порту, защите и логину, для которых введён |
+| mail | `Html` | да | Письмо уходит двумя частями — текстом и HTML; перечень сертификатов — таблицей |
 | mail | `RunMaintenance` | да | Уборка отправленных писем и стирание вложений у неотправленных |
 | keymanager | `RunPoller` | да | Опрос Key Manager Plus в этом процессе |
 
@@ -468,6 +469,11 @@ curl -s $API/api/mail -H "Authorization: Bearer $TOKEN"
 отправленные убираются уборкой. Предел `mail.rate_per_hour` считается на пару «адрес + вид
 письма» и защищает чужой ящик от форм сброса и кодов.
 
+Каждое письмо уходит двумя частями — текстом и HTML (`multipart/alternative`; с вложениями — внутри
+`multipart/mixed`). HTML собирает модуль почты из того же текста шаблона: абзацы, таблицы, рамка с
+приветствием и подписью; всё экранировано, ссылок и внешних ресурсов нет. HTML-часть запечатана в
+очереди тем же ключом данных, что и текст (колонка `mail_outbox.html_body`).
+
 **Сертификат сервера проверяется полностью, включая отзыв (CRL/OCSP).** У публичных
 провайдеров это работает само. Если SMTP-сервер стоит во внутренней сети с собственным
 удостоверяющим центром:
@@ -484,25 +490,49 @@ curl -s $API/api/mail -H "Authorization: Bearer $TOKEN"
 ## Сертификаты из Key Manager Plus
 
 Сервис опрашивает ManageEngine Key Manager Plus (проверено по документации REST API для 7.1.1,
-build 7110) и рассылает файлы SSL-сертификатов по **подпискам**: какой сертификат (Common Name),
-кому, в каких файлах и когда.
+build 7110) и рассылает файлы SSL-сертификатов по **подпискам**: какие сертификаты (Common Name —
+один или несколько, до 50), кому, в каких файлах и когда.
 
 **Когда уходит письмо.**
 
-- **Сертификат обновился.** Вебхуков и истории у API Key Manager Plus нет, поэтому обновление
-  определяется опросом раз в `keymanager.poll_minutes`. Если у того же Common Name появился новый
-  серийный номер (продление, в том числе автоматическое, или перевыпуск), сертификат уходит
-  один раз. Если в Key Manager Plus лежат и старый, и новый, берётся замеченный позже, даже если
-  срок у него тот же или короче. Среди замеченных одновременно выигрывает тот, что действует дольше.
-- **По расписанию.** `interval_days` повторяет отправку раз в N дней.
-- **Сразу после заведения подписки.** Опрос будится, и текущий сертификат уходит в течение
-  секунд.
-- **Вручную:** `POST /api/certificate-subscriptions/{id}/send`.
+- **Сертификат обновился** (`on_change`). Вебхуков и истории у API Key Manager Plus нет, поэтому
+  обновление определяется опросом раз в `keymanager.poll_minutes`. Если у Common Name появился новый
+  серийный номер (продление, в том числе автоматическое, или перевыпуск), уходит **только этот
+  сертификат**, а не все в подписке. Если в Key Manager Plus лежат и старый, и новый, берётся
+  замеченный позже, даже если срок у него тот же или короче. Среди замеченных одновременно
+  выигрывает тот, что действует дольше.
+- **По расписанию** (`interval_days`): раз в N дней уходят **все** сертификаты подписки. Срок
+  считается от последней полной отправки (`last_full_sent_at`); частичная «при обновлении» его не
+  сдвигает.
+- **Сразу после заведения подписки** и после добавления сертификата в подписку: опрос будится, и
+  ещё не отправленные сертификаты уходят в течение секунд.
+- **Вручную** — `POST /api/certificate-subscriptions/{id}/send`, кнопка «Отправить сейчас»: все
+  сертификаты подписки.
 
-Файлы уходят **одним архивом** `<Common Name>.zip` (звёздочка — `wildcard`): Outlook блокирует
-вложения `.crt`, `.cer` и `.der`. Пароль ключа (`include_passphrase`) лежит в том же архиве файлом
-`passphrase.txt`. Текст письма: приветствие, сертификат с форматами и сроком, содержимое архива,
-подпись «EAMS ssl sender».
+Подписка обязана иметь **хотя бы один способ отправки** — `on_change` или `interval_days`; без них
+сервис её не сохранит (`400`, поле `on_change`): такая подписка молча ничего не слала бы.
+
+Сертификат подписки, которого нет в Key Manager Plus, не мешает остальным: они уходят, а в
+`last_error` подписки — «Сертификата … нет в Key Manager Plus — отправлены остальные». Нет ни
+одного — ничего не уходит.
+
+Файлы уходят **одним архивом на письмо** (Outlook блокирует вложения `.crt`, `.cer` и `.der`): один
+сертификат — `<Common Name>.zip` с файлами в корне (звёздочка — `wildcard`), несколько —
+`ssl-certificates.zip` с папкой на каждый сертификат. Пароль ключа (`include_passphrase`) лежит в
+папке сертификата файлом `passphrase.txt`. Письмо: приветствие, **таблица сертификатов** — как в
+уведомлении Key Manager Plus, но без серийного номера и отпечатка, — что в архиве, подпись «EAMS ssl
+sender». Колонки на языке письма:
+
+| `ru` | `uk` | `en` |
+|---|---|---|
+| Сертификат | Сертифікат | Certificate |
+| Форматы | Формати | Formats |
+| Действует до | Дійсний до | Valid until |
+| Осталось дней | Залишилось днів | Days to expire |
+
+Письмо уходит двумя частями: HTML с настоящей таблицей и простой текст для клиентов без HTML — в
+нём таблица строкой на сертификат, ячейки через « · ». В HTML-части нет ссылок, картинок и внешних
+ресурсов. Тема — «SSL-сертификат имя» или «SSL-сертификаты a, b, c и ещё N».
 
 > ⚠ **Письмо несёт закрытый ключ** (тип `KEY`, а также `PKCS` и `JKS`). Любой, кто прочтёт ящик
 > получателя или пересланное письмо, получит ключ. В очереди вложения лежат запечатанными и
@@ -550,23 +580,25 @@ curl -s -X POST $API/api/keymanager/test -H "Authorization: Bearer $TOKEN"
 curl -s -X PATCH $API/api/settings/system -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"values":{"keymanager.enabled":true,"keymanager.poll_minutes":15}}'
 ```
 
-**5. Подписка.** Обязательны только `common_name` и `recipients`. Остальные поля:
+**5. Подписка.** Обязательны `common_names` (или один `common_name`) и `recipients`. Остальные поля:
 
 | Поле | По умолчанию | Что задаёт |
 |---|---|---|
+| `common_names` | — | Сертификаты: от 1 до 50 Common Name; пробелы, пустые и повторы (без учёта регистра) отбрасываются. Один сертификат можно передать и полем `common_name` — но не оба поля сразу |
 | `formats` | `["PEM","KEY"]` | Типы файлов из Key Manager Plus: `CER`, `CRT`, `DER`, `P7B`, `PKCS`, `JKS`, `PEM`, `KEY` |
-| `on_change` | `true` | Слать при новом серийном номере |
-| `interval_days` | нет | Повторять раз в N дней (1–365). В `PATCH` значение `0` снимает расписание |
+| `on_change` | `true` | Слать обновлённый сертификат, когда у него новый серийный номер |
+| `interval_days` | нет | Слать все сертификаты раз в N дней (1–365). В `PATCH` значение `0` снимает расписание. Хотя бы одно из `on_change` и `interval_days` обязательно |
 | `include_passphrase` | `false` | Приложить пароль закрытого ключа из Key Manager Plus файлом `passphrase.txt` |
 | `locale` | `ru` | Язык письма: `ru`, `uk`, `en` |
 | `enabled` | `true` | Отключённую подписку опрос не шлёт; вручную её отправить можно |
 
 ```bash
-curl -s -X POST $API/api/certificate-subscriptions -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"common_name":"*.example.com","recipients":["admin1@example.com","admin2@example.com"],"formats":["PEM","KEY"],"interval_days":30}'
+curl -s -X POST $API/api/certificate-subscriptions -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"common_names":["*.example.com","vpn.example.com"],"recipients":["admin1@example.com","admin2@example.com"],"formats":["PEM","KEY"],"interval_days":30}'
 ```
 
-Каждый адрес получает своё письмо. Поле `delivery` подписки показывает судьбу последней
-отправки:
+Каждый адрес получает своё письмо. В ответе подписки `sent_serials` — какой серийный номер ушёл
+последним по каждому Common Name, `last_sent_at` — последняя отправка, `last_full_sent_at` — последняя
+отправка всех сертификатов. Поле `delivery` показывает судьбу последней отправки:
 - `queued` — письма в очереди;
 - `sent` — сервер их принял;
 - `failed` — не ушли, причина в `last_error`;
@@ -580,8 +612,9 @@ curl -s -X POST $API/api/certificate-subscriptions -H "Authorization: Bearer $TO
 впервые — `GET /api/keymanager/certificates`.
 
 Почта проверяется до выгрузки: пока она не настроена, закрытые ключи из Key Manager Plus не
-выгружаются вовсе. Удаление подписки, удаление получателя или смена Common Name отменяют её
-неотправленные письма. Письмо с вложениями, не ушедшее за 24 часа, теряет вложения и считается
+выгружаются вовсе. Удаление подписки, удаление получателя или убранный из подписки сертификат
+отменяют её неотправленные письма; в последнем случае оставшиеся сертификаты уйдут заново ближайшим
+опросом — отменённые письма несли и их. Письмо с вложениями, не ушедшее за 24 часа, теряет вложения и считается
 неотправленным — после починки почты отправьте подписку заново.
 
 Какие методы REST API Key Manager Plus вызывает сервис, с какими параметрами и что берёт из
@@ -691,7 +724,7 @@ curl -s "$API/api/users?limit=50" -H "Authorization: Bearer $TOKEN"
 | POST | `/api/keymanager/certificates/download` | Ф | Файл сертификата: `common_name`, `serial_number`, `format` (`PEM`, `CRT`, `CER`, `DER`, `P7B`, `PKCS`, `JKS`, `KEY`); имя — в `Content-Disposition` |
 | POST | `/api/keymanager/certificates/private-key` | Ф | Закрытый ключ PEM и пароль: `common_name`, `serial_number` → `{"private_key", "passphrase"}` |
 | GET | `/api/certificate-subscriptions`, `/{id}` | | Подписки на сертификаты |
-| POST | `/api/certificate-subscriptions` | Ф | Завести: `common_name`, `recipients`, `formats`, `on_change`, `interval_days`, `include_passphrase`, `locale`, `enabled` |
+| POST | `/api/certificate-subscriptions` | Ф | Завести: `common_names` (или `common_name`), `recipients`, `formats`, `on_change`, `interval_days`, `include_passphrase`, `locale`, `enabled` |
 | PATCH | `/api/certificate-subscriptions/{id}` | Ф | Изменить те же поля |
 | DELETE | `/api/certificate-subscriptions/{id}` | Ф | Удалить |
 | POST | `/api/certificate-subscriptions/{id}/send` | Ф | Отправить текущий сертификат сейчас |
@@ -726,7 +759,7 @@ curl -s "$API/api/users?limit=50" -H "Authorization: Bearer $TOKEN"
 | `MAIL_SEND_FAILED` | 409 | Почтовый сервер отказал: `details.reason` |
 | `KEYMANAGER_NOT_CONFIGURED` | 409 | Не заданы адрес Key Manager Plus или ключ API |
 | `KEYMANAGER_UNAVAILABLE` | 409 | Key Manager Plus не ответил или отказал: `details.reason` |
-| `KEYMANAGER_CERTIFICATE_NOT_FOUND` | 409 / 404 | Сертификата с таким Common Name в Key Manager Plus нет; 404 — у выгрузки, когда пары «имя + серийный» нет в последнем снимке |
+| `KEYMANAGER_CERTIFICATE_NOT_FOUND` | 409 / 404 | Ни одного сертификата подписки в Key Manager Plus нет; 404 — у выгрузки, когда пары «имя + серийный» нет в последнем снимке |
 | `DELIVERY_IN_PROGRESS` | 409 | Эту подписку прямо сейчас отправляет опрос |
 | `RATE_LIMITED` | 429 | Слишком часто |
 | `VALIDATION_ERROR` | 400 | Тело запроса не прошло проверку |

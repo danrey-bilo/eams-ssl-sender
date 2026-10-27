@@ -61,15 +61,23 @@ internal sealed class KnownCertificate
 }
 
 /// <summary>
-/// Подписка: какой сертификат, кому, в каких файлах и когда слать.
+/// Подписка: какие сертификаты, кому, в каких файлах и когда слать.
 /// </summary>
+/// <remarks>
+/// ⚠ <b>Сертификатов в подписке от одного до <see cref="MaxCertificates"/></b> (решение владельца
+/// 2026-10-27): письмо несёт их таблицей и одним архивом. При обновлении уходят только обновлённые, по
+/// расписанию и вручную — все.
+/// </remarks>
 internal sealed class CertificateSubscription
 {
+    /// <summary>Сколько сертификатов в одной подписке.</summary>
+    public const int MaxCertificates = 50;
+
     /// <summary>UUIDv7 из приложения.</summary>
     public required Guid Id { get; set; }
 
-    /// <summary>Common Name сертификата в Key Manager Plus, например <c>*.example.com</c>.</summary>
-    public required string CommonName { get; set; }
+    /// <summary>Common Name сертификатов в Key Manager Plus, например <c>*.example.com</c>; в порядке, заданном администратором.</summary>
+    public required string[] CommonNames { get; set; }
 
     /// <summary>Адреса получателей: по письму на каждый.</summary>
     public required string[] Recipients { get; set; }
@@ -80,10 +88,10 @@ internal sealed class CertificateSubscription
     /// <summary>Писать ли в письмо пароль закрытого ключа из Key Manager Plus.</summary>
     public bool IncludePassphrase { get; set; }
 
-    /// <summary>Слать ли, когда у Common Name появился новый серийный номер.</summary>
+    /// <summary>Слать ли сертификат, когда у его Common Name появился новый серийный номер, — только его.</summary>
     public bool OnChange { get; set; } = true;
 
-    /// <summary>Слать ли повторно раз в столько дней. <c>null</c> — без расписания.</summary>
+    /// <summary>Слать ли повторно все сертификаты раз в столько дней. <c>null</c> — без расписания.</summary>
     public int? IntervalDays { get; set; }
 
     /// <summary>Язык письма: <c>ru</c>, <c>uk</c> или <c>en</c>.</summary>
@@ -100,11 +108,17 @@ internal sealed class CertificateSubscription
 
     public Guid? UpdatedBy { get; set; }
 
-    /// <summary>Серийный номер последнего отправленного сертификата.</summary>
-    public string? LastSentSerial { get; set; }
+    /// <summary>
+    /// Серийный номер, ушедший последним, по каждому Common Name подписки (ключ — как записан в подписке).
+    /// </summary>
+    /// <remarks>По нему «при обновлении» отличает обновлённый сертификат от уже отправленного.</remarks>
+    public Dictionary<string, string> SentSerials { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>Когда письма последней отправки легли в очередь.</summary>
+    /// <summary>Когда письма последней отправки легли в очередь — любой, и частичной тоже.</summary>
     public DateTimeOffset? LastSentAt { get; set; }
+
+    /// <summary>Когда последний раз уходили все сертификаты подписки: от неё считается «раз в N дней».</summary>
+    public DateTimeOffset? LastFullSentAt { get; set; }
 
     /// <summary>Когда пробовали в последний раз — удачно или нет.</summary>
     public DateTimeOffset? LastAttemptAt { get; set; }

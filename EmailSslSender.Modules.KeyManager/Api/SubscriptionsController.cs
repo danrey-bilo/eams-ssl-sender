@@ -15,9 +15,14 @@ using Microsoft.EntityFrameworkCore;
 
 namespace EmailSslSender.Modules.KeyManager.Api;
 
-/// <summary>Новая подписка.</summary>
+/// <summary>Новая подписка или правка: не присланное поле не меняется.</summary>
 internal sealed record SubscriptionIn
 {
+    /// <summary>Common Name сертификатов: от одного до 50.</summary>
+    [JsonPropertyName("common_names")]
+    public IReadOnlyList<string>? CommonNames { get; init; }
+
+    /// <summary>Один сертификат — по-прежнему можно и так; вместе с <c>common_names</c> нельзя.</summary>
     [JsonPropertyName("common_name")]
     public string? CommonName { get; init; }
 
@@ -48,7 +53,7 @@ internal sealed record SubscriptionIn
 /// <summary>Подписка с состоянием последней отправки.</summary>
 internal sealed record SubscriptionOut(
     [property: JsonPropertyName("id")] Guid Id,
-    [property: JsonPropertyName("common_name")] string CommonName,
+    [property: JsonPropertyName("common_names")] IReadOnlyList<string> CommonNames,
     [property: JsonPropertyName("recipients")] IReadOnlyList<string> Recipients,
     [property: JsonPropertyName("formats")] IReadOnlyList<string> Formats,
     [property: JsonPropertyName("include_passphrase")] bool IncludePassphrase,
@@ -58,8 +63,9 @@ internal sealed record SubscriptionOut(
     [property: JsonPropertyName("enabled")] bool Enabled,
     [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
     [property: JsonPropertyName("updated_at")] DateTimeOffset UpdatedAt,
-    [property: JsonPropertyName("last_sent_serial")] string? LastSentSerial,
+    [property: JsonPropertyName("sent_serials")] IReadOnlyDictionary<string, string> SentSerials,
     [property: JsonPropertyName("last_sent_at")] DateTimeOffset? LastSentAt,
+    [property: JsonPropertyName("last_full_sent_at")] DateTimeOffset? LastFullSentAt,
     [property: JsonPropertyName("last_attempt_at")] DateTimeOffset? LastAttemptAt,
     [property: JsonPropertyName("last_error")] string? LastError,
     [property: JsonPropertyName("delivery")] string Delivery)
@@ -83,9 +89,9 @@ internal sealed record SubscriptionOut(
         };
 
         return new(
-            п.Id, п.CommonName, п.Recipients, п.Formats, п.IncludePassphrase, п.OnChange, п.IntervalDays,
-            п.Locale, п.Enabled, п.CreatedAt, п.UpdatedAt, п.LastSentSerial, п.LastSentAt, п.LastAttemptAt,
-            ошибка, доставка);
+            п.Id, п.CommonNames, п.Recipients, п.Formats, п.IncludePassphrase, п.OnChange, п.IntervalDays,
+            п.Locale, п.Enabled, п.CreatedAt, п.UpdatedAt, п.SentSerials, п.LastSentAt, п.LastFullSentAt,
+            п.LastAttemptAt, ошибка, доставка);
     }
 
     private static (string, string?) Состояние(
@@ -113,13 +119,16 @@ internal sealed record SubscriptionOut(
 /// свой адрес, получает ключ следующим опросом. Чтение кода не спрашивает.
 ///
 /// ⚠ ⚠ <b>Право получателя кончается вместе с подпиской, а не с отправкой письма.</b> Удаление
-/// подписки, смена Common Name и убранный из списка адрес отменяют письма, ещё стоящие в очереди
+/// подписки, убранный из неё сертификат и убранный из списка адрес отменяют письма, ещё стоящие в очереди
 /// (<see cref="IMailQueue.CancelAsync"/>): иначе закрытый ключ ушёл бы тому, у кого право уже
 /// отняли. Отмена — в той же транзакции, что и правка, под блокировкой строки подписки: опрос,
 /// отправляющий её в эту минуту, дописал бы номера писем мимо отмены.
 ///
 /// ⚠ В журнал — какие поля изменились и сколько адресов стало, а не сами адреса: адрес
 /// получателя — сведение о человеке, а строка журнала уходит в общий лог.
+///
+/// ⚠ <b>Хотя бы один способ отправки</b> — при обновлении или раз в N дней (решение владельца
+/// 2026-10-27): подписка без них молча ничего не слала бы, а это почти всегда невнимательность.
 /// </remarks>
 [ApiController]
 [AuthenticatedEndpoint("ролей в проекте нет: каждая учётная запись — администратор Key Manager Plus")]
@@ -141,15 +150,16 @@ internal sealed class SubscriptionsController(
     /// <summary>Самый длинный Common Name, который примем.</summary>
     private const int ПотолокИмени = 255;
 
-    /// <summary>Все подписки по Common Name.</summary>
+    /// <summary>Все подписки — по первому Common Name.</summary>
     [HttpGet]
     public async Task<IReadOnlyList<SubscriptionOut>> List(CancellationToken cancellationToken)
     {
-        var подписки = await db.Set<CertificateSubscription>()
-            .AsNoTracking()
-            .OrderBy(п => п.CommonName)
+        var подписки = (await db.Set<CertificateSubscription>()
+                .AsNoTracking()
+                .ToListAsync(cancellationToken))
+            .OrderBy(п => п.CommonNames[0], StringComparer.OrdinalIgnoreCase)
             .ThenBy(п => п.Id)
-            .ToListAsync(cancellationToken);
+            .ToList();
 
         var письма = await mail.StatusAsync(
             [.. подписки.SelectMany(п => п.PendingMailIds ?? [])], cancellationToken);
@@ -166,7 +176,7 @@ internal sealed class SubscriptionsController(
     /// Завести подписку.
     /// </summary>
     /// <remarks>
-    /// С <c>on_change</c> текущий сертификат уходит на ближайшем опросе — опрос будится сразу.
+    /// С <c>on_change</c> текущие сертификаты уходят на ближайшем опросе — опрос будится сразу.
     /// </remarks>
     [HttpPost]
     [RequireRecentSecondFactor]
@@ -179,7 +189,7 @@ internal sealed class SubscriptionsController(
         var подписка = new CertificateSubscription
         {
             Id = Guid.CreateVersion7(),
-            CommonName = Имя(body.CommonName),
+            CommonNames = Имена(body),
             Recipients = Адреса(body.Recipients),
             Formats = body.Formats is null ? [.. CertificateFormats.Default] : Форматы(body.Formats),
             IncludePassphrase = body.IncludePassphrase ?? false,
@@ -193,6 +203,8 @@ internal sealed class SubscriptionsController(
             UpdatedBy = me.Id,
         };
 
+        Способ(подписка);
+
         await db.InTransactionAsync(
             async token =>
             {
@@ -204,7 +216,7 @@ internal sealed class SubscriptionsController(
                     ResourceId: подписка.Id,
                     Changes: new Dictionary<string, object?>(StringComparer.Ordinal)
                     {
-                        ["common_name"] = подписка.CommonName,
+                        ["common_names"] = подписка.CommonNames,
                         ["recipients"] = подписка.Recipients.Length,
                         ["formats"] = подписка.Formats,
                         ["include_passphrase"] = подписка.IncludePassphrase,
@@ -226,8 +238,9 @@ internal sealed class SubscriptionsController(
     /// Изменить подписку. Не присланное поле не меняется; <c>interval_days: 0</c> снимает расписание.
     /// </summary>
     /// <remarks>
-    /// ⚠ Смена Common Name забывает прежнюю отправку: для другого сертификата «уже отправлено» не
-    /// значит ничего, и с <c>on_change</c> новый уйдёт на ближайшем опросе.
+    /// ⚠ Добавленный сертификат с <c>on_change</c> уйдёт на ближайшем опросе: для него ещё ничего не
+    /// отправлено. Убранный — отменяет неотправленные письма подписки: они несут и его файлы; тогда
+    /// подписка забывает отправленное, и оставшиеся сертификаты уходят заново ближайшим опросом.
     /// </remarks>
     [HttpPatch("{id:guid}")]
     [RequireRecentSecondFactor]
@@ -255,25 +268,39 @@ internal sealed class SubscriptionsController(
                     }
                 }
 
-                if (body.CommonName is not null)
+                if (body.CommonNames is not null || body.CommonName is not null)
                 {
-                    var имя = Имя(body.CommonName);
+                    var имена = Имена(body);
+                    var убраны = строка.CommonNames.Except(имена, StringComparer.OrdinalIgnoreCase).ToList();
 
-                    if (!string.Equals(имя, строка.CommonName, StringComparison.Ordinal))
+                    if (!строка.CommonNames.SequenceEqual(имена, StringComparer.Ordinal))
                     {
-                        Поле("common_name", строка.CommonName, имя);
-
-                        // ⚠ Письма с прежним сертификатом подписке больше не принадлежат: её
-                        // получатели подписаны теперь на другой.
-                        отменено += await mail.CancelAsync(
-                            строка.PendingMailIds ?? [], "подписка переключена на другой Common Name", token);
-
-                        строка.CommonName = имя;
-                        строка.LastSentSerial = null;
-                        строка.LastSentAt = null;
-                        строка.LastError = null;
-                        строка.PendingMailIds = null;
+                        Поле("common_names", string.Join(", ", строка.CommonNames), string.Join(", ", имена));
                     }
+
+                    if (убраны.Count > 0)
+                    {
+                        // ⚠ Письма в очереди несут файлы и убранного сертификата: его получатели на него
+                        // больше не подписаны.
+                        var отменены = await mail.CancelAsync(
+                            строка.PendingMailIds ?? [], "сертификат убран из подписки", token);
+
+                        отменено += отменены;
+                        строка.PendingMailIds = null;
+
+                        // Отменённые письма несли и оставшиеся сертификаты — их получатели их не получат;
+                        // забыть отправленное значит прислать их заново ближайшим опросом.
+                        if (отменены > 0)
+                        {
+                            строка.SentSerials = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                            строка.LastFullSentAt = null;
+                        }
+                    }
+
+                    строка.SentSerials = new Dictionary<string, string>(
+                        строка.SentSerials.Where(пара => имена.Contains(пара.Key, StringComparer.OrdinalIgnoreCase)),
+                        StringComparer.OrdinalIgnoreCase);
+                    строка.CommonNames = имена;
                 }
 
                 if (body.Recipients is not null)
@@ -335,6 +362,8 @@ internal sealed class SubscriptionsController(
                     изменения["cancelled_letters"] = отменено;
                 }
 
+                Способ(строка);
+
                 строка.UpdatedAt = clock.GetUtcNow();
                 строка.UpdatedBy = me.Id;
 
@@ -378,7 +407,7 @@ internal sealed class SubscriptionsController(
                     ResourceId: id,
                     Changes: new Dictionary<string, object?>(StringComparer.Ordinal)
                     {
-                        ["common_name"] = строка.CommonName,
+                        ["common_names"] = строка.CommonNames,
                         ["recipients"] = строка.Recipients.Length,
                         ["cancelled_letters"] = отменено,
                     }));
@@ -425,7 +454,7 @@ internal sealed class SubscriptionsController(
     }
 
     /// <summary>
-    /// Отправить текущий сертификат подписки сейчас — без проверки срока, и отключённой тоже.
+    /// Отправить все текущие сертификаты подписки сейчас — без проверки срока, и отключённой тоже.
     /// </summary>
     /// <remarks>
     /// ⚠ Синхронно: администратор видит отказ Key Manager Plus или почты в ответе, а не в логе.
@@ -492,16 +521,47 @@ internal sealed class SubscriptionsController(
             ?? throw AppException.NotFound("Подписка не найдена.");
     }
 
-    private static string Имя(string? commonName)
+    /// <summary>
+    /// Common Name сертификатов: от одного до <see cref="CertificateSubscription.MaxCertificates"/>, без
+    /// повторов (без учёта регистра — это имена DNS), в присланном порядке.
+    /// </summary>
+    private static string[] Имена(SubscriptionIn body)
     {
-        var имя = commonName?.Trim();
-
-        if (string.IsNullOrEmpty(имя) || имя.Length > ПотолокИмени)
+        if (body.CommonNames is not null && body.CommonName is not null)
         {
-            throw Неверно("common_name", $"Нужен Common Name сертификата, до {ПотолокИмени} знаков.");
+            throw Неверно("common_names", "Сертификаты — либо списком common_names, либо одним common_name.");
         }
 
-        return имя;
+        var имена = (body.CommonNames ?? (body.CommonName is null ? [] : [body.CommonName]))
+            .Select(имя => имя?.Trim() ?? string.Empty)
+            .Where(имя => имя.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (имена.Length == 0 || имена.Length > CertificateSubscription.MaxCertificates)
+        {
+            throw Неверно(
+                "common_names",
+                $"Нужно от 1 до {CertificateSubscription.MaxCertificates} сертификатов (Common Name).");
+        }
+
+        if (имена.FirstOrDefault(имя => имя.Length > ПотолокИмени) is { } длинное)
+        {
+            throw Неверно("common_names", $"Common Name длиннее {ПотолокИмени} знаков: {длинное[..40]}…");
+        }
+
+        return имена;
+    }
+
+    /// <summary>Хотя бы один способ отправки — при обновлении или по расписанию.</summary>
+    private static void Способ(CertificateSubscription подписка)
+    {
+        if (!подписка.OnChange && подписка.IntervalDays is null)
+        {
+            throw Неверно(
+                "on_change",
+                "Выберите, когда отправлять: при обновлении в Key Manager Plus, раз в N дней или оба варианта.");
+        }
     }
 
     /// <summary>

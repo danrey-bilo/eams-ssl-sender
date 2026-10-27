@@ -43,7 +43,7 @@ export type Delivery = 'none' | 'queued' | 'sent' | 'failed';
 
 export interface Subscription {
   id: string;
-  common_name: string;
+  common_names: string[];
   recipients: string[];
   formats: string[];
   include_passphrase: boolean;
@@ -51,8 +51,9 @@ export interface Subscription {
   interval_days: number | null;
   locale: string;
   enabled: boolean;
-  last_sent_serial: string | null;
+  sent_serials: Record<string, string>;
   last_sent_at: string | null;
+  last_full_sent_at: string | null;
   last_error: string | null;
   delivery: Delivery;
 }

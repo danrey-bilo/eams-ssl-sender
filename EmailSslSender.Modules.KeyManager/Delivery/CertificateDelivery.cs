@@ -29,7 +29,7 @@ internal enum DeliveryOutcome
     /// <summary>Подписки больше нет.</summary>
     Gone,
 
-    /// <summary>Сертификата с таким Common Name в Key Manager Plus нет.</summary>
+    /// <summary>Ни одного сертификата подписки в Key Manager Plus нет.</summary>
     CertificateMissing,
 
     /// <summary>Key Manager Plus не отдал файл или пароль.</summary>
@@ -43,7 +43,18 @@ internal enum DeliveryOutcome
 }
 
 /// <summary>Итог попытки и причина отправки, если она состоялась.</summary>
+/// <param name="Outcome">Чем кончилось.</param>
+/// <param name="Reason">Почему отправлено.</param>
+/// <param name="Error">Почему не отправлено — или что отправлено не всё (каких сертификатов нет в Key Manager Plus).</param>
 internal sealed record DeliveryResult(DeliveryOutcome Outcome, DeliveryReason? Reason = null, string? Error = null);
+
+/// <summary>Сертификат подписки, найденный в снимке.</summary>
+/// <param name="Name">Common Name, как он записан в подписке: ключ отметок отправленного.</param>
+/// <param name="Certificate">Текущий сертификат из Key Manager Plus.</param>
+internal sealed record Сертификат(string Name, KmpCertificate Certificate);
+
+/// <summary>Сертификат и его выгруженные файлы — одна папка архива и одна строка письма.</summary>
+internal sealed record CertificateFiles(KmpCertificate Certificate, IReadOnlyList<MailAttachment> Files);
 
 /// <summary>
 /// Файлы и пароли, уже выгруженные в этом проходе.
@@ -60,7 +71,7 @@ internal sealed class DownloadCache
 }
 
 /// <summary>
-/// Отправка сертификата по одной подписке: выбрать текущий, решить, пора ли, выгрузить, поставить письма.
+/// Отправка по одной подписке: найти текущие сертификаты, решить, пора ли и какие, выгрузить, поставить письма.
 /// </summary>
 /// <remarks>
 /// ⚠ ⚠ ⚠ <b>Одна подписка — одна транзакция, и всё в ней или ничего.</b> Строка подписки берётся
@@ -85,29 +96,43 @@ internal sealed class CertificateDelivery(
     ILogger<CertificateDelivery> log)
 {
     /// <summary>
-    /// Пора ли слать и почему. <c>null</c> — не пора.
+    /// Пора ли слать, почему и что. <c>null</c> — не пора.
     /// </summary>
+    /// <param name="subscription">Подписка.</param>
+    /// <param name="current">Текущие сертификаты подписки, найденные в снимке: имя из подписки и сертификат.</param>
+    /// <param name="now">Сейчас.</param>
     /// <remarks>
+    /// ⚠ ⚠ Решение владельца 2026-10-27: <b>по расписанию — все</b> сертификаты подписки, <b>при
+    /// обновлении — только обновлённые</b>. Расписание проверяется первым: подошёл его срок — уходят все,
+    /// обновлённые в том числе.
+    ///
     /// ⚠ Серийные номера сравниваются без учёта регистра: это hex, и Key Manager Plus не обещает
     /// писать его одинаково в разных версиях.
     /// </remarks>
-    internal static DeliveryReason? Due(CertificateSubscription subscription, KmpCertificate current, DateTimeOffset now)
+    internal static (DeliveryReason Reason, IReadOnlyList<Сертификат> Send)? Due(
+        CertificateSubscription subscription, IReadOnlyList<Сертификат> current, DateTimeOffset now)
     {
-        var первая = subscription.LastSentSerial is null;
-
-        if (subscription.OnChange
-            && !string.Equals(subscription.LastSentSerial, current.SerialNumber, StringComparison.OrdinalIgnoreCase))
-        {
-            return первая ? DeliveryReason.Initial : DeliveryReason.Changed;
-        }
+        var первая = subscription.LastSentAt is null;
 
         if (subscription.IntervalDays is { } дней
-            && (subscription.LastSentAt is not { } когда || now >= когда.AddDays(дней)))
+            && (subscription.LastFullSentAt is not { } когда || now >= когда.AddDays(дней)))
         {
-            return первая ? DeliveryReason.Initial : DeliveryReason.Scheduled;
+            return (первая ? DeliveryReason.Initial : DeliveryReason.Scheduled, current);
         }
 
-        return null;
+        if (!subscription.OnChange)
+        {
+            return null;
+        }
+
+        var обновлённые = current
+            .Where(с => !subscription.SentSerials.TryGetValue(с.Name, out var ушёл)
+                || !string.Equals(ушёл, с.Certificate.SerialNumber, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        return обновлённые.Count == 0
+            ? null
+            : (первая ? DeliveryReason.Initial : DeliveryReason.Changed, обновлённые);
     }
 
     /// <summary>
@@ -116,7 +141,7 @@ internal sealed class CertificateDelivery(
     /// <param name="id">Подписка.</param>
     /// <param name="client">Открытый клиент Key Manager Plus.</param>
     /// <param name="snapshot">Снимок сертификатов этого прохода.</param>
-    /// <param name="manual">Ручная отправка: без проверки срока и признака «включена».</param>
+    /// <param name="manual">Ручная отправка: все сертификаты, без проверки срока и признака «включена».</param>
     /// <param name="cache">Выгруженное в этом проходе.</param>
     /// <param name="cancellationToken">Отмена.</param>
     public async Task<DeliveryResult> DeliverAsync(
@@ -194,11 +219,21 @@ internal sealed class CertificateDelivery(
         }
 
         var сейчас = clock.GetUtcNow();
-        var текущий = snapshot.Current(подписка.CommonName);
 
-        if (текущий is null)
+        var найдено = подписка.CommonNames
+            .Select(имя => (Имя: имя, Текущий: snapshot.Current(имя)))
+            .ToList();
+
+        var текущие = найдено
+            .Where(н => н.Текущий is not null)
+            .Select(н => new Сертификат(н.Имя, н.Текущий!))
+            .ToList();
+
+        var нет = найдено.Where(н => н.Текущий is null).Select(н => н.Имя).ToList();
+
+        if (текущие.Count == 0)
         {
-            var текст = $"Сертификата {подписка.CommonName} нет в Key Manager Plus.";
+            var текст = $"{Перечень(нет)} нет в Key Manager Plus.";
 
             подписка.LastAttemptAt = сейчас;
             подписка.LastError = текст;
@@ -207,12 +242,15 @@ internal sealed class CertificateDelivery(
             return new DeliveryResult(DeliveryOutcome.CertificateMissing, Error: текст);
         }
 
-        var причина = manual ? DeliveryReason.Manual : Due(подписка, текущий, сейчас);
+        (DeliveryReason Reason, IReadOnlyList<Сертификат> Send)? срок =
+            manual ? (DeliveryReason.Manual, текущие) : Due(подписка, текущие, сейчас);
 
-        if (причина is null)
+        if (срок is not { } пора)
         {
             return new DeliveryResult(DeliveryOutcome.NotDue);
         }
+
+        var (причина, отправить) = пора;
 
         // ⚠ Почта проверяется ДО выгрузки: иначе при ненастроенной почте каждый опрос выгружал бы
         // закрытые ключи из Key Manager Plus только затем, чтобы выбросить их.
@@ -221,46 +259,35 @@ internal sealed class CertificateDelivery(
             throw new ОтказПочты(MailQueueResult.NotConfigured);
         }
 
-        var файлы = await ВыгрузитьAsync(client, текущий, подписка.Formats, cache, token);
+        var комплекты = new List<CertificateFiles>(отправить.Count);
 
-        var пароль = подписка.IncludePassphrase
-            ? await ПарольAsync(client, текущий, cache, token)
-            : null;
-
-        // ⚠ Пароль ключа — файлом в архиве, а не строкой в теле: тело письма живёт в очереди
-        // до уборки, а вложения стираются, как только письмо ушло.
-        if (пароль is not null)
+        foreach (var сертификат in отправить)
         {
-            файлы.Add(new MailAttachment(
-                CertificateMail.PassphraseFile, "text/plain; charset=utf-8", Encoding.UTF8.GetBytes(пароль + Environment.NewLine)));
+            var файлы = await ВыгрузитьAsync(client, сертификат.Certificate, подписка.Formats, cache, token);
+
+            // ⚠ Пароль ключа — файлом в архиве, а не строкой в теле: тело письма живёт в очереди
+            // до уборки, а вложения стираются, как только письмо ушло.
+            if (подписка.IncludePassphrase
+                && await ПарольAsync(client, сертификат.Certificate, cache, token) is { } пароль)
+            {
+                файлы.Add(new MailAttachment(
+                    CertificateMail.PassphraseFile, "text/plain; charset=utf-8", Encoding.UTF8.GetBytes(пароль + Environment.NewLine)));
+            }
+
+            комплекты.Add(new CertificateFiles(сертификат.Certificate, файлы));
         }
 
-        // ⚠ ⚠ Одним архивом ZIP: Outlook блокирует вложения .crt, .cer и .der (разбор у CertificateArchive).
-        var архив = CertificateArchive.Pack(
-            CertificateFormats.FileBase(текущий.CommonName) + ".zip", файлы, сейчас);
+        // ⚠ ⚠ Одним архивом ZIP на письмо (решение владельца): Outlook блокирует вложения .crt, .cer и .der;
+        // несколько сертификатов — папка на каждый (разбор у CertificateArchive).
+        var архив = CertificateArchive.Pack(комплекты, сейчас);
+        var письмо = CertificateMail.Letter(комплекты, подписка.Formats, архив.FileName, подписка.Locale, сейчас);
 
         var номера = new List<Guid>(подписка.Recipients.Length);
 
         foreach (var адрес in подписка.Recipients)
         {
-            // ⚠ Серийный номер в шаблон не входит, но едет в значениях: по нему видно, какой
-            // выпуск ушёл.
-            var значения = new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["common_name"] = текущий.CommonName,
-                ["serial_number"] = текущий.SerialNumber,
-                ["expires_on"] = CertificateMail.ExpiresOn(текущий.ExpiresOn, подписка.Locale),
-                ["formats"] = CertificateMail.Formats(подписка.Formats),
-                ["archive"] = архив.FileName,
-            };
-
-            foreach (var (имя, файл) in CertificateMail.Files(файлы))
-            {
-                значения[имя] = файл;
-            }
-
             var итог = await mail.EnqueueAsync(
-                адрес, CertificateMail.KindFor(файлы.Count), подписка.Locale, значения, [архив], cancellationToken: token);
+                адрес, письмо.Kind, подписка.Locale, письмо.Values, письмо.Tables, [архив], cancellationToken: token);
 
             if (итог.Result != MailQueueResult.Queued || итог.Id is not { } номер)
             {
@@ -278,25 +305,50 @@ internal sealed class CertificateDelivery(
             await mail.CancelAsync(прежние, "заменено новой отправкой", token);
         }
 
-        подписка.LastSentSerial = текущий.SerialNumber;
+        var ушли = new Dictionary<string, string>(подписка.SentSerials, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var сертификат in отправить)
+        {
+            ушли[сертификат.Name] = сертификат.Certificate.SerialNumber;
+        }
+
+        // Убранные из подписки имена не помнятся: вернись имя — его сертификат снова «новый».
+        foreach (var лишнее in ушли.Keys.Where(имя => !подписка.CommonNames.Contains(имя, StringComparer.OrdinalIgnoreCase)).ToList())
+        {
+            ушли.Remove(лишнее);
+        }
+
+        подписка.SentSerials = ушли;
         подписка.LastSentAt = сейчас;
+        подписка.LastFullSentAt = отправить.Count == текущие.Count ? сейчас : подписка.LastFullSentAt;
         подписка.LastAttemptAt = сейчас;
-        подписка.LastError = null;
+        подписка.LastError = нет.Count > 0 ? $"{Перечень(нет)} нет в Key Manager Plus — отправлены остальные." : null;
         подписка.PendingMailIds = [.. номера];
 
-        // ⚠ В журнал — подписка и причина, без адресов и без содержимого: адрес получателя —
-        // сведение о человеке, а строка уходит в общий лог (правило 14).
+        // ⚠ В журнал — подписка, причина и какие сертификаты, без адресов и без содержимого: адрес
+        // получателя — сведение о человеке, а строка уходит в общий лог (правило 14).
         audit.Write(new AuditEntry(
             KeyManagerActions.CertificateSent,
             ActorType: manual ? null : AuditActorType.System,
             ResourceType: KeyManagerActions.SubscriptionResource,
             ResourceId: подписка.Id,
-            Reason: причина.Value.ToString().ToLowerInvariant()));
+            Reason: причина.ToString().ToLowerInvariant(),
+            Changes: new Dictionary<string, object?>(StringComparer.Ordinal)
+            {
+                ["certificates"] = отправить
+                    .Select(с => $"{с.Certificate.CommonName} {с.Certificate.SerialNumber}")
+                    .ToArray(),
+                ["recipients"] = подписка.Recipients.Length,
+            }));
 
         await db.SaveChangesAsync(token);
 
-        return new DeliveryResult(DeliveryOutcome.Sent, причина);
+        return new DeliveryResult(DeliveryOutcome.Sent, причина, подписка.LastError);
     }
+
+    /// <summary>Имена через запятую: «Сертификата a» или «Сертификатов a, b».</summary>
+    private static string Перечень(IReadOnlyList<string> имена) =>
+        (имена.Count == 1 ? "Сертификата " : "Сертификатов ") + string.Join(", ", имена);
 
     private static async Task<List<MailAttachment>> ВыгрузитьAsync(
         IKeyManagerClient client,

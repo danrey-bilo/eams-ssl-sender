@@ -1,6 +1,8 @@
+using System.Text.Json;
 using EmailSslSender.Modules.KeyManager.Domain;
 using Modules.Core.Contracts.Data;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 
 namespace EmailSslSender.Modules.KeyManager.Storage;
 
@@ -70,12 +72,15 @@ internal sealed class KeyManagerTables : IEntityConfigurationProvider
                     $"ck_{SubscriptionsTable}_recipients", "cardinality(recipients) >= 1");
                 таблица.HasCheckConstraint(
                     $"ck_{SubscriptionsTable}_formats", "cardinality(formats) >= 1");
+                таблица.HasCheckConstraint(
+                    $"ck_{SubscriptionsTable}_common_names",
+                    $"cardinality(common_names) BETWEEN 1 AND {CertificateSubscription.MaxCertificates}");
             });
 
             строка.HasKey(п => п.Id).HasName($"pk_{SubscriptionsTable}");
             строка.Property(п => п.Id).HasColumnName("id").ValueGeneratedNever();
 
-            строка.Property(п => п.CommonName).HasColumnName("common_name").HasColumnType("text").IsRequired();
+            строка.Property(п => п.CommonNames).HasColumnName("common_names").HasColumnType("text[]").IsRequired();
             строка.Property(п => п.Recipients).HasColumnName("recipients").HasColumnType("text[]").IsRequired();
             строка.Property(п => п.Formats).HasColumnName("formats").HasColumnType("text[]").IsRequired();
             строка.Property(п => п.IncludePassphrase).HasColumnName("include_passphrase").IsRequired();
@@ -94,14 +99,35 @@ internal sealed class KeyManagerTables : IEntityConfigurationProvider
                 .HasDefaultValueSql("now()");
             строка.Property(п => п.UpdatedBy).HasColumnName("updated_by");
 
-            строка.Property(п => п.LastSentSerial).HasColumnName("last_sent_serial").HasColumnType("text");
+            строка.Property(п => п.SentSerials)
+                .HasColumnName("sent_serials").HasColumnType("jsonb").IsRequired()
+                .HasConversion(
+                    словарь => СерийныеВJson(словарь),
+                    json => СерийныеИзJson(json),
+                    new ValueComparer<Dictionary<string, string>>(
+                        (а, б) => ОдинаковыеСерийные(а, б),
+                        словарь => ХэшСерийных(словарь),
+                        словарь => new Dictionary<string, string>(словарь, StringComparer.OrdinalIgnoreCase)));
             строка.Property(п => п.LastSentAt).HasColumnName("last_sent_at").HasColumnType("timestamptz");
+            строка.Property(п => п.LastFullSentAt).HasColumnName("last_full_sent_at").HasColumnType("timestamptz");
             строка.Property(п => п.LastAttemptAt).HasColumnName("last_attempt_at").HasColumnType("timestamptz");
             строка.Property(п => п.LastError).HasColumnName("last_error").HasColumnType("text");
             строка.Property(п => п.PendingMailIds).HasColumnName("pending_mail_ids").HasColumnType("uuid[]");
-
-            // Опрос ищет подписки по Common Name сертификата.
-            строка.HasIndex(п => п.CommonName).HasDatabaseName($"ix_{SubscriptionsTable}_common_name");
         });
     }
+
+    /// <summary>Серийные номера отправленного — в JSON-объект «Common Name → серийный».</summary>
+    internal static string СерийныеВJson(Dictionary<string, string> serials) => JsonSerializer.Serialize(serials);
+
+    /// <summary>Серийные номера отправленного из JSON; ключи — без учёта регистра, как Common Name.</summary>
+    internal static Dictionary<string, string> СерийныеИзJson(string json) =>
+        new(JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? [], StringComparer.OrdinalIgnoreCase);
+
+    private static bool ОдинаковыеСерийные(Dictionary<string, string>? а, Dictionary<string, string>? б) =>
+        а is null || б is null
+            ? ReferenceEquals(а, б)
+            : а.Count == б.Count && а.All(пара => б.TryGetValue(пара.Key, out var серийный)
+                && string.Equals(серийный, пара.Value, StringComparison.Ordinal));
+
+    private static int ХэшСерийных(Dictionary<string, string> serials) => serials.Count;
 }

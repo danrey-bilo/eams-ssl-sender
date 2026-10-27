@@ -209,7 +209,7 @@ public sealed class ЗаписнойАудит : IAuditWriter
 /// <summary>Одно письмо, принятое подставной очередью.</summary>
 public sealed record ПринятоеПисьмо(
     string To, string Kind, string Locale, IReadOnlyDictionary<string, string> Values,
-    IReadOnlyList<MailAttachment> Attachments);
+    IReadOnlyDictionary<string, MailTable> Tables, IReadOnlyList<MailAttachment> Attachments);
 
 /// <summary>
 /// Очередь писем, запоминающая постановки.
@@ -251,7 +251,13 @@ public sealed class ПодставнаяОчередь : IMailQueue
     public Task<MailTicket> EnqueueAsync(
         string toAddress, string kind, string locale, IReadOnlyDictionary<string, string> values,
         IReadOnlyList<MailAttachment> attachments, DateTimeOffset? expiresAt = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) =>
+        EnqueueAsync(toAddress, kind, locale, values, new Dictionary<string, MailTable>(), attachments, expiresAt, cancellationToken);
+
+    public Task<MailTicket> EnqueueAsync(
+        string toAddress, string kind, string locale, IReadOnlyDictionary<string, string> values,
+        IReadOnlyDictionary<string, MailTable> tables, IReadOnlyList<MailAttachment> attachments,
+        DateTimeOffset? expiresAt = null, CancellationToken cancellationToken = default)
     {
         if (Ответ != MailQueueResult.Queued)
         {
@@ -262,7 +268,7 @@ public sealed class ПодставнаяОчередь : IMailQueue
 
         lock (Письма)
         {
-            Письма.Add(new ПринятоеПисьмо(toAddress, kind, locale, values, attachments));
+            Письма.Add(new ПринятоеПисьмо(toAddress, kind, locale, values, tables, attachments));
             Номера.Add(номер);
         }
 

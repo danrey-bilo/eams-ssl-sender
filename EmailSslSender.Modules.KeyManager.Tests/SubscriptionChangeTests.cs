@@ -6,6 +6,7 @@ using EmailSslSender.Modules.KeyManager.Delivery;
 using EmailSslSender.Modules.KeyManager.Domain;
 using Modules.Core.Contracts.Mail;
 using Modules.Core.Data;
+using Modules.Core.Errors;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -63,7 +64,7 @@ public sealed class SubscriptionChangeTests(KeyManagerDatabase база) : IAsyn
 
         var подписка = await Прочитать(id);
         подписка.PendingMailIds.ShouldBe([номера[0], номера[2]], "отменённое не ждёт сверки опросом");
-        подписка.LastSentSerial.ShouldBe("aa01", "остальным отправка засчитана");
+        подписка.SentSerials.Values.SingleOrDefault().ShouldBe("aa01", "остальным отправка засчитана");
 
         var запись = база.Аудит.Записи.Single(з => з.Action == KeyManagerActions.SubscriptionUpdated);
         запись.Action.Name.ShouldStartWith("keymanager.", Case.Sensitive, "значения изменений журнал хоста пишет по приставке события");
@@ -103,7 +104,7 @@ public sealed class SubscriptionChangeTests(KeyManagerDatabase база) : IAsyn
     }
 
     [Fact]
-    public async Task Смена_Common_Name_отменяет_письма_прежнего_сертификата()
+    public async Task Убранный_сертификат_отменяет_письма_подписки()
     {
         var id = await Создать("a@example.com");
         await Опросить();
@@ -116,11 +117,12 @@ public sealed class SubscriptionChangeTests(KeyManagerDatabase база) : IAsyn
 
         var подписка = await Прочитать(id);
         подписка.PendingMailIds.ShouldBeNull();
-        подписка.LastSentSerial.ShouldBeNull();
+        подписка.SentSerials.ShouldBeEmpty("отменённые письма несли и оставшиеся — их пришлют заново");
+        подписка.CommonNames.ShouldBe(["other.example.com"]);
 
         var изменения = база.Аудит.Записи.Single(з => з.Action == KeyManagerActions.SubscriptionUpdated)
             .Changes.ShouldNotBeNull();
-        var имя = изменения["common_name"].ShouldBeAssignableTo<IReadOnlyDictionary<string, object?>>().ShouldNotBeNull();
+        var имя = изменения["common_names"].ShouldBeAssignableTo<IReadOnlyDictionary<string, object?>>().ShouldNotBeNull();
         имя["from"].ShouldBe("site.example.com");
         имя["to"].ShouldBe("other.example.com");
     }
@@ -165,6 +167,34 @@ public sealed class SubscriptionChangeTests(KeyManagerDatabase база) : IAsyn
             .ShouldBeAssignableTo<IReadOnlyDictionary<string, object?>>().ShouldNotBeNull();
         получатели["added"].ShouldBe(1);
         получатели["removed"].ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task Добавленный_сертификат_не_трогает_письма_и_отправленное()
+    {
+        var id = await Создать("a@example.com");
+        await Опросить();
+        var номер = база.Почта.Номера.Single();
+
+        await Изменить(id, new SubscriptionIn { CommonNames = ["site.example.com", "new.example.com"] });
+
+        база.Почта.Отменённые.ShouldBeEmpty("добавление права не отнимает");
+
+        var подписка = await Прочитать(id);
+        подписка.PendingMailIds.ShouldBe([номер]);
+        подписка.SentSerials.Keys.ToList().ShouldBe(["site.example.com"], "новый сертификат уйдёт ближайшим опросом");
+    }
+
+    [Fact]
+    public async Task Подписка_без_способа_отправки_не_сохраняется()
+    {
+        var id = await Создать("a@example.com");
+
+        var отказ = await Should.ThrowAsync<AppException>(() =>
+            Изменить(id, new SubscriptionIn { OnChange = false, IntervalDays = 0 }));
+
+        отказ.Details!["field"].ShouldBe("on_change");
+        (await Прочитать(id)).OnChange.ShouldBeTrue("отказ ничего не поменял");
     }
 
     // --- обвязка ---------------------------------------------------------------------------

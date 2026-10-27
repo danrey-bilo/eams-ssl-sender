@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.IO.Compression;
 using System.Text;
 using EmailSslSender.Modules.KeyManager.Client;
@@ -57,13 +58,16 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         база.Почта.Письма.Select(п => п.To).ShouldBe(["a@example.com", "b@example.com"]);
 
         var письмо = база.Почта.Письма[0];
-        письмо.Kind.ShouldBe(CertificateMail.KindFor(2), "вид письма несёт число файлов в архиве");
-        письмо.Values["serial_number"].ShouldBe("aa01");
-        письмо.Values["expires_on"].ShouldBe("01.01.2027");
-        письмо.Values["formats"].ShouldBe("PEM, KEY");
+        письмо.Kind.ShouldBe(CertificateMail.Kind);
+        письмо.Values["serial_numbers"].ShouldBe("aa01");
+        письмо.Values["names"].ShouldBe("site.example.com");
         письмо.Values["archive"].ShouldBe("site.example.com.zip");
-        письмо.Values["file1"].ShouldBe("site.example.com.pem");
-        письмо.Values["file2"].ShouldBe("site.example.com.key");
+
+        // ⚠ Сертификаты — таблицей, как в уведомлении Key Manager Plus, без серийного номера и отпечатка.
+        var таблица = письмо.Tables.ShouldHaveSingleItem();
+        таблица.Key.ShouldBe(CertificateMail.TableName);
+        таблица.Value.Columns.ShouldBe(["Сертификат", "Форматы", "Действует до", "Осталось дней"]);
+        таблица.Value.Rows.ShouldHaveSingleItem().ShouldBe(["site.example.com", "PEM, KEY", "01.01.2027", Дней(Год)]);
 
         // ⚠ Одно вложение — архив: Outlook блокирует .crt, .cer и .der отдельными файлами.
         var архив = письмо.Attachments.ShouldHaveSingleItem();
@@ -75,7 +79,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         Encoding.ASCII.GetString(файлы[1].Content).ShouldBe("KEY:aa01");
 
         var подписка = await Прочитать(id);
-        подписка.LastSentSerial.ShouldBe("aa01");
+        подписка.SentSerials.Values.SingleOrDefault().ShouldBe("aa01");
         подписка.LastSentAt.ShouldBe(база.Часы.GetUtcNow());
         подписка.LastError.ShouldBeNull();
 
@@ -114,9 +118,9 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         (await Опросить()).Sent.ShouldBe(0, "второй опрос того же продления не шлёт");
 
         база.Почта.Письма.Count.ShouldBe(1);
-        база.Почта.Письма[0].Values["serial_number"].ShouldBe("bb02");
+        база.Почта.Письма[0].Values["serial_numbers"].ShouldBe("bb02");
         база.Аудит.Записи.Last(з => з.Action == KeyManagerActions.CertificateSent).Reason.ShouldBe("changed");
-        (await Прочитать(id)).LastSentSerial.ShouldBe("bb02");
+        (await Прочитать(id)).SentSerials.Values.SingleOrDefault().ShouldBe("bb02");
     }
 
     [Fact]
@@ -148,7 +152,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         База("site.example.com", "bb02", Год);
 
         (await Опросить()).Sent.ShouldBe(1);
-        база.Почта.Письма.Single().Values["serial_number"].ShouldBe("bb02");
+        база.Почта.Письма.Single().Values["serial_numbers"].ShouldBe("bb02");
     }
 
     [Fact]
@@ -164,7 +168,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         База("site.example.com", "bb02", Год);
 
         (await Опросить()).Sent.ShouldBe(1);
-        база.Почта.Письма.Single().Values["serial_number"].ShouldBe("bb02");
+        база.Почта.Письма.Single().Values["serial_numbers"].ShouldBe("bb02");
     }
 
     [Fact]
@@ -190,7 +194,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         }
 
         база.Почта.Письма.ShouldBeEmpty();
-        (await Прочитать(id)).LastSentSerial.ShouldBe("bb02");
+        (await Прочитать(id)).SentSerials.Values.SingleOrDefault().ShouldBe("bb02");
     }
 
     [Fact]
@@ -245,7 +249,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         (await Опросить()).Sent.ShouldBe(0);
 
         var подписка = await Прочитать(id);
-        подписка.LastSentSerial.ShouldBeNull();
+        подписка.SentSerials.Values.SingleOrDefault().ShouldBeNull();
         подписка.LastError.ShouldNotBeNull().ShouldContain("site.example.com");
         база.Почта.Письма.ShouldBeEmpty();
     }
@@ -263,7 +267,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
 
         база.Почта.Письма.ShouldBeEmpty();
         var подписка = await Прочитать(id);
-        подписка.LastSentSerial.ShouldBeNull();
+        подписка.SentSerials.Values.SingleOrDefault().ShouldBeNull();
         подписка.LastError.ShouldNotBeNull().ShouldContain("KEY");
 
         // Починили — следующий опрос шлёт и стирает ошибку.
@@ -282,7 +286,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         (await Опросить()).Sent.ShouldBe(0);
 
         var подписка = await Прочитать(id);
-        подписка.LastSentSerial.ShouldBeNull("письма не легли — отправки не было");
+        подписка.SentSerials.Values.SingleOrDefault().ShouldBeNull("письма не легли — отправки не было");
         подписка.LastError.ShouldNotBeNull().ShouldContain("Почта не настроена");
         база.Kmp.Выгрузок.ShouldBe(0, "закрытый ключ не выгружается, если письмо всё равно некуда класть");
     }
@@ -326,7 +330,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         var подписка = await Прочитать(id);
         подписка.PendingMailIds.ShouldBeNull();
         подписка.LastError.ShouldNotBeNull().ShouldContain("a@example.com — 5.1.1 User unknown");
-        подписка.LastSentSerial.ShouldBe("aa01", "серийный прежний — сам по себе опрос не шлёт");
+        подписка.SentSerials.Values.SingleOrDefault().ShouldBe("aa01", "серийный прежний — сам по себе опрос не шлёт");
         база.Почта.Письма.Count.ShouldBe(поставлено);
     }
 
@@ -438,8 +442,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
 
         // ⚠ Пароль — вложением: тело письма живёт в очереди до уборки, вложения стираются сразу.
         var a = база.Почта.Письма.Single(п => п.To == "a@example.com");
-        a.Kind.ShouldBe(CertificateMail.KindFor(3));
-        a.Values["file3"].ShouldBe(CertificateMail.PassphraseFile);
+        a.Kind.ShouldBe(CertificateMail.Kind);
         a.Values.Values.ShouldNotContain(з => з.Contains("пароль-a", StringComparison.Ordinal));
         Encoding.UTF8.GetString(Распаковать(a.Attachments.ShouldHaveSingleItem())
                 .Single(ф => ф.Name == CertificateMail.PassphraseFile).Content)
@@ -461,30 +464,147 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
     }
 
     /// <summary>
-    /// Список файлов — строками шаблона: модуль почты вырезает переводы строк из значений, и список
-    /// одним значением слипся бы в строку (найдено живой проверкой перехода на модули).
+    /// Таблица — строкой-заполнителем во всех трёх языках: модуль почты вырезает переводы строк из
+    /// значений, а таблицу без заполнителя в шаблоне отвергает при постановке.
     /// </summary>
     [Fact]
-    public void Шаблон_на_каждое_число_файлов_и_язык_со_строкой_на_файл()
+    public void Шаблоны_одного_и_нескольких_сертификатов_на_каждом_языке_с_таблицей()
     {
         var письма = new CertificateMail();
+        string[] виды = [CertificateMail.Kind, CertificateMail.SeveralKind];
 
-        письма.Templates.Count.ShouldBe(CertificateMail.MaxFiles * MailLocales.All.Count);
-        письма.UnthrottledKinds.Count.ShouldBe(CertificateMail.MaxFiles);
+        письма.Templates.Count.ShouldBe(виды.Length * MailLocales.All.Count);
+        письма.UnthrottledKinds.ShouldBe(виды, ignoreOrder: true);
 
-        for (var n = 1; n <= CertificateMail.MaxFiles; n++)
+        foreach (var вид in виды)
         {
             foreach (var язык in MailLocales.All)
             {
-                var шаблон = письма.Templates.Single(т => т.Kind == CertificateMail.KindFor(n) && т.Locale == язык);
+                var шаблон = письма.Templates.Single(т => т.Kind == вид && т.Locale == язык);
 
-                шаблон.Body.Split('\n').Count(строка => строка.StartsWith("  • {file", StringComparison.Ordinal)).ShouldBe(n);
-                шаблон.Body.ShouldContain("{file" + n + "}");
-                шаблон.Body.ShouldNotContain("{file" + (n + 1) + "}");
+                шаблон.Body.Split('\n').Count(строка => строка == "{table:" + CertificateMail.TableName + "}").ShouldBe(1);
+                CertificateMail.Columns(язык).Count.ShouldBe(4);
             }
         }
 
-        Should.Throw<ArgumentOutOfRangeException>(() => CertificateMail.KindFor(CertificateMail.MaxFiles + 1));
+        CertificateMail.Kind.ShouldBe(CertificateMail.Kind);
+        CertificateMail.KindFor(CertificateSubscription.MaxCertificates).ShouldBe(CertificateMail.SeveralKind);
+        Should.Throw<ArgumentOutOfRangeException>(() => CertificateMail.KindFor(CertificateSubscription.MaxCertificates + 1));
+    }
+
+    [Fact]
+    public async Task Подписка_на_несколько_сертификатов_шлёт_все_одним_архивом_с_папками()
+    {
+        База("a.example.com", "aa01", Год);
+        База("*.b.example.com", "bb01", Год.AddDays(-10));
+        База("c.example.com", "cc01", Год);
+        var id = await Подписка("a.example.com", ["x@example.com"], also: ["*.b.example.com"], includePassphrase: true);
+        база.Kmp.Пароли["aa01"] = "пароль-a";
+
+        (await Опросить()).Sent.ShouldBe(1);
+
+        var письмо = база.Почта.Письма.ShouldHaveSingleItem();
+        письмо.Kind.ShouldBe(CertificateMail.SeveralKind);
+        письмо.Values["names"].ShouldBe("a.example.com, *.b.example.com");
+        письмо.Tables[CertificateMail.TableName].Rows.ShouldBe(
+        [
+            ["a.example.com", "PEM, KEY", "01.01.2027", Дней(Год)],
+            ["*.b.example.com", "PEM, KEY", "22.12.2026", Дней(Год.AddDays(-10))],
+        ]);
+
+        var архив = письмо.Attachments.ShouldHaveSingleItem();
+        архив.FileName.ShouldBe(CertificateArchive.Several);
+        Распаковать(архив).Select(ф => ф.Name).ShouldBe(
+        [
+            "a.example.com/a.example.com.pem", "a.example.com/a.example.com.key", "a.example.com/passphrase.txt",
+            "wildcard.b.example.com/wildcard.b.example.com.pem", "wildcard.b.example.com/wildcard.b.example.com.key",
+        ]);
+
+        var подписка = await Прочитать(id);
+        подписка.SentSerials.ShouldBe(new Dictionary<string, string> { ["a.example.com"] = "aa01", ["*.b.example.com"] = "bb01" });
+        подписка.LastFullSentAt.ShouldBe(база.Часы.GetUtcNow());
+    }
+
+    [Fact]
+    public async Task При_обновлении_уходит_только_обновлённый_сертификат()
+    {
+        База("a.example.com", "aa01", Год);
+        База("b.example.com", "bb01", Год);
+        var id = await Подписка("a.example.com", ["x@example.com"], also: ["b.example.com"]);
+        await Опросить();
+        var полная = (await Прочитать(id)).LastFullSentAt;
+        база.Почта.Сброс();
+
+        база.Часы.Вперёд(TimeSpan.FromHours(1));
+        База("b.example.com", "bb02", Год.AddYears(1));
+
+        (await Опросить()).Sent.ShouldBe(1);
+
+        var письмо = база.Почта.Письма.ShouldHaveSingleItem();
+        письмо.Kind.ShouldBe(CertificateMail.Kind);
+        письмо.Values["serial_numbers"].ShouldBe("bb02");
+        Распаковать(письмо.Attachments.Single()).Select(ф => ф.Name).ShouldBe(["b.example.com.pem", "b.example.com.key"]);
+
+        var подписка = await Прочитать(id);
+        подписка.SentSerials["a.example.com"].ShouldBe("aa01");
+        подписка.SentSerials["b.example.com"].ShouldBe("bb02");
+        подписка.LastFullSentAt.ShouldBe(полная, "частичная отправка не сдвигает расписание");
+    }
+
+    [Fact]
+    public async Task По_расписанию_и_вручную_уходят_все_сертификаты()
+    {
+        База("a.example.com", "aa01", Год);
+        База("b.example.com", "bb01", Год);
+        var id = await Подписка("a.example.com", ["x@example.com"], onChange: false, intervalDays: 2, also: ["b.example.com"]);
+        await Опросить();
+        база.Почта.Сброс();
+
+        база.Часы.Вперёд(TimeSpan.FromDays(1));
+        (await Опросить()).Sent.ShouldBe(0, "срок не подошёл");
+
+        база.Часы.Вперёд(TimeSpan.FromDays(1));
+        (await Опросить()).Sent.ShouldBe(1);
+        база.Почта.Письма.Single().Kind.ShouldBe(CertificateMail.SeveralKind);
+        база.Почта.Сброс();
+
+        (await Вручную(id)).Outcome.ShouldBe(DeliveryOutcome.Sent);
+        база.Почта.Письма.Single().Kind.ShouldBe(CertificateMail.SeveralKind, "вручную — все сертификаты");
+    }
+
+    [Fact]
+    public async Task Отсутствующий_в_KMP_сертификат_не_мешает_остальным_и_виден_ошибкой()
+    {
+        База("a.example.com", "aa01", Год);
+        var id = await Подписка("a.example.com", ["x@example.com"], also: ["нет.example.com"]);
+
+        (await Опросить()).Sent.ShouldBe(1);
+
+        база.Почта.Письма.Single().Values["names"].ShouldBe("a.example.com");
+
+        var подписка = await Прочитать(id);
+        подписка.LastError.ShouldBe("Сертификата нет.example.com нет в Key Manager Plus — отправлены остальные.");
+        подписка.LastFullSentAt.ShouldBe(база.Часы.GetUtcNow(), "отправлены все найденные");
+    }
+
+    [Fact]
+    public void Тема_перечисляет_три_имени_и_остаток()
+    {
+        CertificateMail.Names(["a", "b", "c", "d", "e"], MailLocales.Ru).ShouldBe("a, b, c и ещё 2");
+        CertificateMail.Names(["a", "b", "c", "d"], MailLocales.En).ShouldBe("a, b, c and 1 more");
+        CertificateMail.Names(["a", "b"], MailLocales.Uk).ShouldBe("a, b");
+    }
+
+    [Theory]
+    [InlineData(MailLocales.Ru, "истёк")]
+    [InlineData(MailLocales.En, "expired")]
+    public void Истёкший_сертификат_словом_а_не_минусом(string язык, string ожидается)
+    {
+        var сегодня = new DateOnly(2026, 6, 1);
+
+        CertificateMail.DaysLeft(new DateOnly(2026, 5, 31), сегодня, язык).ShouldBe(ожидается);
+        CertificateMail.DaysLeft(сегодня, сегодня, язык).ShouldBe("0");
+        CertificateMail.DaysLeft(null, сегодня, язык).ShouldBe("—");
     }
 
     [Fact]
@@ -598,6 +718,10 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
 
     // --- обвязка ---------------------------------------------------------------------------
 
+    /// <summary>Сколько дней до даты по часам обвязки: часы общие для коллекции и двигаются тестами.</summary>
+    private string Дней(DateOnly дата) =>
+        (дата.DayNumber - DateOnly.FromDateTime(база.Часы.GetUtcNow().UtcDateTime).DayNumber).ToString(CultureInfo.InvariantCulture);
+
     private void База(string commonName, string serial, DateOnly? expires) =>
         база.Kmp.Сертификаты.Add(new KmpCertificate(commonName, serial, expires));
 
@@ -608,7 +732,8 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         int? intervalDays = null,
         bool enabled = true,
         bool includePassphrase = false,
-        string[]? formats = null)
+        string[]? formats = null,
+        string[]? also = null)
     {
         await using var scope = база.Scope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -616,7 +741,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         var подписка = new CertificateSubscription
         {
             Id = Guid.CreateVersion7(),
-            CommonName = commonName,
+            CommonNames = [commonName, .. also ?? []],
             Recipients = recipients,
             Formats = formats ?? [.. CertificateFormats.Default],
             OnChange = onChange,

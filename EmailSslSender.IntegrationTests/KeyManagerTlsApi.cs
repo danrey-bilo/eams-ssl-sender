@@ -198,7 +198,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
 
         ответ.StatusCode.ShouldBe(HttpStatusCode.OK, await ответ.Content.ReadAsStringAsync(Ct));
         var подписка = (await ответ.Content.ReadFromJsonAsync<JsonObject>(Ct))!;
-        подписка["last_sent_serial"]!.GetValue<string>().ShouldBe("0a1b2c");
+        подписка["sent_serials"]!["site.example.com"]!.GetValue<string>().ShouldBe("0a1b2c");
         подписка["last_error"].ShouldBeNull();
 
         await using var scope = host.Services.CreateAsyncScope();
@@ -216,6 +216,12 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
             вложения.ShouldNotBeNull().ShouldNotBeEmpty();
             вложения.AsSpan().IndexOf(ЗаглушкаKmp.ЗакрытыйКлюч).ShouldBe(-1, "ключ в очереди не лежит открытым");
         }
+
+        // Хост включает HTML-часть писем: перечень сертификатов уходит таблицей (модуль почты, решение 0121).
+        (await db.Database
+            .SqlQueryRaw<int>(
+                "SELECT count(*)::int AS \"Value\" FROM mail_outbox WHERE starts_with(kind, 'certificate_delivery') AND html_body IS NOT NULL")
+            .SingleAsync(Ct)).ShouldBe(2, "у каждого письма — HTML-часть");
     }
 
     /// <summary>

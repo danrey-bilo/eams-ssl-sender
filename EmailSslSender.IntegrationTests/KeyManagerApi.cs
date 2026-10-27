@@ -191,12 +191,12 @@ public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
         var подписка = (await создано.Content.ReadFromJsonAsync<JsonObject>(Ct))!;
         var id = подписка["id"]!.GetValue<Guid>();
 
-        подписка["common_name"]!.GetValue<string>().ShouldBe("site.example.com");
+        Строки(подписка["common_names"]).ShouldBe(["site.example.com"], "один common_name — список из одного");
         Строки(подписка["formats"]).ShouldBe(["PEM", "KEY"], "по умолчанию — сертификат и ключ");
         подписка["on_change"]!.GetValue<bool>().ShouldBeTrue();
         подписка["interval_days"].ShouldBeNull();
         подписка["locale"]!.GetValue<string>().ShouldBe("ru");
-        подписка["last_sent_serial"].ShouldBeNull();
+        подписка["sent_serials"]!.AsObject().Count.ShouldBe(0);
 
         var изменено = await клиент.PatchAsJsonAsync(
             $"{Подписки}/{id}", new { interval_days = 7, formats = new[] { "pkcs", "pem" }, locale = "uk" }, Ct);
@@ -215,9 +215,45 @@ public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
         (await клиент.GetAsync($"{Подписки}/{id}", Ct)).StatusCode.ShouldBe(HttpStatusCode.NotFound);
     }
 
+    [Fact]
+    public async Task Подписка_на_несколько_сертификатов_и_хотя_бы_один_способ_отправки()
+    {
+        var клиент = host.CreateClient();
+
+        var создано = await клиент.PostAsJsonAsync(Подписки, new
+        {
+            common_names = new[] { "a.example.com", " b.example.com ", "A.EXAMPLE.COM", "" },
+            recipients = new[] { "it@example.com" },
+            on_change = false,
+            interval_days = 3,
+        }, Ct);
+        создано.StatusCode.ShouldBe(HttpStatusCode.Created);
+
+        var подписка = (await создано.Content.ReadFromJsonAsync<JsonObject>(Ct))!;
+        var id = подписка["id"]!.GetValue<Guid>();
+        Строки(подписка["common_names"]).ShouldBe(["a.example.com", "b.example.com"], "без пробелов, пустых и повторов");
+
+        // Снять расписание, не включив «при обновлении», — подписка без способа отправки: отказ целиком.
+        var безСпособа = await клиент.PatchAsJsonAsync($"{Подписки}/{id}", new { interval_days = 0 }, Ct);
+        безСпособа.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
+        (await безСпособа.Content.ReadFromJsonAsync<JsonObject>(Ct))!["details"]!["field"]!.GetValue<string>().ShouldBe("on_change");
+        (await (await клиент.GetAsync($"{Подписки}/{id}", Ct)).Content.ReadFromJsonAsync<JsonObject>(Ct))!
+            ["interval_days"]!.GetValue<int>().ShouldBe(3, "отказ ничего не поменял");
+
+        var другие = await клиент.PatchAsJsonAsync($"{Подписки}/{id}", new { common_names = new[] { "c.example.com" }, on_change = true, interval_days = 0 }, Ct);
+        другие.StatusCode.ShouldBe(HttpStatusCode.OK);
+        Строки((await другие.Content.ReadFromJsonAsync<JsonObject>(Ct))!["common_names"]).ShouldBe(["c.example.com"]);
+
+        (await клиент.DeleteAsync($"{Подписки}/{id}", Ct)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
+    }
+
     public static TheoryData<string, string> Неверные => new()
     {
-        { """{"recipients":["it@example.com"]}""", "common_name" },
+        { """{"recipients":["it@example.com"]}""", "common_names" },
+        { """{"common_names":[],"recipients":["it@example.com"]}""", "common_names" },
+        { """{"common_names":["a"],"common_name":"b","recipients":["it@example.com"]}""", "common_names" },
+        { "{\"common_names\":[" + string.Join(",", Enumerable.Range(1, 51).Select(н => $"\"c{н}.example.com\"")) + "],\"recipients\":[\"it@example.com\"]}", "common_names" },
+        { """{"common_name":"a","recipients":["it@example.com"],"on_change":false}""", "on_change" },
         { """{"common_name":"a","recipients":[]}""", "recipients" },
         { """{"common_name":"a","recipients":["windowsdanigame.com"]}""", "recipients" },
         { """{"common_name":"a","recipients":["Имя <it@example.com>"]}""", "recipients" },
