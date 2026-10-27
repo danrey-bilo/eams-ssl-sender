@@ -60,6 +60,33 @@ public sealed class RuntimeRoleTests(SenderHost host)
             .SqlState.ShouldBe(PostgresErrorCodes.InsufficientPrivilege);
     }
 
+    /// <summary>
+    /// Журнал действий роли сервиса — только дописывать и заводить партиции наперёд: ни правки, ни удаления
+    /// партиций (срок хранения выключен, журнал хранится всегда). Отметки сброса доступа ей закрыты.
+    /// </summary>
+    [Fact]
+    public async Task Роль_сервиса_не_правит_и_не_стирает_журнал()
+    {
+        var (роль, пароль) = Новая();
+        await ЗавестиAsync(роль, пароль);
+
+        await using var сервис = await ПодключитьсяAsync(роль, пароль);
+
+        (await ЗначениеAsync<long>(сервис, "SELECT count(*) FROM audit_log")).ShouldBeGreaterThanOrEqualTo(0);
+        (await Should.ThrowAsync<PostgresException>(() => ВыполнитьAsync(сервис, "UPDATE audit_log SET reason = reason WHERE false")))
+            .SqlState.ShouldBe(PostgresErrorCodes.InsufficientPrivilege);
+        (await Should.ThrowAsync<PostgresException>(() => ВыполнитьAsync(сервис, "DELETE FROM audit_log WHERE false")))
+            .SqlState.ShouldBe(PostgresErrorCodes.InsufficientPrivilege);
+        (await Should.ThrowAsync<PostgresException>(() => ВыполнитьAsync(сервис, "SELECT audit_drop_partition('audit_log_2000_01')")))
+            .SqlState.ShouldBe(PostgresErrorCodes.InsufficientPrivilege);
+        (await Should.ThrowAsync<PostgresException>(() => ВыполнитьAsync(сервис, "SELECT count(*) FROM sender_reset_access_marks")))
+            .SqlState.ShouldBe(PostgresErrorCodes.InsufficientPrivilege);
+
+        // Партиции наперёд — работа обслуживания журнала, которое идёт ролью сервиса.
+        (await ЗначениеAsync<string>(сервис, "SELECT audit_ensure_partition((now() + interval '2 months')::date)"))
+            .ShouldStartWith("audit_log_");
+    }
+
     [Fact]
     public async Task Таблица_будущей_миграции_доступна_роли_сама()
     {

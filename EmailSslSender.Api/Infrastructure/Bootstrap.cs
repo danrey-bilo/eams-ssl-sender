@@ -83,6 +83,15 @@ internal static class Bootstrap
     /// </remarks>
     public const string Migrate = "migrate";
 
+    /// <summary>
+    /// Пересчитать цепочку хешей журнала действий: строку, подменённую задним числом, видно разрывом.
+    /// </summary>
+    /// <remarks>
+    /// Считает модуль audit, печатает хост. Код выхода 0 — журнал цел, 2 — разрыв. Сверка с якорями
+    /// (строки <c>audit_chain_anchor</c> в логе раз в сутки) ловит и переписанную целиком цепочку.
+    /// </remarks>
+    public const string VerifyAuditChain = "verify-audit-chain";
+
 
 
     /// <summary>
@@ -177,7 +186,30 @@ internal static class Bootstrap
     public static bool IsCommand(string[] args) =>
         args.Length > 0
         && args[0] is CreateSuperadmin or SetSuperadminPassword or ResetSuperadminTwoFactor or ResetAccess
-            or RewrapKeys or ExportOpenApi or Migrate;
+            or RewrapKeys or ExportOpenApi or Migrate or VerifyAuditChain;
+
+    /// <summary>
+    /// Отметка применённого сброса доступа из окружения: HMAC-SHA256 от «адрес + пароль» под ключом из мастер-ключа.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ HMAC, а не хеш: по отметке в базе без мастер-ключа пароль не подобрать. Адрес — без учёта регистра,
+    /// как его сравнивает модуль учётных записей. Строка разделения ключей входит в отметку — не менять.
+    /// </remarks>
+    public static string ResetAccessMark(string masterKey, string email, string password)
+    {
+        ArgumentNullException.ThrowIfNull(masterKey);
+        ArgumentNullException.ThrowIfNull(email);
+        ArgumentNullException.ThrowIfNull(password);
+
+        var ключ = System.Security.Cryptography.HKDF.DeriveKey(
+            System.Security.Cryptography.HashAlgorithmName.SHA256,
+            System.Text.Encoding.UTF8.GetBytes(masterKey),
+            32,
+            info: System.Text.Encoding.UTF8.GetBytes("sender:reset-access-mark:v1"));
+
+        return Convert.ToHexStringLower(System.Security.Cryptography.HMACSHA256.HashData(
+            ключ, System.Text.Encoding.UTF8.GetBytes(email.Trim().ToLowerInvariant() + "\n" + password)));
+    }
 
     /// <summary>Проверить параметры команд суперпользователя до чтения пароля.</summary>
     /// <remarks>

@@ -106,16 +106,25 @@ internal sealed class CertificatePolling(
         }
     }
 
+    /// <summary>Сколько раз подряд отправка повторяется сама, если не дошло ни одно письмо.</summary>
+    internal const int ПовторовСамих = 3;
+
     /// <summary>
     /// Сверить письма прежних отправок с очередью: ушедшие забыть, умершие — в <c>last_error</c>.
     /// </summary>
     /// <remarks>
-    /// ⚠ ⚠ <b>Умершее письмо НЕ отправляется заново само.</b> Причина смерти бывает у одного
-    /// адреса (ящика нет) — повтор раз в час слал бы остальным получателям подписки дубли без
+    /// ⚠ ⚠ <b>Умершее письмо одного из получателей НЕ отправляется заново само.</b> Причина смерти
+    /// бывает у одного адреса (ящика нет) — повтор слал бы остальным получателям подписки дубли без
     /// конца. Ошибка видна в подписке, а отправить повторно — кнопка, когда причина устранена.
     ///
-    /// ⚠ Условное обновление по прежним номерам: если подписку тем временем отправили снова, её
-    /// новые номера не затираются вердиктом о старых.
+    /// ⚠ ⚠ <b>Не дошло НИ ОДНО письмо отправки</b> (почта лежала дольше всех попыток) — дублей нет, а
+    /// обновлённый сертификат иначе не ушёл бы никогда: подписка «при обновлении» его уже отметила
+    /// (ревью надёжности 2026-10-27). Тогда отметки этой отправки снимаются, и этот же проход опроса
+    /// отправляет её заново — не больше <see cref="ПовторовСамих"/> раз подряд, дальше только кнопкой.
+    ///
+    /// ⚠ Строка берётся <c>FOR UPDATE SKIP LOCKED</c> и сверяется по прежним номерам: если подписку
+    /// тем временем отправили снова (или она занята отправкой), её новые номера не затираются
+    /// вердиктом о старых.
     /// </remarks>
     private async Task СверитьПисьмаAsync(CancellationToken cancellationToken)
     {
@@ -147,21 +156,8 @@ internal sealed class CertificatePolling(
                 }
 
                 var умершие = письма.Where(п => п is { State: MailLetterState.Dead }).Select(п => п!).ToList();
-                var было = подписка.Номера;
-                string? ошибка = умершие.Count == 0 ? null : Undelivered(умершие);
 
-                await db.Set<CertificateSubscription>()
-                    .Where(п => п.Id == подписка.Id && п.PendingMailIds == было)
-                    .ExecuteUpdateAsync(
-                        set => set
-                            .SetProperty(п => п.PendingMailIds, (Guid[]?)null)
-                            .SetProperty(п => п.LastError, п => ошибка ?? п.LastError),
-                        cancellationToken);
-
-                if (ошибка is not null)
-                {
-                    log.LogWarning("keymanager_delivery_undelivered {Subscription} {Count}", подписка.Id, умершие.Count);
-                }
+                await ЗакрытьОтправкуAsync(подписка.Id, подписка.Номера, умершие, всеУмерли: умершие.Count == письма.Count, cancellationToken);
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
@@ -174,13 +170,81 @@ internal sealed class CertificatePolling(
         }
     }
 
+    /// <summary>Вердикт о письмах отправки — в подписку: снять номера, записать ошибку, при надобности повторить.</summary>
+    private async Task ЗакрытьОтправкуAsync(
+        Guid id, Guid[] было, IReadOnlyList<MailLetterStatus> умершие, bool всеУмерли, CancellationToken cancellationToken)
+    {
+        await db.InTransactionAsync(
+            async token =>
+            {
+                var строка = await db.Set<CertificateSubscription>()
+                    .FromSql($"SELECT * FROM certificate_subscriptions WHERE id = {id} FOR UPDATE SKIP LOCKED")
+                    .SingleOrDefaultAsync(token);
+
+                if (строка?.PendingMailIds is not { } номера || !номера.SequenceEqual(было))
+                {
+                    return;
+                }
+
+                var несли = строка.PendingSerials;
+                var полная = строка.PendingFull;
+
+                строка.PendingMailIds = null;
+                строка.PendingSerials = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                строка.PendingFull = false;
+
+                if (умершие.Count == 0)
+                {
+                    строка.AutoRetries = 0;
+                }
+                else if (!всеУмерли)
+                {
+                    строка.AutoRetries = 0;
+                    строка.LastError = Undelivered(умершие);
+                    log.LogWarning("keymanager_delivery_undelivered {Subscription} {Count}", id, умершие.Count);
+                }
+                else if (строка.AutoRetries < ПовторовСамих)
+                {
+                    // Снять отметки ровно этой отправки: «при обновлении» увидит её сертификаты неотправленными,
+                    // расписание — неотправленным полный набор.
+                    строка.SentSerials = new Dictionary<string, string>(
+                        строка.SentSerials.Where(пара => !несли.TryGetValue(пара.Key, out var нёс)
+                            || !string.Equals(нёс, пара.Value, StringComparison.OrdinalIgnoreCase)),
+                        StringComparer.OrdinalIgnoreCase);
+
+                    if (полная)
+                    {
+                        строка.LastFullSentAt = null;
+                    }
+
+                    строка.AutoRetries++;
+                    строка.LastError = НеДошло(умершие)
+                        + $" Не дошло ни одно письмо — отправка повторится сама (повтор {строка.AutoRetries} из {ПовторовСамих}).";
+                    log.LogWarning("keymanager_delivery_retry {Subscription} {Attempt}", id, строка.AutoRetries);
+                }
+                else
+                {
+                    строка.LastError = НеДошло(умершие)
+                        + $" Не дошло ни одно письмо, автоповтор исчерпан ({ПовторовСамих} раза) — отправьте вручную, когда причина устранена.";
+                    log.LogWarning("keymanager_delivery_undelivered {Subscription} {Count}", id, умершие.Count);
+                }
+
+                await db.SaveChangesAsync(token);
+            },
+            cancellationToken);
+
+        db.ChangeTracker.Clear();
+    }
+
     /// <summary>Текст для подписки: на какие адреса письмо не дошло и почему.</summary>
     internal static string Undelivered(IReadOnlyList<MailLetterStatus> умершие) =>
+        НеДошло(умершие) + " Отправьте повторно, когда причина устранена.";
+
+    private static string НеДошло(IReadOnlyList<MailLetterStatus> умершие) =>
         "Письмо не доставлено: "
         + string.Join("; ", умершие.Select(п => п.LastError is null ? п.ToAddress : $"{п.ToAddress} — {п.LastError}"))
-        + ". Отправьте повторно, когда причина устранена.";
+        + ".";
 
-    /// <summary>Итог опроса в строку состояния; сбой записи — в лог, не наверх.</summary>
     /// <summary>Неудачный опрос — в <c>last_poll_error</c>, чтобы панель его показала, и в лог.</summary>
     /// <remarks>
     /// ⚠ Любая ошибка, а не только отказ Key Manager Plus: не открывшийся ключ API (сменили файл
@@ -195,6 +259,7 @@ internal sealed class CertificatePolling(
         log.LogWarning("keymanager_poll_failed {Error}", текст);
     }
 
+    /// <summary>Итог опроса в строку состояния; сбой записи — в лог, не наверх.</summary>
     private async Task ЗаписатьОпросAsync(int? сколько, string? ошибка)
     {
         try

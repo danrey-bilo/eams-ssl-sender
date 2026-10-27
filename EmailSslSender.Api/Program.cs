@@ -10,6 +10,7 @@ using EmailSslSender.Modules.KeyManager;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Modules.Audit;
 using Modules.Core.Composition;
 using Modules.Core.Contracts.Audit;
 using Modules.Core.Contracts.Authz;
@@ -116,6 +117,23 @@ builder.Services
         options.BindSmtpPassword = true;
     })
     .AddKeyManagerModule(options => options.RunPoller = true)
+    // ⚠ ⚠ Журнал действий — таблицей в базе (модуль audit, ревью безопасности 2026-10-27): только дописывается
+    // (UPDATE, DELETE и TRUNCATE отвергает сама база), сцеплен хешами, отказы прав пишет своим подключением.
+    // Прежде журнал жил только в ротируемом логе контейнера, и поток неверных входов вытеснял строки о
+    // выгрузке ключей за несколько часов. Звено ПОСЛЕДНИМ: его писатели перекрывают прежние регистрации.
+    .AddAuditModule(options =>
+    {
+        options.RunMaintenance = true;
+        options.StrictActionCatalog = builder.Environment.IsDevelopment();
+
+        // ⚠ Журнал хранится всегда: удаление по сроку — единственный код, стирающий журнал, и роль сервиса
+        // права на него не получает (RuntimeRole). Граница — на случай, если срок однажды включат.
+        options.Features.Retention = false;
+        options.MinimumRetentionMonths = 12;
+
+        // Без Redis детектор массового показа молчал бы; показ ключа и так пишется строкой журнала.
+        options.Features.MassRevealDetection = false;
+    })
     .UseErrorEnvelope();
 
 // ⚠ Набор миграций проекта — ПОСЛЕДНИМ: он правит значения поверх таблиц модулей.
@@ -135,12 +153,14 @@ builder.Services.AddScoped<ICurrentUser>(sp => sp.GetRequiredService<RequestCurr
 builder.Services.AddScoped<CurrentUserMiddleware>();
 builder.Services.AddSingleton(TimeProvider.System);
 
-// Журнал — строками лога (LogAuditWriter): один писатель на запрос закрывает все контракты журнала.
-builder.Services.AddScoped<IAuditContextAccessor, AuditContextAccessor>();
+// Журнал пишет модуль audit (таблица audit_log); каждая строка журнала остаётся и строкой лога «audit …»
+// (LogAuditWriter) — по ней по-прежнему ищут в docker compose logs. Обёртки — поверх писателей модуля.
 builder.Services.AddScoped<LogAuditWriter>();
-builder.Services.AddScoped<IAuditWriter>(sp => sp.GetRequiredService<LogAuditWriter>());
-builder.Services.AddScoped<ISecurityEventWriter>(sp => sp.GetRequiredService<LogAuditWriter>());
-builder.Services.AddScoped<IAuthorizationAuditor>(sp => sp.GetRequiredService<LogAuditWriter>());
+builder.Services.Decorate<IAuditWriter>((журнал, sp) => new LoggedAuditWriter(журнал, sp.GetRequiredService<LogAuditWriter>()));
+builder.Services.Decorate<ISecurityEventWriter>(
+    (журнал, sp) => new LoggedSecurityEventWriter(журнал, sp.GetRequiredService<LogAuditWriter>()));
+builder.Services.Decorate<IAuthorizationAuditor>(
+    (журнал, sp) => new LoggedAuthorizationAuditor(журнал, sp.GetRequiredService<LogAuditWriter>()));
 
 // Предел частоты по адресу — потолок против потока; перебор одной учётной записи держат предел на
 // пару «адрес + почта» и блокировка после неудач. Пути объявляют модули, числа — проект.
@@ -256,6 +276,26 @@ await app.RunAsync();
 
 return 0;
 
+// Проверить цепочку журнала: подмена строки задним числом видна разрывом. 0 — сошлось, 2 — разрыв.
+static async Task<int> VerifyAuditChainAsync(WebApplication app)
+{
+    var итог = await AuditModule.CheckChainAsync(app.Services);
+
+    foreach (var месяц in итог.Lines)
+    {
+        Console.WriteLine(
+            $"{Bootstrap.VerifyAuditChain}: {месяц.Partition} — звеньев {месяц.Chained}"
+            + (месяц.Unchained > 0 ? $", до цепочки {месяц.Unchained}" : string.Empty)
+            + (месяц.Ok ? ", сошлось" : $", ⚠ РАЗРЫВ: {месяц.Broken}"));
+    }
+
+    Console.WriteLine(итог.Ok
+        ? $"{Bootstrap.VerifyAuditChain}: журнал цел"
+        : $"{Bootstrap.VerifyAuditChain}: ⚠ журнал изменён задним числом — сверьте с якорями audit_chain_anchor в логе");
+
+    return итог.Ok ? 0 : 2;
+}
+
 static async Task<int> RunCommandAsync(WebApplication app, string[] args)
 {
     try
@@ -273,6 +313,11 @@ static async Task<int> RunCommandAsync(WebApplication app, string[] args)
         if (args[0] == Bootstrap.Migrate)
         {
             return await MigrateCommandAsync(app);
+        }
+
+        if (args[0] == Bootstrap.VerifyAuditChain)
+        {
+            return await VerifyAuditChainAsync(app);
         }
 
         Bootstrap.ValidateSuperuserArguments(args);
@@ -334,8 +379,10 @@ static async Task<int> RunCommandAsync(WebApplication app, string[] args)
 // create-superadmin / reset-access. Служба migrate выполняется при каждом развёртывании стека:
 // - SENDER_INIT_ADMIN_EMAIL + SENDER_INIT_ADMIN_PASSWORD — первый администратор, ТОЛЬКО если
 //   учётных записей ещё нет вовсе; иначе пропуск;
-// - SENDER_RESET_ACCESS_EMAIL + SENDER_RESET_ACCESS_PASSWORD — то же, что reset-access. Повторяется
-//   при каждом развёртывании, пока переменные заданы: после входа их убирают из стека.
+// - SENDER_RESET_ACCESS_EMAIL + SENDER_RESET_ACCESS_PASSWORD — то же, что reset-access, ОДИН РАЗ на пару
+//   «адрес + пароль» (ревью безопасности 2026-10-27): прежде сброс повторялся при каждом обновлении стека,
+//   пока переменные забыты, — и знающий пароль из стека входил первым и подключал свой аутентификатор.
+//   Применённая пара запоминается HMAC-отметкой (Bootstrap.ResetAccessMark); сбросить снова — другой пароль.
 static async Task StartupAccountsAsync(WebApplication app)
 {
     var config = app.Configuration;
@@ -360,11 +407,37 @@ static async Task StartupAccountsAsync(WebApplication app)
     if (config["SENDER_RESET_ACCESS_EMAIL"] is { Length: > 0 } кому
         && config["SENDER_RESET_ACCESS_PASSWORD"] is { Length: > 0 } новый)
     {
+        var метка = Bootstrap.ResetAccessMark(MasterKeyFile.Content(config).Content, кому, новый);
+
+        await using var db = new NpgsqlConnection(app.Services.GetRequiredService<DatabaseStartup.SchemaConnection>().Value);
+        await db.OpenAsync();
+
+        await using (var было = new NpgsqlCommand("SELECT EXISTS (SELECT 1 FROM sender_reset_access_marks WHERE mark = @m)", db))
+        {
+            было.Parameters.AddWithValue("m", метка);
+
+            if (await было.ExecuteScalarAsync() is true)
+            {
+                Console.WriteLine(
+                    $"{Bootstrap.Migrate}: SENDER_RESET_ACCESS_* с этим паролем уже применены — пропуск. Уберите их "
+                    + "из .env; сбросить доступ снова — задайте другой пароль.");
+                return;
+            }
+        }
+
         var итог = await IdentityModule.ResetAccessAsync(app.Services, кому, новый);
+
+        await using (var запомнить = new NpgsqlCommand(
+            "INSERT INTO sender_reset_access_marks (mark) VALUES (@m) ON CONFLICT (mark) DO NOTHING", db))
+        {
+            запомнить.Parameters.AddWithValue("m", метка);
+            await запомнить.ExecuteNonQueryAsync();
+        }
+
         Console.WriteLine(Bootstrap.ResetAccessSummary(итог));
         Console.WriteLine(
-            $"{Bootstrap.Migrate}: ⚠ уберите SENDER_RESET_ACCESS_* из .env и обновите стек — пока они "
-            + "заданы, доступ сбрасывается при каждом развёртывании.");
+            $"{Bootstrap.Migrate}: сброс применён один раз — следующие обновления стека его не повторят. Уберите "
+            + "SENDER_RESET_ACCESS_* из .env: пароль в переменных стека виден в Portainer и docker inspect.");
     }
 }
 

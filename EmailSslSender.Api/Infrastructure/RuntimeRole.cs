@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using Modules.Audit.Contracts;
 using Npgsql;
 
 namespace EmailSslSender.Api.Infrastructure;
@@ -157,6 +158,30 @@ public static partial class RuntimeRole
                 connection, транзакция,
                 "SELECT format('REVOKE INSERT, UPDATE, DELETE, TRUNCATE ON public.%I FROM %I', @t::text, @r::text)",
                 cancellationToken, ("t", история), ("r", role));
+        }
+
+        // ⚠ ⚠ Журнал действий (модуль audit) только дописывается: общая раздача выше дала сервису и UPDATE/DELETE
+        // на журнал — список модуля начинается с изъятий, поэтому он идёт ПОСЛЕ неё (README модуля). Роль
+        // обслуживания у проекта та же, что у сервиса: ей нужна только `audit_ensure_partition` — партиции
+        // наперёд. Удаление партиций у сервиса отбирается: срок хранения выключен, журнал хранится всегда, и
+        // стереть его не может даже захвативший процесс.
+        foreach (var правоЖурнала in AuditPrivileges.Grants(role, role))
+        {
+            await using var выдача = new NpgsqlCommand(правоЖурнала, connection, транзакция);
+            await выдача.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await using (var отзыв = new NpgsqlCommand(
+            $"REVOKE EXECUTE ON FUNCTION {AuditPrivileges.DropPartition}(text) FROM {role}", connection, транзакция))
+        {
+            await отзыв.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        // Отметки применённого сброса доступа пишет и читает только migrate (владелец схемы): сервису они не нужны.
+        await using (var отзыв = new NpgsqlCommand(
+            $"REVOKE ALL ON sender_reset_access_marks FROM {role}", connection, транзакция))
+        {
+            await отзыв.ExecuteNonQueryAsync(cancellationToken);
         }
 
         // В PostgreSQL 15+ так уже по умолчанию; явно — на случай базы, обновлённой со старой версии.

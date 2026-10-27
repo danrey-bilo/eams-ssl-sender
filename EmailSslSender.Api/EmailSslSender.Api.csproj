@@ -29,6 +29,7 @@
     <ProjectReference Include="..\modules\tokens\src\Modules.Tokens\Modules.Tokens.csproj" />
     <ProjectReference Include="..\modules\settings\src\Modules.Settings\Modules.Settings.csproj" />
     <ProjectReference Include="..\modules\mail\src\Modules.Mail\Modules.Mail.csproj" />
+    <ProjectReference Include="..\modules\audit\src\Modules.Audit\Modules.Audit.csproj" />
     <ProjectReference Include="..\EmailSslSender.Modules.KeyManager\EmailSslSender.Modules.KeyManager.csproj" />
   </ItemGroup>
 

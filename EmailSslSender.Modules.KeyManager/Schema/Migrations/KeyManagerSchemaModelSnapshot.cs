@@ -28,6 +28,10 @@ namespace EmailSslSender.Modules.KeyManager.Schema.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<int>("AutoRetries")
+                        .HasColumnType("integer")
+                        .HasColumnName("auto_retries");
+
                     b.PrimitiveCollection<string[]>("CommonNames")
                         .IsRequired()
                         .HasColumnType("text[]")
@@ -85,14 +89,28 @@ namespace EmailSslSender.Modules.KeyManager.Schema.Migrations
                         .HasColumnType("boolean")
                         .HasColumnName("on_change");
 
+                    b.Property<bool>("PendingFull")
+                        .HasColumnType("boolean")
+                        .HasColumnName("pending_full");
+
                     b.PrimitiveCollection<Guid[]>("PendingMailIds")
                         .HasColumnType("uuid[]")
                         .HasColumnName("pending_mail_ids");
+
+                    b.Property<string>("PendingSerials")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("pending_serials");
 
                     b.PrimitiveCollection<string[]>("Recipients")
                         .IsRequired()
                         .HasColumnType("text[]")
                         .HasColumnName("recipients");
+
+                    b.Property<string>("SentIssued")
+                        .IsRequired()
+                        .HasColumnType("jsonb")
+                        .HasColumnName("sent_issued");
 
                     b.Property<string>("SentSerials")
                         .IsRequired()

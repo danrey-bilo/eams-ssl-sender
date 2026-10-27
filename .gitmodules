@@ -19,3 +19,6 @@
 [submodule "modules/mail"]
 	path = modules/mail
 	url = https://github.com/danrey-bilo/module-mail.git
+[submodule "modules/audit"]
+	path = modules/audit
+	url = https://github.com/danrey-bilo/module-audit.git

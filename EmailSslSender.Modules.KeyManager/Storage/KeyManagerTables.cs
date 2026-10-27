@@ -3,6 +3,7 @@ using EmailSslSender.Modules.KeyManager.Domain;
 using Modules.Core.Contracts.Data;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.ChangeTracking;
+using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace EmailSslSender.Modules.KeyManager.Storage;
 
@@ -99,15 +100,11 @@ internal sealed class KeyManagerTables : IEntityConfigurationProvider
                 .HasDefaultValueSql("now()");
             строка.Property(п => п.UpdatedBy).HasColumnName("updated_by");
 
-            строка.Property(п => п.SentSerials)
-                .HasColumnName("sent_serials").HasColumnType("jsonb").IsRequired()
-                .HasConversion(
-                    словарь => СерийныеВJson(словарь),
-                    json => СерийныеИзJson(json),
-                    new ValueComparer<Dictionary<string, string>>(
-                        (а, б) => ОдинаковыеСерийные(а, б),
-                        словарь => ХэшСерийных(словарь),
-                        словарь => new Dictionary<string, string>(словарь, StringComparer.OrdinalIgnoreCase)));
+            Словарь(строка.Property(п => п.SentSerials), "sent_serials");
+            Словарь(строка.Property(п => п.SentIssued), "sent_issued");
+            Словарь(строка.Property(п => п.PendingSerials), "pending_serials");
+            строка.Property(п => п.PendingFull).HasColumnName("pending_full").IsRequired();
+            строка.Property(п => п.AutoRetries).HasColumnName("auto_retries").IsRequired();
             строка.Property(п => п.LastSentAt).HasColumnName("last_sent_at").HasColumnType("timestamptz");
             строка.Property(п => п.LastFullSentAt).HasColumnName("last_full_sent_at").HasColumnType("timestamptz");
             строка.Property(п => п.LastAttemptAt).HasColumnName("last_attempt_at").HasColumnType("timestamptz");
@@ -115,6 +112,18 @@ internal sealed class KeyManagerTables : IEntityConfigurationProvider
             строка.Property(п => п.PendingMailIds).HasColumnName("pending_mail_ids").HasColumnType("uuid[]");
         });
     }
+
+    /// <summary>Словарь «Common Name → строка» — объектом JSON, ключи без учёта регистра.</summary>
+    private static void Словарь(PropertyBuilder<Dictionary<string, string>> свойство, string колонка) =>
+        свойство
+            .HasColumnName(колонка).HasColumnType("jsonb").IsRequired()
+            .HasConversion(
+                словарь => СерийныеВJson(словарь),
+                json => СерийныеИзJson(json),
+                new ValueComparer<Dictionary<string, string>>(
+                    (а, б) => ОдинаковыеСерийные(а, б),
+                    словарь => ХэшСерийных(словарь),
+                    словарь => new Dictionary<string, string>(словарь, StringComparer.OrdinalIgnoreCase)));
 
     /// <summary>Серийные номера отправленного — в JSON-объект «Common Name → серийный».</summary>
     internal static string СерийныеВJson(Dictionary<string, string> serials) => JsonSerializer.Serialize(serials);

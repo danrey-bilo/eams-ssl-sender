@@ -781,7 +781,148 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         (await Впервые("site.example.com", "aa01")).ShouldBe(впервые, "пара была в Key Manager Plus весь перерыв");
     }
 
+    /// <summary>
+    /// Key Manager Plus снова внёс старый сертификат (сканирование нашло его на необновлённом сервере): он
+    /// замечен позже всех, но выпущен раньше отправленного — сам не уходит (ревью надёжности 2026-10-27).
+    /// </summary>
+    [Fact]
+    public async Task Старый_выпуск_замеченный_позже_не_уходит_обновлением()
+    {
+        База("site.example.com", "aa02", Год);
+        база.Kmp.Выпуски["aa02"] = new DateTimeOffset(2026, 6, 1, 0, 0, 0, TimeSpan.Zero);
+        var id = await Подписка("site.example.com", ["a@example.com"]);
+        (await Опросить()).Sent.ShouldBe(1);
+        (await Прочитать(id)).SentIssued.ShouldContainKey("site.example.com");
+        база.Почта.Сброс();
+
+        // Старый выпуск появился — отправленный ещё в Key Manager Plus: текущим остаётся он.
+        база.Часы.Вперёд(TimeSpan.FromHours(1));
+        База("site.example.com", "aa01", Год.AddYears(1));
+        база.Kmp.Выпуски["aa01"] = new DateTimeOffset(2025, 6, 1, 0, 0, 0, TimeSpan.Zero);
+
+        (await Опросить()).Sent.ShouldBe(0, "старый выпуск не обновление, даже если срок у него дольше");
+        база.Почта.Письма.ShouldBeEmpty();
+        (await Прочитать(id)).SentSerials["site.example.com"].ShouldBe("aa02");
+
+        // Отправленного в Key Manager Plus больше нет — опрос не шлёт и говорит почему, ручная отправка шлёт.
+        база.Kmp.Сертификаты.RemoveAll(с => с.SerialNumber == "aa02");
+        база.Часы.Вперёд(TimeSpan.FromHours(1));
+
+        (await Опросить()).Sent.ShouldBe(0);
+        (await Прочитать(id)).LastError.ShouldNotBeNull().ShouldContain("старее отправленного");
+
+        (await Вручную(id)).Outcome.ShouldBe(DeliveryOutcome.Sent, "вручную — решение администратора");
+        база.Почта.Письма.ShouldHaveSingleItem().Values["serial_numbers"].ShouldBe("aa01");
+    }
+
+    /// <summary>
+    /// Продлённый досрочно под новые предельные сроки истекает РАНЬШЕ прежнего, но выпущен позже — это
+    /// обновление, и оно уходит.
+    /// </summary>
+    [Fact]
+    public async Task Новый_выпуск_с_более_коротким_сроком_уходит_обновлением()
+    {
+        База("site.example.com", "aa01", Год.AddYears(1));
+        база.Kmp.Выпуски["aa01"] = new DateTimeOffset(2026, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var id = await Подписка("site.example.com", ["a@example.com"]);
+        await Опросить();
+        база.Почта.Сброс();
+
+        база.Часы.Вперёд(TimeSpan.FromHours(1));
+        База("site.example.com", "bb02", Год);
+        база.Kmp.Выпуски["bb02"] = new DateTimeOffset(2026, 6, 1, 0, 0, 0, TimeSpan.Zero);
+
+        (await Опросить()).Sent.ShouldBe(1);
+        база.Почта.Письма.Single().Values["serial_numbers"].ShouldBe("bb02");
+        (await Прочитать(id)).SentSerials["site.example.com"].ShouldBe("bb02");
+    }
+
+    /// <summary>
+    /// Не дошло ни одно письмо отправки (почта лежала дольше всех попыток) — отправка повторяется сама, но не
+    /// больше трёх раз подряд (ревью надёжности 2026-10-27).
+    /// </summary>
+    [Fact]
+    public async Task Если_не_дошло_ни_одно_письмо_отправка_повторяется_сама_трижды()
+    {
+        База("site.example.com", "aa01", Год);
+        var id = await Подписка("site.example.com", ["a@example.com", "b@example.com"]);
+        await Опросить();
+
+        for (var повтор = 1; повтор <= CertificatePolling.ПовторовСамих; повтор++)
+        {
+            Умерли(база.Почта.Номера);
+            var было = база.Почта.Письма.Count;
+            база.Часы.Вперёд(TimeSpan.FromMinutes(45));
+
+            (await Опросить()).Sent.ShouldBe(1, $"повтор {повтор}");
+            (база.Почта.Письма.Count - было).ShouldBe(2, "заново — обоим");
+
+            // Повтор лёг в очередь этим же проходом — ошибки нет, а счётчик помнит, сколько раз повторяли.
+            (await Прочитать(id)).AutoRetries.ShouldBe(повтор);
+        }
+
+        Умерли(база.Почта.Номера);
+        база.Часы.Вперёд(TimeSpan.FromMinutes(45));
+
+        (await Опросить()).Sent.ShouldBe(0, "автоповтор исчерпан");
+        (await Прочитать(id)).LastError.ShouldNotBeNull().ShouldContain("автоповтор исчерпан");
+    }
+
+    [Fact]
+    public async Task Если_одному_дошло_повтора_нет_а_счётчик_сброшен()
+    {
+        База("site.example.com", "aa01", Год);
+        var id = await Подписка("site.example.com", ["a@example.com", "b@example.com"]);
+        await Опросить();
+
+        var номера = база.Почта.Номера.ToList();
+        база.Почта.Судьбы[номера[0]] = new MailLetterStatus(MailLetterState.Sent, "a@example.com", null);
+        база.Почта.Судьбы[номера[1]] = new MailLetterStatus(MailLetterState.Dead, "b@example.com", "ящика нет");
+
+        (await Опросить()).Sent.ShouldBe(0, "дубли тем, кому дошло, не шлются");
+
+        var подписка = await Прочитать(id);
+        подписка.AutoRetries.ShouldBe(0);
+        подписка.PendingMailIds.ShouldBeNull();
+        подписка.LastError.ShouldNotBeNull().ShouldContain("b@example.com — ящика нет");
+    }
+
+    /// <summary>
+    /// Закрытый ключ и его пароль не уходят по почте без шифрования (ревью безопасности 2026-10-27); сертификат
+    /// без ключа — уходит.
+    /// </summary>
+    [Fact]
+    public async Task Ключ_не_уходит_по_почте_без_шифрования()
+    {
+        База("a.example.com", "aa01", Год);
+        База("b.example.com", "bb01", Год);
+        var сКлючом = await Подписка("a.example.com", ["x@example.com"]);
+        var безКлюча = await Подписка("b.example.com", ["y@example.com"], formats: ["PEM", "CRT"]);
+        база.Настройки.Значения[CertificateDelivery.SmtpSecurity.Name] = "none";
+
+        try
+        {
+            (await Опросить()).Sent.ShouldBe(1);
+
+            база.Почта.Письма.ShouldHaveSingleItem().To.ShouldBe("y@example.com");
+            (await Прочитать(сКлючом)).LastError.ShouldNotBeNull().ShouldContain("без шифрования");
+            (await Прочитать(безКлюча)).LastError.ShouldBeNull();
+        }
+        finally
+        {
+            база.Настройки.Значения.Remove(CertificateDelivery.SmtpSecurity.Name);
+        }
+    }
+
     // --- обвязка ---------------------------------------------------------------------------
+
+    private void Умерли(IEnumerable<Guid> номера)
+    {
+        foreach (var номер in номера.ToList())
+        {
+            база.Почта.Судьбы[номер] = new MailLetterStatus(MailLetterState.Dead, "x@example.com", "сервер почты недоступен");
+        }
+    }
 
     private async Task<DateTimeOffset> Впервые(string commonName, string serial)
     {

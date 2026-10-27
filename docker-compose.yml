@@ -43,10 +43,13 @@ services:
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=sender;Username=sender_app;Maximum Pool Size=40;GSS Encryption Mode=Disable"
       SENDER_POSTGRES_PASSWORD_FILE: /run/secrets/sender_app_password
       SENDER_MASTER_KEK_FILE: /run/secrets/sender_master_kek
-      # Сети, которым верим заголовки X-Forwarded-For / -Proto: сеть туннеля (в ней только
-      # cloudflared и сам API) и, если задан, свой обратный прокси. Не верь мы туннелю — все
-      # клиенты выглядели бы одним адресом cloudflared, и предел попыток входа делили бы на всех.
-      ForwardedHeaders__KnownNetworks: ${SENDER_TUNNEL_SUBNET:-172.31.250.0/28},${SENDER_TRUSTED_PROXY_NETWORKS:-}
+      # Кому верим заголовки X-Forwarded-For / -Proto: только адресу cloudflared в сети туннеля и, если
+      # задан, своему обратному прокси. Не верь мы туннелю — все клиенты выглядели бы одним адресом
+      # cloudflared, и предел попыток входа делили бы на всех.
+      # ⚠ Адресу, а не всей подсети (ревью безопасности 2026-10-27): в подсеть входит и шлюз моста — то
+      # есть сам сервер, и любой процесс на нём подделывал бы адрес клиента в пределах входа и журнале.
+      ForwardedHeaders__KnownProxies: ${SENDER_TUNNEL_PROXY_IP:-172.31.250.2}
+      ForwardedHeaders__KnownNetworks: ${SENDER_TRUSTED_PROXY_NETWORKS:-}
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -61,9 +64,10 @@ services:
       - "127.0.0.1:8001:8001"
     # default — выход к SMTP и Key Manager Plus; db — к базе; edge — к туннелю.
     networks:
-      - default
-      - db
-      - edge
+      default:
+      db:
+      edge:
+        ipv4_address: ${SENDER_TUNNEL_API_IP:-172.31.250.3}
     # ⚠ Два ядра и гигабайт: пароли считает argon2 (64 МиБ на хеш, не больше четырёх разом), и
     # поток анонимных входов не должен отнимать у сервера всё.
     cpus: 2
@@ -141,7 +145,8 @@ services:
     secrets:
       - cloudflare_tunnel_token
     networks:
-      - edge
+      edge:
+        ipv4_address: ${SENDER_TUNNEL_PROXY_IP:-172.31.250.2}
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -206,8 +211,9 @@ networks:
   # База и API. internal: из этой сети нет выхода наружу.
   db:
     internal: true
-  # Сеть туннеля: только cloudflared и API — до базы туннелю дороги нет. Подсеть закреплена,
-  # чтобы API мог верить заголовкам именно от неё; занята на сервере — задайте SENDER_TUNNEL_SUBNET.
+  # Сеть туннеля: только cloudflared и API — до базы туннелю дороги нет. Подсеть и адреса закреплены,
+  # чтобы API верил заголовкам только от cloudflared; подсеть занята на сервере — задайте
+  # SENDER_TUNNEL_SUBNET и адреса внутри неё: SENDER_TUNNEL_PROXY_IP (cloudflared) и SENDER_TUNNEL_API_IP.
   edge:
     ipam:
       config:

@@ -7,17 +7,15 @@ using Modules.Core.Contracts.Authz;
 namespace EmailSslSender.Api.Infrastructure;
 
 /// <summary>
-/// Журнал событий — строкой структурного лога.
+/// Журнал событий — строкой структурного лога, рядом с журналом в базе.
 /// </summary>
 /// <remarks>
-/// ⚠ ⚠ <b>Вместо модуля журнала EAMS</b> (там — append-only таблица с цепочкой хешей). Здесь
-/// учётные записи, почта и Key Manager Plus, и на вопрос «кто, когда и что» — вход, отказы, смена
-/// паролей, второй фактор, пароль SMTP — отвечает лог: каждая строка несёт <c>audit_action</c>, кто,
-/// над чем, исход и причину отказа, а номер запроса подставляет область логирования. Один класс
-/// закрывает все четыре контракта журнала, которых модули ждут от хоста: событие действия
-/// (<see cref="IAuditWriter"/>), событие безопасности (<see cref="ISecurityEventWriter"/>), решение
-/// о праве (<see cref="IAuthorizationAuditor"/>) — и контекст запроса держит
-/// <see cref="AuditContextAccessor"/>.
+/// ⚠ ⚠ <b>Журнал — у модуля audit</b> (таблица <c>audit_log</c>: только дописывается, цепочка хешей). Этот
+/// класс оставляет каждой его строке и строку лога «audit …»: по ней ищут в <c>docker compose logs</c>, и
+/// она уходит туда, куда настроен сбор логов. Подключается обёртками над писателями модуля
+/// (<see cref="LoggedAuditWriter"/>, <see cref="LoggedSecurityEventWriter"/>,
+/// <see cref="LoggedAuthorizationAuditor"/>): событие действия, событие безопасности и решение о праве; номер
+/// запроса подставляет область логирования, адрес — контекст запроса модуля.
 ///
 /// ⚠ ⚠ <b>Значения изменений пишутся только у событий из списка</b> (<see cref="СоЗначениями"/>):
 /// настройки и Key Manager Plus. Без них строка «настройки изменены» не говорила бы, какая и с чего
@@ -180,30 +178,5 @@ internal sealed class LogAuditWriter(
             : JsonSerializer.Serialize(changes.Keys.Order(StringComparer.Ordinal), Формат);
 
         return текст.Length <= ПотолокИзменений ? текст : string.Concat(текст.AsSpan(0, ПотолокИзменений), "…");
-    }
-}
-
-/// <summary>Контекст журнала на запрос: номер, адрес, агент, личность.</summary>
-/// <remarks>
-/// Дополняет, а не затирает: привязка личности после входа не должна стирать адрес и агента,
-/// известные с первой строки конвейера.
-/// </remarks>
-internal sealed class AuditContextAccessor : IAuditContextAccessor
-{
-    public AuditContext Current { get; private set; } = new();
-
-    public void Bind(AuditContext patch)
-    {
-        ArgumentNullException.ThrowIfNull(patch);
-
-        Current = Current with
-        {
-            RequestId = patch.RequestId ?? Current.RequestId,
-            ActorIp = patch.ActorIp ?? Current.ActorIp,
-            UserAgent = patch.UserAgent ?? Current.UserAgent,
-            ActorId = patch.ActorId ?? Current.ActorId,
-            SessionId = patch.SessionId ?? Current.SessionId,
-            ActorType = patch.ActorType ?? Current.ActorType,
-        };
     }
 }

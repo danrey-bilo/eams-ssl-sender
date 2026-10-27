@@ -75,7 +75,10 @@ internal sealed class CertificateExport(
 
         var файл = await клиент.DownloadAsync(сертификат.CommonName, сертификат.SerialNumber, тип, cancellationToken);
 
+        // ⚠ ⚠ Строка журнала сохраняется ДО выдачи: журнал в базе пишется единицей работы вызывающего, и без
+        // сохранения строка о выгрузке молча пропала бы. Не записалась — файл не выдаётся.
         audit.Write(Строка(KeyManagerActions.CertificateDownloaded, сертификат, тип));
+        await db.SaveChangesAsync(cancellationToken);
 
         return файл;
     }
@@ -120,7 +123,9 @@ internal sealed class CertificateExport(
 
         var пароль = await ПарольAsync(клиент, сертификат, cancellationToken);
 
+        // ⚠ ⚠ Как у выгрузки: показ ключа без сохранённой строки журнала не состоялся.
         audit.Write(Строка(KeyManagerActions.PrivateKeyViewed, сертификат, формат: null));
+        await db.SaveChangesAsync(cancellationToken);
 
         return new PrivateKeyText(ключ, пароль);
     }

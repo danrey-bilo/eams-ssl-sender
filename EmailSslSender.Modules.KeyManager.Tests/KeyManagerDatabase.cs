@@ -333,6 +333,9 @@ internal sealed class ПодставнойKmp : IKeyManagerConnector, IKeyManage
     /// <summary>На каком типе файла отказывать.</summary>
     public string? ПадатьНаФормате { get; set; }
 
+    /// <summary>Даты выпуска по серийному номеру: для них PEM — настоящий сертификат.</summary>
+    public Dictionary<string, DateTimeOffset> Выпуски { get; } = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Чем падать при открытии клиента (не открылся ключ API, сбой базы).</summary>
     public Exception? ОткрытиеПадает { get; set; }
 
@@ -379,6 +382,7 @@ internal sealed class ПодставнойKmp : IKeyManagerConnector, IKeyManage
         ПадатьНаФормате = null;
         ПадатьНаИмени = null;
         ОткрытиеПадает = null;
+        Выпуски.Clear();
         СписокПадает = false;
         ПарольПадает = false;
         _выгрузок = 0;
@@ -431,10 +435,37 @@ internal sealed class ПодставнойKmp : IKeyManagerConnector, IKeyManage
             throw new KeyManagerException($"Key Manager Plus отказал в выгрузке {format} (подставной отказ).");
         }
 
+        // Настоящий сертификат с заданной датой выпуска — для защиты от отката.
+        if (string.Equals(format, CertificateFormats.Pem, StringComparison.Ordinal)
+            && Выпуски.TryGetValue(serialNumber, out var выпущен))
+        {
+            return new KmpFile(
+                KeyManagerClient.ИмяПоУмолчанию(commonName, format),
+                CertificateFormats.ContentType(format),
+                Encoding.ASCII.GetBytes(Сертификат(commonName, serialNumber, выпущен)));
+        }
+
         return new KmpFile(
             KeyManagerClient.ИмяПоУмолчанию(commonName, format),
             CertificateFormats.ContentType(format),
             Файлы.TryGetValue(format, out var своё) ? [.. своё] : Encoding.ASCII.GetBytes($"{format}:{serialNumber}"));
+    }
+
+    /// <summary>Самоподписанный сертификат PEM с этим серийным номером (hex) и датой выпуска.</summary>
+    internal static string Сертификат(string commonName, string serialNumber, DateTimeOffset notBefore)
+    {
+        using var ключ = System.Security.Cryptography.ECDsa.Create();
+        var запрос = new System.Security.Cryptography.X509Certificates.CertificateRequest(
+            $"CN={commonName.Replace("*", "wildcard", StringComparison.Ordinal)}", ключ,
+            System.Security.Cryptography.HashAlgorithmName.SHA256);
+        using var сертификат = запрос.Create(
+            запрос.SubjectName,
+            System.Security.Cryptography.X509Certificates.X509SignatureGenerator.CreateForECDsa(ключ),
+            notBefore,
+            notBefore.AddDays(90),
+            Convert.FromHexString(serialNumber.Length % 2 == 0 ? serialNumber : "0" + serialNumber));
+
+        return сертификат.ExportCertificatePem();
     }
 
     public Task<string?> PassphraseAsync(

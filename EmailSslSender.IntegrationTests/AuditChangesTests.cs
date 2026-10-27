@@ -132,7 +132,17 @@ public sealed class AuditChangesTests(SenderHost host)
         цели.ShouldContain("keymanager_state", "без этой цели rewrap-keys не трогал ключ API Key Manager Plus");
     }
 
-    private static LogAuditWriter Журнал(Перо перо) => new(new TestUser(), new AuditContextAccessor(), перо);
+    private static LogAuditWriter Журнал(Перо перо) => new(new TestUser(), new ПустойКонтекст(), перо);
+
+    /// <summary>Контекст запроса без запроса: адреса и номера нет.</summary>
+    private sealed class ПустойКонтекст : IAuditContextAccessor
+    {
+        public AuditContext Current { get; } = new();
+
+        public void Bind(AuditContext patch)
+        {
+        }
+    }
 
     /// <summary>Логгер журнала, запоминающий строки и структурные поля.</summary>
     private sealed class Перо : ILogger<LogAuditWriter>

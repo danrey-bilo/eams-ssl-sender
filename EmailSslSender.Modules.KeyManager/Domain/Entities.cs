@@ -114,6 +114,17 @@ internal sealed class CertificateSubscription
     /// <remarks>По нему «при обновлении» отличает обновлённый сертификат от уже отправленного.</remarks>
     public Dictionary<string, string> SentSerials { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Когда выпущен (<c>NotBefore</c>, ISO 8601) сертификат, ушедший последним, — по Common Name подписки.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Защита от отката: Key Manager Plus может снова внести старый сертификат (сканирование нашло его
+    /// на ещё не обновлённом сервере), и «замеченный позже всех» стал бы им. Сертификат, выпущенный раньше
+    /// отправленного, сам не уходит (разбор у <c>CertificateDelivery</c>). Срок для этого не годится:
+    /// продлённый досрочно под новые предельные сроки истекает раньше прежнего.
+    /// </remarks>
+    public Dictionary<string, string> SentIssued { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     /// <summary>Когда письма последней отправки легли в очередь — любой, и частичной тоже.</summary>
     public DateTimeOffset? LastSentAt { get; set; }
 
@@ -135,4 +146,18 @@ internal sealed class CertificateSubscription
     /// молчаливым «отправлено».
     /// </remarks>
     public Guid[]? PendingMailIds { get; set; }
+
+    /// <summary>
+    /// Какие серийные номера несут письма <see cref="PendingMailIds"/> — по Common Name.
+    /// </summary>
+    /// <remarks>
+    /// По ним опрос снимает отметку «отправлено», если не дошло ни одно письмо отправки (автоповтор).
+    /// </remarks>
+    public Dictionary<string, string> PendingSerials { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>Была ли отправка <see cref="PendingMailIds"/> полной — сдвинула ли она «раз в N дней».</summary>
+    public bool PendingFull { get; set; }
+
+    /// <summary>Сколько раз подряд отправку повторили сами, потому что не дошло ни одно письмо.</summary>
+    public int AutoRetries { get; set; }
 }

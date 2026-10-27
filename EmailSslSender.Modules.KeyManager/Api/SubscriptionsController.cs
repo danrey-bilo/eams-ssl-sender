@@ -447,6 +447,8 @@ internal sealed class SubscriptionsController(
         var отменены = await mail.CancelAsync(строка.PendingMailIds ?? [], причина, token);
 
         строка.PendingMailIds = null;
+        строка.PendingSerials = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        строка.PendingFull = false;
 
         if (отменены > 0)
         {

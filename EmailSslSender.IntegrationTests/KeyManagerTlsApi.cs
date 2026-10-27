@@ -170,6 +170,54 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
         (await ОтменёнAsync("a@example.com")).ShouldBe(1);
     }
 
+    /// <summary>
+    /// Закрытый ключ не уходит по почте без шифрования (ревью безопасности 2026-10-27): отказ с объяснением,
+    /// писем нет. Сертификат без ключа — открытые данные, ему можно.
+    /// </summary>
+    [Fact]
+    public async Task Ключ_не_уходит_по_почте_без_шифрования()
+    {
+        await ЗакрепитьAsync();
+        host.Settings.Values["mail.enabled"] = true;
+        host.Settings.Values["mail.smtp_host"] = "127.0.0.1";
+        host.Settings.Values["mail.smtp_port"] = 1;
+        host.Settings.Values["mail.smtp_security"] = "none";
+        host.Settings.Values["mail.from_address"] = "vault@example.com";
+
+        var клиент = host.CreateClient();
+
+        async Task<HttpResponseMessage> ОтправитьAsync(string[] форматы)
+        {
+            var создано = await клиент.PostAsJsonAsync(
+                "/api/certificate-subscriptions",
+                new { common_name = "site.example.com", recipients = new[] { "a@example.com" }, formats = форматы },
+                Ct);
+            var id = (await создано.Content.ReadFromJsonAsync<JsonObject>(Ct))!["id"]!.GetValue<Guid>();
+
+            return await клиент.PostAsync($"/api/certificate-subscriptions/{id}/send", null, Ct);
+        }
+
+        var сКлючом = await ОтправитьAsync(["PEM", "KEY"]);
+        сКлючом.StatusCode.ShouldBe(HttpStatusCode.Conflict);
+        (await сКлючом.Content.ReadFromJsonAsync<JsonObject>(Ct))!["message"]!.GetValue<string>()
+            .ShouldContain("без шифрования");
+
+        (await ОтправитьAsync(["PEM"])).StatusCode.ShouldBe(HttpStatusCode.OK, "сертификат без ключа уходит");
+    }
+
+    /// <summary>
+    /// Запрет выше читает настройку модуля почты по имени: модуль переименует её — тест покраснеет, а не
+    /// проверка молча прочтёт умолчание.
+    /// </summary>
+    [Fact]
+    public async Task Настройка_защиты_SMTP_есть_у_модуля_почты_с_вариантом_none()
+    {
+        var настройки = await host.CreateClient().GetFromJsonAsync<JsonNode>("/api/settings/system", Ct);
+
+        настройки!.ToJsonString().ShouldContain("\"mail.smtp_security\"");
+        настройки.ToJsonString().ShouldContain("\"none\"");
+    }
+
     [Fact]
     public async Task Ручная_отправка_кладёт_письма_с_запечатанными_вложениями()
     {
@@ -177,7 +225,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
         host.Settings.Values["mail.enabled"] = true;
         host.Settings.Values["mail.smtp_host"] = "127.0.0.1";
         host.Settings.Values["mail.smtp_port"] = 1;
-        host.Settings.Values["mail.smtp_security"] = "none";
+        host.Settings.Values["mail.smtp_security"] = "tls";
         host.Settings.Values["mail.from_address"] = "vault@example.com";
 
         var клиент = host.CreateClient();
@@ -278,6 +326,12 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
         {
             тело["passphrase"].ShouldBeNull("отказ Key Manager Plus в пароле обязан стать null, а не ошибкой");
         }
+
+        // ⚠ Показ ключа — строкой журнала в базе: прежде строка ставилась без сохранения и в журнале модуля
+        // audit пропала бы молча (ревью 2026-10-27).
+        var журнал = await host.CreateClient().GetFromJsonAsync<JsonNode>(
+            "/api/audit?action=keymanager.private_key_viewed&limit=50", Ct);
+        журнал!.ToJsonString().ShouldContain("keymanager.private_key_viewed");
     }
 
     [Fact]
@@ -423,7 +477,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
         host.Settings.Values["mail.enabled"] = true;
         host.Settings.Values["mail.smtp_host"] = "127.0.0.1";
         host.Settings.Values["mail.smtp_port"] = 1;
-        host.Settings.Values["mail.smtp_security"] = "none";
+        host.Settings.Values["mail.smtp_security"] = "tls";
         host.Settings.Values["mail.from_address"] = "vault@example.com";
     }
 

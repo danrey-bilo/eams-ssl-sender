@@ -48,6 +48,12 @@ internal sealed class RateLimitGroups
             [RateLimitClasses.SignIn] = new(входПоАдресу, PerUser: null),
             [RateLimitClasses.Reauthentication] = new(LoginPerMinute * множитель, LoginPerMinute),
             [RateLimitClasses.OneTimeLink] = new(активация, PerUser: null),
+
+            // Выгрузка журнала действий (модуль audit): до потолка строк в памяти разом — пять выгрузок в минуту
+            // на человека хватает с запасом, а параллельный поток их иначе останавливал бы процесс.
+            [RateLimitClasses.BulkTransfer] = new(
+                configuration.GetValue("RateLimits:BulkTransferPerAddressPerMinute", 10),
+                configuration.GetValue("RateLimits:BulkTransferPerUserPerMinute", 5)),
         };
 
         // ⚠ Второе звено — предел на всех клиентов вместе для классов, где запрос считает argon2

@@ -11,6 +11,7 @@
     <Project Path="modules/tokens/src/Modules.Tokens/Modules.Tokens.csproj" />
     <Project Path="modules/settings/src/Modules.Settings/Modules.Settings.csproj" />
     <Project Path="modules/mail/src/Modules.Mail/Modules.Mail.csproj" />
+    <Project Path="modules/audit/src/Modules.Audit/Modules.Audit.csproj" />
   </Folder>
   <Folder Name="/tests/">
     <Project Path="EmailSslSender.Modules.KeyManager.Tests/EmailSslSender.Modules.KeyManager.Tests.csproj" />
