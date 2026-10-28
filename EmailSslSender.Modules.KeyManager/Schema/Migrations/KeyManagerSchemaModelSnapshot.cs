@@ -28,6 +28,14 @@ namespace EmailSslSender.Modules.KeyManager.Schema.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<DateOnly?>("ActiveFrom")
+                        .HasColumnType("date")
+                        .HasColumnName("active_from");
+
+                    b.Property<DateOnly?>("ActiveUntil")
+                        .HasColumnType("date")
+                        .HasColumnName("active_until");
+
                     b.Property<int>("AutoRetries")
                         .HasColumnType("integer")
                         .HasColumnName("auto_retries");
@@ -84,6 +92,10 @@ namespace EmailSslSender.Modules.KeyManager.Schema.Migrations
                         .HasColumnType("timestamptz")
                         .HasColumnName("last_sent_at");
 
+                    b.Property<DateTimeOffset?>("LastSlotAt")
+                        .HasColumnType("timestamptz")
+                        .HasColumnName("last_slot_at");
+
                     b.Property<string>("Locale")
                         .IsRequired()
                         .HasColumnType("text")
@@ -111,6 +123,10 @@ namespace EmailSslSender.Modules.KeyManager.Schema.Migrations
                         .HasColumnType("text[]")
                         .HasColumnName("recipients");
 
+                    b.Property<TimeOnly?>("SendTime")
+                        .HasColumnType("time")
+                        .HasColumnName("send_time");
+
                     b.Property<string>("SentIssued")
                         .IsRequired()
                         .HasColumnType("jsonb")
@@ -120,6 +136,10 @@ namespace EmailSslSender.Modules.KeyManager.Schema.Migrations
                         .IsRequired()
                         .HasColumnType("jsonb")
                         .HasColumnName("sent_serials");
+
+                    b.Property<string>("TimeZone")
+                        .HasColumnType("text")
+                        .HasColumnName("time_zone");
 
                     b.Property<DateTimeOffset>("UpdatedAt")
                         .ValueGeneratedOnAdd()
@@ -144,7 +164,11 @@ namespace EmailSslSender.Modules.KeyManager.Schema.Migrations
 
                             t.HasCheckConstraint("ck_certificate_subscriptions_interval", "interval_days IS NULL OR interval_days BETWEEN 1 AND 365");
 
+                            t.HasCheckConstraint("ck_certificate_subscriptions_period", "active_from IS NULL OR active_until IS NULL OR active_until >= active_from");
+
                             t.HasCheckConstraint("ck_certificate_subscriptions_recipients", "cardinality(recipients) >= 1");
+
+                            t.HasCheckConstraint("ck_certificate_subscriptions_time_zone", "(active_from IS NULL AND active_until IS NULL AND send_time IS NULL AND time_zone IS NULL) OR (time_zone IS NOT NULL AND char_length(time_zone) BETWEEN 1 AND 64)");
                         });
                 });
 

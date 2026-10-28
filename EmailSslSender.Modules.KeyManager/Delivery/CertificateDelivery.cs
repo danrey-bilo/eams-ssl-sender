@@ -120,6 +120,7 @@ internal sealed class CertificateDelivery(
     /// <param name="subscription">Подписка.</param>
     /// <param name="current">Текущие сертификаты подписки, найденные в снимке: имя из подписки и сертификат.</param>
     /// <param name="now">Сейчас.</param>
+    /// <param name="slot">Разбираемое время отправки (<see cref="SendSchedule.Check"/>); <c>null</c> — его нет.</param>
     /// <remarks>
     /// ⚠ ⚠ Решение владельца 2026-10-27: <b>по расписанию — все</b> сертификаты подписки, <b>при
     /// обновлении — только обновлённые</b>. Расписание проверяется первым: подошёл его срок — уходят все,
@@ -129,12 +130,13 @@ internal sealed class CertificateDelivery(
     /// писать его одинаково в разных версиях.
     /// </remarks>
     internal static (DeliveryReason Reason, IReadOnlyList<Сертификат> Send)? Due(
-        CertificateSubscription subscription, IReadOnlyList<Сертификат> current, DateTimeOffset now)
+        CertificateSubscription subscription, IReadOnlyList<Сертификат> current, DateTimeOffset now, DateTimeOffset? slot = null)
     {
         var первая = subscription.LastSentAt is null;
 
         if (subscription.IntervalDays is { } дней
-            && (subscription.LastFullSentAt is not { } когда || now >= когда.AddDays(дней)))
+            && (subscription.LastFullSentAt is not { } когда
+                || (slot is { } слот ? SendSchedule.DaysBetween(subscription, когда, слот) >= дней : now >= когда.AddDays(дней))))
         {
             return (первая ? DeliveryReason.Initial : DeliveryReason.Scheduled, current);
         }
@@ -242,6 +244,21 @@ internal sealed class CertificateDelivery(
         }
 
         var сейчас = clock.GetUtcNow();
+        DateTimeOffset? слот = null;
+
+        // ⚠ ⚠ Период «с — по» и время отправки держат только опрос (решение владельца 2026-10-28); вне них —
+        // ни выгрузки, ни записи ошибки «сертификата нет».
+        if (!manual)
+        {
+            var (можно, разбираемый) = SendSchedule.Check(подписка, сейчас);
+
+            if (!можно)
+            {
+                return new DeliveryResult(DeliveryOutcome.NotDue);
+            }
+
+            слот = разбираемый;
+        }
 
         var найдено = подписка.CommonNames
             .Select(имя => (Имя: имя, Текущий: snapshot.Current(имя)))
@@ -297,10 +314,17 @@ internal sealed class CertificateDelivery(
         }
 
         (DeliveryReason Reason, IReadOnlyList<Сертификат> Send)? срок =
-            manual ? (DeliveryReason.Manual, текущие) : Due(подписка, текущие, сейчас);
+            manual ? (DeliveryReason.Manual, текущие) : Due(подписка, текущие, сейчас, слот);
 
         if (срок is not { } пора)
         {
+            // Слать в это время отправки нечего — оно разобрано: замеченное позже ждёт следующего.
+            if (слот is not null)
+            {
+                подписка.LastSlotAt = слот;
+                await db.SaveChangesAsync(token);
+            }
+
             return new DeliveryResult(DeliveryOutcome.NotDue);
         }
 
@@ -431,6 +455,7 @@ internal sealed class CertificateDelivery(
         подписка.LastAttemptAt = сейчас;
         подписка.LastError = Неполная(нет, невыгружены, откаты);
         подписка.PendingMailIds = [.. номера];
+        подписка.LastSlotAt = слот ?? подписка.LastSlotAt;
 
         // Что несут эти письма — чтобы снять отметки, если не дойдёт ни одно (автоповтор у опроса).
         подписка.PendingSerials = new Dictionary<string, string>(

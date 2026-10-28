@@ -79,6 +79,15 @@ internal sealed class KeyManagerTables : IEntityConfigurationProvider
                 таблица.HasCheckConstraint(
                     $"ck_{SubscriptionsTable}_description",
                     $"description IS NULL OR char_length(description) BETWEEN 1 AND {CertificateSubscription.MaxDescription}");
+                таблица.HasCheckConstraint(
+                    $"ck_{SubscriptionsTable}_period",
+                    "active_from IS NULL OR active_until IS NULL OR active_until >= active_from");
+
+                // ⚠ Даты и время без часового пояса не значат ничего: «9:00» — чьих?
+                таблица.HasCheckConstraint(
+                    $"ck_{SubscriptionsTable}_time_zone",
+                    "(active_from IS NULL AND active_until IS NULL AND send_time IS NULL AND time_zone IS NULL)"
+                    + " OR (time_zone IS NOT NULL AND char_length(time_zone) BETWEEN 1 AND 64)");
             });
 
             строка.HasKey(п => п.Id).HasName($"pk_{SubscriptionsTable}");
@@ -91,6 +100,11 @@ internal sealed class KeyManagerTables : IEntityConfigurationProvider
             строка.Property(п => п.IncludePassphrase).HasColumnName("include_passphrase").IsRequired();
             строка.Property(п => п.OnChange).HasColumnName("on_change").IsRequired();
             строка.Property(п => п.IntervalDays).HasColumnName("interval_days");
+            строка.Property(п => п.ActiveFrom).HasColumnName("active_from").HasColumnType("date");
+            строка.Property(п => п.ActiveUntil).HasColumnName("active_until").HasColumnType("date");
+            строка.Property(п => п.SendTime).HasColumnName("send_time").HasColumnType("time");
+            строка.Property(п => п.TimeZone).HasColumnName("time_zone").HasColumnType("text");
+            строка.Property(п => п.LastSlotAt).HasColumnName("last_slot_at").HasColumnType("timestamptz");
             строка.Property(п => п.Locale).HasColumnName("locale").HasColumnType("text").IsRequired();
             строка.Property(п => п.Enabled).HasColumnName("enabled").IsRequired();
 

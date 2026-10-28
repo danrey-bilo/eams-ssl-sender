@@ -51,6 +51,15 @@ export interface Subscription {
   include_passphrase: boolean;
   on_change: boolean;
   interval_days: number | null;
+  /** Период, в который опрос шлёт сам: ГГГГ-ММ-ДД, оба дня включительно. Вручную — всегда. */
+  active_from: string | null;
+  active_until: string | null;
+  /** Время отправки ЧЧ:ММ; null — сразу, как опрос заметит. */
+  send_time: string | null;
+  /** Часовой пояс IANA дат и времени; null, если их нет. */
+  time_zone: string | null;
+  /** Где подписка относительно периода; null — периода нет. */
+  period: 'before' | 'active' | 'after' | null;
   locale: string;
   enabled: boolean;
   sent_serials: Record<string, string>;

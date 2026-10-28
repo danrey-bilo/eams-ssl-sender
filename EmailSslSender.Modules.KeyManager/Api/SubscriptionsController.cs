@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using System.Net.Mail;
 using System.Text.Json.Serialization;
@@ -54,6 +55,30 @@ internal sealed record SubscriptionIn
     /// </summary>
     [JsonPropertyName("description")]
     public string? Description { get; init; }
+
+    /// <summary>
+    /// С какого дня (<c>ГГГГ-ММ-ДД</c>, включительно) опрос шлёт подписку сам; пустая строка снимает.
+    /// Ручная отправка шлёт всегда.
+    /// </summary>
+    [JsonPropertyName("active_from")]
+    public string? ActiveFrom { get; init; }
+
+    /// <summary>По какой день (<c>ГГГГ-ММ-ДД</c>, включительно) опрос шлёт подписку сам; пустая строка снимает.</summary>
+    [JsonPropertyName("active_until")]
+    public string? ActiveUntil { get; init; }
+
+    /// <summary>
+    /// В какое время суток (<c>ЧЧ:ММ</c>) опрос шлёт подписку; пустая строка снимает — тогда сразу, как
+    /// заметит, что пора. Замеченное после этого времени ждёт следующего дня.
+    /// </summary>
+    [JsonPropertyName("send_time")]
+    public string? SendTime { get; init; }
+
+    /// <summary>
+    /// Часовой пояс IANA (<c>Europe/Kyiv</c>) дат и времени отправки; нужен, если задано хоть одно из них.
+    /// </summary>
+    [JsonPropertyName("time_zone")]
+    public string? TimeZone { get; init; }
 }
 
 /// <summary>Подписка с состоянием последней отправки.</summary>
@@ -66,6 +91,11 @@ internal sealed record SubscriptionOut(
     [property: JsonPropertyName("include_passphrase")] bool IncludePassphrase,
     [property: JsonPropertyName("on_change")] bool OnChange,
     [property: JsonPropertyName("interval_days")] int? IntervalDays,
+    [property: JsonPropertyName("active_from")] DateOnly? ActiveFrom,
+    [property: JsonPropertyName("active_until")] DateOnly? ActiveUntil,
+    [property: JsonPropertyName("send_time")] string? SendTime,
+    [property: JsonPropertyName("time_zone")] string? TimeZone,
+    [property: JsonPropertyName("period")] string? Period,
     [property: JsonPropertyName("locale")] string Locale,
     [property: JsonPropertyName("enabled")] bool Enabled,
     [property: JsonPropertyName("created_at")] DateTimeOffset CreatedAt,
@@ -84,8 +114,12 @@ internal sealed record SubscriptionOut(
     /// <c>delivery</c>: <c>none</c> — ещё не отправлялась, <c>queued</c> — письма в очереди,
     /// <c>sent</c> — ушли, <c>failed</c> — не ушли (причина в <c>last_error</c>). Состояние писем
     /// берётся из очереди на чтении — опрос сверяет его позже и не чаще своего срока.
+    ///
+    /// <c>period</c>: <c>before</c> — первый день периода ещё не наступил, <c>active</c> — внутри,
+    /// <c>after</c> — последний день прошёл; <c>null</c> — периода нет.
     /// </remarks>
-    public static SubscriptionOut From(CertificateSubscription п, IReadOnlyDictionary<Guid, MailLetterStatus>? letters = null)
+    public static SubscriptionOut From(
+        CertificateSubscription п, DateTimeOffset now, IReadOnlyDictionary<Guid, MailLetterStatus>? letters = null)
     {
         var (доставка, ошибка) = (п.LastError, п.LastSentAt) switch
         {
@@ -97,6 +131,8 @@ internal sealed record SubscriptionOut(
 
         return new(
             п.Id, п.Description, п.CommonNames, п.Recipients, п.Formats, п.IncludePassphrase, п.OnChange, п.IntervalDays,
+            п.ActiveFrom, п.ActiveUntil, п.SendTime?.ToString("HH:mm", CultureInfo.InvariantCulture), п.TimeZone,
+            SendSchedule.Period(п, now)?.ToString().ToLowerInvariant(),
             п.Locale, п.Enabled, п.CreatedAt, п.UpdatedAt, п.SentSerials, п.LastSentAt, п.LastFullSentAt,
             п.LastAttemptAt, ошибка, доставка);
     }
@@ -171,7 +207,9 @@ internal sealed class SubscriptionsController(
         var письма = await mail.StatusAsync(
             [.. подписки.SelectMany(п => п.PendingMailIds ?? [])], cancellationToken);
 
-        return [.. подписки.Select(п => SubscriptionOut.From(п, письма))];
+        var сейчас = clock.GetUtcNow();
+
+        return [.. подписки.Select(п => SubscriptionOut.From(п, сейчас, письма))];
     }
 
     /// <summary>Одна подписка.</summary>
@@ -213,6 +251,12 @@ internal sealed class SubscriptionsController(
 
         Способ(подписка);
 
+        // ⚠ Первое письмо подписки со временем отправки — в ближайшее время отправки, а не в прошедшее сегодня.
+        if (Расписание(подписка, body))
+        {
+            подписка.LastSlotAt = сейчас;
+        }
+
         await db.InTransactionAsync(
             async token =>
             {
@@ -231,6 +275,10 @@ internal sealed class SubscriptionsController(
                         ["include_passphrase"] = подписка.IncludePassphrase,
                         ["on_change"] = подписка.OnChange,
                         ["interval_days"] = подписка.IntervalDays,
+                        ["active_from"] = Дата(подписка.ActiveFrom),
+                        ["active_until"] = Дата(подписка.ActiveUntil),
+                        ["send_time"] = Время(подписка.SendTime),
+                        ["time_zone"] = подписка.TimeZone,
                         ["enabled"] = подписка.Enabled,
                     }));
 
@@ -240,7 +288,7 @@ internal sealed class SubscriptionsController(
 
         wakeup.Signal();
 
-        return Created($"/api/certificate-subscriptions/{подписка.Id}", SubscriptionOut.From(подписка));
+        return Created($"/api/certificate-subscriptions/{подписка.Id}", SubscriptionOut.From(подписка, сейчас));
     }
 
     /// <summary>
@@ -358,6 +406,12 @@ internal sealed class SubscriptionsController(
                     отменено += await ОтменитьВсеAsync(строка, "подписка отключена", token);
                 }
 
+                // Включённая заново не догоняет время отправки, пропущенное, пока была выключена.
+                if (!строка.Enabled && body.Enabled == true)
+                {
+                    строка.LastSlotAt = clock.GetUtcNow();
+                }
+
                 строка.IncludePassphrase = body.IncludePassphrase ?? строка.IncludePassphrase;
                 строка.OnChange = body.OnChange ?? строка.OnChange;
                 строка.Enabled = body.Enabled ?? строка.Enabled;
@@ -367,6 +421,22 @@ internal sealed class SubscriptionsController(
                     var интервал = Интервал(body.IntervalDays);
                     Поле("interval_days", строка.IntervalDays, интервал);
                     строка.IntervalDays = интервал;
+                }
+
+                if (body.ActiveFrom is not null || body.ActiveUntil is not null
+                    || body.SendTime is not null || body.TimeZone is not null)
+                {
+                    var было = (С: Дата(строка.ActiveFrom), По: Дата(строка.ActiveUntil), В: Время(строка.SendTime), Пояс: строка.TimeZone);
+
+                    // ⚠ Новое расписание начинается с ближайшего времени отправки: прошедшее сегодня не догоняется.
+                    if (Расписание(строка, body))
+                    {
+                        Поле("active_from", было.С, Дата(строка.ActiveFrom));
+                        Поле("active_until", было.По, Дата(строка.ActiveUntil));
+                        Поле("send_time", было.В, Время(строка.SendTime));
+                        Поле("time_zone", было.Пояс, строка.TimeZone);
+                        строка.LastSlotAt = clock.GetUtcNow();
+                    }
                 }
 
                 if (body.Locale is not null)
@@ -422,7 +492,7 @@ internal sealed class SubscriptionsController(
 
         wakeup.Signal();
 
-        return SubscriptionOut.From(подписка);
+        return SubscriptionOut.From(подписка, clock.GetUtcNow());
     }
 
     /// <summary>Удалить подписку.</summary>
@@ -571,7 +641,8 @@ internal sealed class SubscriptionsController(
     }
 
     private async Task<SubscriptionOut> ВыдатьAsync(CertificateSubscription подписка, CancellationToken cancellationToken) =>
-        SubscriptionOut.From(подписка, await mail.StatusAsync(подписка.PendingMailIds ?? [], cancellationToken));
+        SubscriptionOut.From(
+            подписка, clock.GetUtcNow(), await mail.StatusAsync(подписка.PendingMailIds ?? [], cancellationToken));
 
     /// <summary>
     /// Подписка по номеру; для правки — под блокировкой строки.
@@ -643,6 +714,94 @@ internal sealed class SubscriptionsController(
 
         return описание.Length > 0 ? описание : null;
     }
+
+    /// <summary>
+    /// Период и время отправки из запроса — в подписку: не присланное не меняется, пустая строка снимает.
+    /// </summary>
+    /// <returns>Изменилось ли что-нибудь.</returns>
+    /// <remarks>
+    /// ⚠ Часовой пояс хранится только при датах или времени: без них он ничего не значит, а с ними без
+    /// него «9:00» — неизвестно чьи.
+    /// </remarks>
+    private static bool Расписание(CertificateSubscription подписка, SubscriptionIn body)
+    {
+        var с = body.ActiveFrom is null ? подписка.ActiveFrom : День(body.ActiveFrom, "active_from");
+        var по = body.ActiveUntil is null ? подписка.ActiveUntil : День(body.ActiveUntil, "active_until");
+        var время = body.SendTime is null ? подписка.SendTime : Время(body.SendTime);
+        var пояс = body.TimeZone is null ? подписка.TimeZone : Пояс(body.TimeZone);
+
+        if (с is not null && по < с)
+        {
+            throw Неверно("active_until", "Последний день раньше первого.");
+        }
+
+        if (с is null && по is null && время is null)
+        {
+            пояс = null;
+        }
+        else if (пояс is null)
+        {
+            throw Неверно(
+                "time_zone", "Нужен часовой пояс (IANA, например Europe/Kyiv): по нему считаются дни и время отправки.");
+        }
+
+        var изменилось = с != подписка.ActiveFrom || по != подписка.ActiveUntil || время != подписка.SendTime
+            || !string.Equals(пояс, подписка.TimeZone, StringComparison.Ordinal);
+
+        подписка.ActiveFrom = с;
+        подписка.ActiveUntil = по;
+        подписка.SendTime = время;
+        подписка.TimeZone = пояс;
+
+        return изменилось;
+    }
+
+    /// <summary>День <c>ГГГГ-ММ-ДД</c>; пустая строка — <c>null</c>.</summary>
+    private static DateOnly? День(string text, string поле)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        return DateOnly.TryParseExact(text.Trim(), "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var день)
+            && день.Year is >= 2000 and <= 2100
+                ? день
+                : throw Неверно(поле, "День — в виде ГГГГ-ММ-ДД.");
+    }
+
+    /// <summary>Время суток <c>ЧЧ:ММ</c> (секунды отбрасываются); пустая строка — <c>null</c>.</summary>
+    private static TimeOnly? Время(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return null;
+        }
+
+        return TimeOnly.TryParseExact(
+                text.Trim(), ["HH:mm", "HH:mm:ss"], CultureInfo.InvariantCulture, DateTimeStyles.None, out var время)
+            ? new TimeOnly(время.Hour, время.Minute)
+            : throw Неверно("send_time", "Время отправки — в виде ЧЧ:ММ.");
+    }
+
+    /// <summary>Часовой пояс IANA, известный базе часовых поясов; пустая строка — <c>null</c>.</summary>
+    private static string? Пояс(string text)
+    {
+        var пояс = text.Trim();
+
+        if (пояс.Length == 0)
+        {
+            return null;
+        }
+
+        return пояс.Length <= 64 && SendSchedule.Zone(пояс) is not null
+            ? пояс
+            : throw Неверно("time_zone", $"Неизвестный часовой пояс: {пояс[..Math.Min(пояс.Length, 64)]}.");
+    }
+
+    private static string? Дата(DateOnly? день) => день?.ToString("O", CultureInfo.InvariantCulture);
+
+    private static string? Время(TimeOnly? время) => время?.ToString("HH:mm", CultureInfo.InvariantCulture);
 
     /// <summary>Хотя бы один способ отправки — при обновлении или по расписанию.</summary>
     private static void Способ(CertificateSubscription подписка)

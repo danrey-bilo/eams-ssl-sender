@@ -280,6 +280,48 @@ public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
         (await клиент.DeleteAsync($"{Подписки}/{id}", Ct)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
     }
 
+    [Fact]
+    public async Task Период_и_время_отправки_хранятся_и_снимаются()
+    {
+        var клиент = host.CreateClient();
+
+        var создано = await клиент.PostAsJsonAsync(Подписки, new
+        {
+            common_name = "site.example.com",
+            recipients = new[] { "it@example.com" },
+            active_from = "2020-01-01",
+            active_until = "2020-01-31",
+            send_time = "09:30:59",
+            time_zone = "Europe/Kiev",
+        }, Ct);
+        создано.StatusCode.ShouldBe(HttpStatusCode.Created);
+
+        var подписка = (await создано.Content.ReadFromJsonAsync<JsonObject>(Ct))!;
+        var id = подписка["id"]!.GetValue<Guid>();
+        подписка["active_from"]!.GetValue<string>().ShouldBe("2020-01-01");
+        подписка["active_until"]!.GetValue<string>().ShouldBe("2020-01-31");
+        подписка["send_time"]!.GetValue<string>().ShouldBe("09:30", "секунды отбрасываются");
+        подписка["time_zone"]!.GetValue<string>().ShouldBe("Europe/Kiev");
+        подписка["period"]!.GetValue<string>().ShouldBe("after", "последний день прошёл");
+
+        var другое = await клиент.PatchAsJsonAsync($"{Подписки}/{id}", new { locale = "en" }, Ct);
+        (await другое.Content.ReadFromJsonAsync<JsonObject>(Ct))!["send_time"]!.GetValue<string>()
+            .ShouldBe("09:30", "не присланное не меняется");
+
+        var безПериода = (await (await клиент.PatchAsJsonAsync(
+            $"{Подписки}/{id}", new { active_from = "", active_until = "" }, Ct)).Content.ReadFromJsonAsync<JsonObject>(Ct))!;
+        безПериода["active_from"].ShouldBeNull("пустая строка снимает");
+        безПериода["period"].ShouldBeNull();
+        безПериода["time_zone"]!.GetValue<string>().ShouldBe("Europe/Kiev", "время отправки осталось — пояс при нём");
+
+        var безВремени = (await (await клиент.PatchAsJsonAsync(
+            $"{Подписки}/{id}", new { send_time = "" }, Ct)).Content.ReadFromJsonAsync<JsonObject>(Ct))!;
+        безВремени["send_time"].ShouldBeNull();
+        безВремени["time_zone"].ShouldBeNull("без дат и времени пояс не хранится");
+
+        (await клиент.DeleteAsync($"{Подписки}/{id}", Ct)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
+    }
+
     public static TheoryData<string, string> Неверные => new()
     {
         { """{"recipients":["it@example.com"]}""", "common_names" },
@@ -295,6 +337,11 @@ public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
         { """{"common_name":"a","recipients":["it@example.com"],"interval_days":400}""", "interval_days" },
         { """{"common_name":"a","recipients":["it@example.com"],"locale":"de"}""", "locale" },
         { "{\"common_name\":\"a\",\"recipients\":[\"it@example.com\"],\"description\":\"" + new string('о', 501) + "\"}", "description" },
+        { """{"common_name":"a","recipients":["it@example.com"],"active_from":"01.11.2026","time_zone":"UTC"}""", "active_from" },
+        { """{"common_name":"a","recipients":["it@example.com"],"active_from":"2026-11-30","active_until":"2026-11-01","time_zone":"UTC"}""", "active_until" },
+        { """{"common_name":"a","recipients":["it@example.com"],"send_time":"25:00","time_zone":"UTC"}""", "send_time" },
+        { """{"common_name":"a","recipients":["it@example.com"],"send_time":"09:00"}""", "time_zone" },
+        { """{"common_name":"a","recipients":["it@example.com"],"send_time":"09:00","time_zone":"Mars/Olympus"}""", "time_zone" },
     };
 
     [Theory]

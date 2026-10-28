@@ -929,7 +929,138 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         }
     }
 
+    // --- период «с — по» и время отправки (решение владельца 2026-10-28) ------------------
+
+    [Fact]
+    public async Task До_первого_дня_периода_опрос_не_шлёт()
+    {
+        База("site.example.com", "aa01", Год);
+        var id = await Подписка("site.example.com", ["a@example.com"], activeFrom: Сегодня.AddDays(1), timeZone: "UTC");
+
+        (await Опросить()).Sent.ShouldBe(0, "первый день не наступил");
+        (await Прочитать(id)).LastAttemptAt.ShouldBeNull("вне периода опрос подписку не трогает");
+
+        Завтра(0, 5);
+        (await Опросить()).Sent.ShouldBe(1, "первый день — первая отправка");
+    }
+
+    [Fact]
+    public async Task После_последнего_дня_опрос_молчит_а_вручную_можно()
+    {
+        База("site.example.com", "aa01", Год);
+        var id = await Подписка("site.example.com", ["a@example.com"], activeFrom: Сегодня, activeUntil: Сегодня, timeZone: "UTC");
+
+        (await Опросить()).Sent.ShouldBe(1, "последний день — ещё внутри периода");
+
+        Завтра(0, 5);
+        База("site.example.com", "bb02", Год.AddYears(1));
+        (await Опросить()).Sent.ShouldBe(0, "период кончился — обновление не уходит");
+
+        (await Вручную(id)).Outcome.ShouldBe(DeliveryOutcome.Sent, "ручная отправка период не спрашивает");
+    }
+
+    [Fact]
+    public async Task Время_отправки_держит_письма_до_своего_часа()
+    {
+        База("site.example.com", "aa01", Год);
+        Завтра(8, 0);
+        var id = await Подписка("site.example.com", ["a@example.com"], sendTime: new TimeOnly(9, 0), timeZone: "UTC");
+
+        (await Опросить()).Sent.ShouldBe(0, "до 09:00 не шлёт");
+
+        На(база.Часы.GetUtcNow().AddMinutes(65));
+        (await Опросить()).Sent.ShouldBe(1, "09:05 — первая отправка");
+        (await Опросить()).Sent.ShouldBe(0, "время отправки разобрано");
+
+        На(база.Часы.GetUtcNow().AddHours(1));
+        База("site.example.com", "bb02", Год.AddYears(1));
+        (await Опросить()).Sent.ShouldBe(0, "замеченное после 09:00 ждёт следующего дня");
+
+        Завтра(8, 55);
+        (await Опросить()).Sent.ShouldBe(0, "назавтра до 09:00 — тоже ждёт");
+
+        На(база.Часы.GetUtcNow().AddMinutes(10));
+        (await Опросить()).Sent.ShouldBe(1, "назавтра в 09:00 — уходит");
+
+        база.Почта.Письма.Count.ShouldBe(2);
+        (await Прочитать(id)).SentSerials["site.example.com"].ShouldBe("bb02");
+    }
+
+    [Fact]
+    public async Task Пропущенное_время_отправки_догоняется_один_раз()
+    {
+        База("site.example.com", "aa01", Год);
+        Завтра(8, 0);
+        await Подписка("site.example.com", ["a@example.com"], sendTime: new TimeOnly(9, 0), timeZone: "UTC");
+
+        // Сервис стоял: ни вчерашнее, ни сегодняшнее 09:00 опрос не видел.
+        Завтра(15, 0);
+        (await Опросить()).Sent.ShouldBe(1, "пропущенное 09:00 догоняется");
+        (await Опросить()).Sent.ShouldBe(0, "и только один раз");
+    }
+
+    [Fact]
+    public async Task Раз_в_N_дней_со_временем_отправки_считается_днями()
+    {
+        База("site.example.com", "aa01", Год);
+        Завтра(8, 0);
+        await Подписка("site.example.com", ["a@example.com"], onChange: false, intervalDays: 1, sendTime: new TimeOnly(9, 0), timeZone: "UTC");
+
+        На(база.Часы.GetUtcNow().AddMinutes(70));
+        (await Опросить()).Sent.ShouldBe(1, "09:10 — первая отправка");
+
+        // 09:01 — раньше вчерашних 09:10, но день уже следующий.
+        Завтра(9, 1);
+        (await Опросить()).Sent.ShouldBe(1, "раз в день — назавтра в своё время, а не через сутки после прошлой");
+        база.Аудит.Записи.Last(з => з.Action == KeyManagerActions.CertificateSent).Reason.ShouldBe("scheduled");
+    }
+
+    [Fact]
+    public async Task Время_отправки_считается_в_часовом_поясе_подписки()
+    {
+        var пояс = TimeZoneInfo.FindSystemTimeZoneById("Europe/Kiev");
+        var девять = new DateTimeOffset(
+            TimeZoneInfo.ConvertTimeToUtc(Сегодня.AddDays(2).ToDateTime(new TimeOnly(9, 0)), пояс), TimeSpan.Zero);
+
+        // Киев — UTC+2 зимой и UTC+3 летом: 09:00 там — не 09:00 UTC.
+        девять.Hour.ShouldBeOneOf(6, 7);
+
+        База("site.example.com", "aa01", Год);
+        На(девять.AddHours(-3));
+        await Подписка("site.example.com", ["a@example.com"], sendTime: new TimeOnly(9, 0), timeZone: "Europe/Kiev");
+
+        На(девять.AddMinutes(-10));
+        (await Опросить()).Sent.ShouldBe(0, "в Киеве ещё 08:50");
+
+        На(девять.AddMinutes(5));
+        (await Опросить()).Sent.ShouldBe(1, "в Киеве 09:05");
+    }
+
+    [Fact]
+    public async Task Автоповтор_не_ждёт_следующего_времени_отправки()
+    {
+        База("site.example.com", "aa01", Год);
+        Завтра(8, 0);
+        await Подписка("site.example.com", ["a@example.com"], sendTime: new TimeOnly(9, 0), timeZone: "UTC");
+
+        На(база.Часы.GetUtcNow().AddMinutes(65));
+        (await Опросить()).Sent.ShouldBe(1);
+
+        Умерли(база.Почта.Номера);
+        На(база.Часы.GetUtcNow().AddHours(3));
+        (await Опросить()).Sent.ShouldBe(1, "письма той же отправки уходят сразу, а не завтра в 09:00");
+    }
+
     // --- обвязка ---------------------------------------------------------------------------
+
+    /// <summary>Часы — вперёд до заданного мгновения.</summary>
+    private void На(DateTimeOffset когда) => база.Часы.Вперёд(когда - база.Часы.GetUtcNow());
+
+    /// <summary>Часы — на завтра по UTC, в заданное время.</summary>
+    private void Завтра(int час, int минута) =>
+        На(new DateTimeOffset(база.Часы.GetUtcNow().UtcDateTime.Date.AddDays(1).AddHours(час).AddMinutes(минута), TimeSpan.Zero));
+
+    private DateOnly Сегодня => DateOnly.FromDateTime(база.Часы.GetUtcNow().UtcDateTime);
 
     private void Умерли(IEnumerable<Guid> номера)
     {
@@ -966,7 +1097,11 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         bool includePassphrase = false,
         string[]? formats = null,
         string[]? also = null,
-        string? description = null)
+        string? description = null,
+        DateOnly? activeFrom = null,
+        DateOnly? activeUntil = null,
+        TimeOnly? sendTime = null,
+        string? timeZone = null)
     {
         await using var scope = база.Scope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -985,6 +1120,13 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
             Locale = MailLocales.Ru,
             CreatedAt = база.Часы.GetUtcNow(),
             UpdatedAt = база.Часы.GetUtcNow(),
+            ActiveFrom = activeFrom,
+            ActiveUntil = activeUntil,
+            SendTime = sendTime,
+            TimeZone = timeZone,
+
+            // Как у API: новое расписание начинается с ближайшего времени отправки.
+            LastSlotAt = activeFrom is null && activeUntil is null && sendTime is null ? null : база.Часы.GetUtcNow(),
         };
 
         db.Add(подписка);

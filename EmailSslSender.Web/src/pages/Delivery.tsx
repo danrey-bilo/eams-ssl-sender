@@ -67,7 +67,27 @@ function scheduleText(s: Subscription): string {
   const parts: string[] = [];
   if (s.on_change) parts.push('при обновлении');
   if (s.interval_days) parts.push('раз в ' + s.interval_days + ' дн.');
-  return parts.length ? parts.join(' · ') : 'вручную';
+  if (!parts.length) parts.push('вручную');
+  if (s.send_time) parts.push('в ' + s.send_time);
+  return parts.join(' · ');
+}
+
+/** Период «с — по», если он есть, и где подписка относительно него. */
+function Period({ s }: { s: Subscription }) {
+  if (!s.active_from && !s.active_until) return null;
+  const range = [s.active_from && 'с ' + fmtDate(s.active_from), s.active_until && 'по ' + fmtDate(s.active_until)]
+    .filter(Boolean).join(' ');
+  const state = s.period === 'before' ? 'ещё не началась' : s.period === 'after' ? 'окончена' : null;
+  return <span className="period">{range}{state && <span className="state"> · {state}</span>}</span>;
+}
+
+/** Часовой пояс браузера: по нему администратор вводит дни и время отправки. */
+function browserZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+  } catch {
+    return 'UTC';
+  }
 }
 
 export function DeliveryPage() {
@@ -138,12 +158,13 @@ export function DeliveryPage() {
         <div className="card flush">
           <div className="list">
             {subscriptions.map(s => (
-              <div key={s.id} className={'item' + (s.enabled ? '' : ' off')}>
+              <div key={s.id} className={'item' + (s.enabled && s.period !== 'after' ? '' : ' off')}>
                 <div className="item-main">
                   {s.description && <span className="desc">{s.description}</span>}
                   <div className="item-title"><Names s={s} expiry={expiry} /></div>
                   <div className="item-meta">{s.recipients.join(', ')}</div>
                   <div className="item-meta">{scheduleText(s)}</div>
+                  {(s.active_from || s.active_until) && <div className="item-meta"><Period s={s} /></div>}
                   <div className="item-status"><LastDelivery s={s} /></div>
                 </div>
                 <Menu title={namesText(s)} items={[
@@ -171,7 +192,7 @@ export function DeliveryPage() {
             </thead>
             <tbody>
               {subscriptions.map(s => (
-                <tr key={s.id} className={s.enabled ? '' : 'off'}>
+                <tr key={s.id} className={s.enabled && s.period !== 'after' ? '' : 'off'}>
                   <td>
                     {s.description && <span className="desc">{s.description}</span>}
                     <Names s={s} expiry={expiry} />
@@ -182,7 +203,7 @@ export function DeliveryPage() {
                   <td>
                     <div className="chips">{s.formats.map(f => <span key={f} className="chip mono">{f}</span>)}</div>
                   </td>
-                  <td className="muted">{scheduleText(s)}</td>
+                  <td className="muted">{scheduleText(s)}<Period s={s} /></td>
                   <td><LastDelivery s={s} /></td>
                   <td className="actions">
                     <button className="icon" title="Отправить сейчас" onClick={() => send(s)}><Icon name="send" /></button>
@@ -209,6 +230,16 @@ function LastDelivery({ s }: { s: Subscription }) {
   if (!s.enabled) {
     const last = s.last_sent_at ? 'Последняя отправка ' + fmtDateTime(s.last_sent_at) : undefined;
     return <span title={last}><Status kind="">Выключена</Status></span>;
+  }
+
+  // Период окончен — опрос её больше не шлёт, как и выключенную.
+  if (s.period === 'after') {
+    const last = s.last_sent_at ? 'Последняя отправка ' + fmtDateTime(s.last_sent_at) : undefined;
+    return <span title={last}><Status kind="">Период окончен</Status></span>;
+  }
+
+  if (s.period === 'before' && s.delivery === 'none' && s.active_from) {
+    return <span className="muted">начнётся {fmtDate(s.active_from)}</span>;
   }
 
   switch (s.delivery) {
@@ -250,6 +281,12 @@ function SubscriptionDialog({ subscription: s, known, onClose }: {
   const [enabled, setEnabled] = useState(s ? s.enabled : true);
   const [locale, setLocale] = useState(s?.locale ?? 'ru');
   const [description, setDescription] = useState(s?.description ?? '');
+  const [sendTime, setSendTime] = useState(s?.send_time ?? '');
+  const [planned, setPlanned] = useState(!!(s?.active_from || s?.active_until));
+  const [from, setFrom] = useState(s?.active_from ?? '');
+  const [until, setUntil] = useState(s?.active_until ?? '');
+  // Пояс подписки остаётся её: правка из другого пояса не сдвигает её дни и время.
+  const zone = s?.time_zone ?? browserZone();
   const knownNames = useMemo(() => [...new Set(known.map(c => c.common_name))].sort(), [known]);
   const offered = knownNames.filter(n => !names.some(x => x.toLowerCase() === n.toLowerCase()));
 
@@ -266,6 +303,8 @@ function SubscriptionDialog({ subscription: s, known, onClose }: {
     if (all.length === 0) throw new Invalid('Добавьте хотя бы один сертификат.');
     if (formats.length === 0) throw new Invalid('Выберите хотя бы один файл.');
     if (!onChange && !days) throw new Invalid('Выберите, когда отправлять: при обновлении, раз в N дней или оба варианта.');
+    if (planned && !from && !until) throw new Invalid('Укажите первый или последний день отправки.');
+    if (planned && from && until && until < from) throw new Invalid('Последний день раньше первого.');
     const body = {
       common_names: all,
       recipients: recipients.split(/[\s,;]+/).map(v => v.trim()).filter(Boolean),
@@ -277,6 +316,11 @@ function SubscriptionDialog({ subscription: s, known, onClose }: {
       enabled,
       // Пустое снимает описание.
       description: description.trim(),
+      // Пустые строки снимают период и время.
+      active_from: planned ? from : '',
+      active_until: planned ? until : '',
+      send_time: sendTime,
+      time_zone: zone,
     };
     if (s) await api.patch('/api/certificate-subscriptions/' + s.id, body);
     else await api.post('/api/certificate-subscriptions', body);
@@ -333,6 +377,29 @@ function SubscriptionDialog({ subscription: s, known, onClose }: {
             <input type="number" min={1} max={365} placeholder="—" aria-label="Дней" value={days} onChange={e => setDays(e.target.value)} />
             дн.
           </div>
+          <div className="inline">
+            Время отправки
+            <input type="time" aria-label="Время отправки" value={sendTime} onChange={e => setSendTime(e.target.value)} />
+            {sendTime && <button type="button" className="link" onClick={() => setSendTime('')}>без времени</button>}
+          </div>
+          <Check label="Запланированный старт и окончание" checked={planned} onChange={setPlanned} />
+          {planned && (
+            <div className="inline">
+              {/* Подпись и поле переносятся вместе: на телефоне «по» не отрывается от своего дня. */}
+              <span className="inline">
+                с
+                <input type="date" aria-label="Первый день" value={from} max={until || undefined} onChange={e => setFrom(e.target.value)} />
+              </span>
+              <span className="inline">
+                по
+                <input type="date" aria-label="Последний день" value={until} min={from || undefined} onChange={e => setUntil(e.target.value)} />
+              </span>
+            </div>
+          )}
+          <small className="muted">
+            {sendTime ? 'Письма уходят в ' + sendTime + ', замеченное позже — на следующий день.' : 'Без времени — сразу, как заметит опрос.'}
+            {(sendTime || planned) && ' Время и дни — по поясу ' + zone + '; вручную можно отправить всегда.'}
+          </small>
         </div>
       </Group>
       <div className="row">

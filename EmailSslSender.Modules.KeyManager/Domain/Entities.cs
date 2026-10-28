@@ -106,6 +106,41 @@ internal sealed class CertificateSubscription
     /// <summary>Слать ли повторно все сертификаты раз в столько дней. <c>null</c> — без расписания.</summary>
     public int? IntervalDays { get; set; }
 
+    /// <summary>С какого дня (включительно) опрос шлёт подписку сам. <c>null</c> — без начала.</summary>
+    /// <remarks>
+    /// ⚠ ⚠ Период и время отправки (решение владельца 2026-10-28) держат только опрос: ручная отправка —
+    /// решение администратора и шлёт всегда. День и время — по <see cref="TimeZone"/>. Разбор — у
+    /// <c>SendSchedule</c>.
+    /// </remarks>
+    public DateOnly? ActiveFrom { get; set; }
+
+    /// <summary>По какой день (включительно) опрос шлёт подписку сам. <c>null</c> — без окончания.</summary>
+    public DateOnly? ActiveUntil { get; set; }
+
+    /// <summary>
+    /// В какое время суток опрос шлёт подписку. <c>null</c> — сразу, как опрос заметил, что пора.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ «В это время», а не «не раньше»: обновление, замеченное после него, ждёт следующего дня.
+    /// </remarks>
+    public TimeOnly? SendTime { get; set; }
+
+    /// <summary>
+    /// Часовой пояс IANA (<c>Europe/Kyiv</c>) дат и времени отправки — из браузера администратора.
+    /// <c>null</c>, если ни дат, ни времени нет.
+    /// </summary>
+    public string? TimeZone { get; set; }
+
+    /// <summary>
+    /// Последнее время отправки, которое опрос уже разобрал: отправил или решил, что слать нечего.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Одно время отправки разбирается один раз — иначе каждый опрос до полуночи слал бы замеченное
+    /// после него. Новое расписание и включение подписки ставят сюда «сейчас»: прошедшее сегодня не
+    /// догоняется, первое письмо — в ближайшее время отправки.
+    /// </remarks>
+    public DateTimeOffset? LastSlotAt { get; set; }
+
     /// <summary>Язык письма: <c>ru</c>, <c>uk</c> или <c>en</c>.</summary>
     public required string Locale { get; set; }
 

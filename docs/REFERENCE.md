@@ -520,6 +520,24 @@ build 7110) и рассылает файлы SSL-сертификатов по *
 - **Вручную** — `POST /api/certificate-subscriptions/{id}/send`, кнопка «Отправить сейчас»: все
   сертификаты подписки.
 
+**Период и время отправки** (с 2.4) ограничивают только опрос; ручная отправка шлёт всегда.
+
+- **Период** (`active_from`, `active_until`, оба дня включительно, можно задать один): до первого дня и
+  после последнего опрос подписку не шлёт и не трогает — ни выгрузки, ни ошибок в `last_error`. В
+  первый день уходит всё, что ещё не отправлено: при обновлении — неотправленные сертификаты, по
+  расписанию — все.
+- **Время отправки** (`send_time`) — «в это время», а не «не раньше». Опрос разбирает каждое время
+  отправки один раз: шлёт то, что пора, и до следующего дня молчит. Обновление, замеченное в 10:00 при
+  времени 09:00, уходит завтра в 09:00. Пропущенное время — сервис стоял, Key Manager Plus не отвечал —
+  догоняется первым удачным опросом после него. «Раз в N дней» со временем отправки считается днями
+  календаря: раз в день — каждый день в 09:00.
+- После заведения подписки, смены периода, времени или пояса и после включения подписки первое
+  письмо уходит в ближайшее время отправки: прошедшее сегодня не догоняется.
+- Автоповтор (не дошло ни одно письмо) время отправки не ждёт, а период соблюдает.
+- Дни и время — по часовому поясу подписки (`time_zone`, IANA, например `Europe/Kyiv`; панель берёт
+  его из браузера), с переходом на летнее время. Время, которого в этот день нет (часы переведены
+  вперёд), наступает в первую минуту после перевода.
+
 Подписка обязана иметь **хотя бы один способ отправки** — `on_change` или `interval_days`; без них
 сервис её не сохранит (`400`, поле `on_change`): такая подписка молча ничего не слала бы. Проверка
 срабатывает, когда задают или меняют способ; подписку 2.0 без способа можно править (например,
@@ -625,6 +643,9 @@ curl -s -X PATCH $API/api/settings/system -H "Authorization: Bearer $TOKEN" -H '
 | `locale` | `ru` | Язык письма: `ru`, `uk`, `en` |
 | `enabled` | `true` | Отключённую подписку опрос не шлёт; вручную её отправить можно |
 | `description` | нет | Описание для администраторов, до 500 знаков: для кого и зачем рассылка. Видно только в панели и API, в письма не уходит; в журнал пишется только его длина. Пустая строка в `PATCH` снимает описание |
+| `active_from`, `active_until` | нет | Период, в который опрос шлёт подписку сам: дни `ГГГГ-ММ-ДД`, оба включительно, можно задать один; последний не раньше первого. Пустая строка снимает. Нужен `time_zone` |
+| `send_time` | нет | Время отправки `ЧЧ:ММ` (секунды отбрасываются): письма опроса уходят в это время, замеченное позже — на следующий день. Пустая строка снимает — тогда сразу. Нужен `time_zone` |
+| `time_zone` | нет | Часовой пояс IANA (`Europe/Kyiv`, `UTC`) для периода и времени отправки. Без них не хранится |
 
 ```bash
 curl -s -X POST $API/api/certificate-subscriptions -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"common_names":["*.example.com","vpn.example.com"],"recipients":["admin1@example.com","admin2@example.com"],"formats":["PEM","KEY"],"interval_days":30}'
@@ -632,7 +653,8 @@ curl -s -X POST $API/api/certificate-subscriptions -H "Authorization: Bearer $TO
 
 Каждый адрес получает своё письмо. В ответе подписки `sent_serials` — какой серийный номер ушёл
 последним по каждому Common Name, `last_sent_at` — последняя отправка, `last_full_sent_at` — последняя
-отправка всех сертификатов. Поле `delivery` показывает судьбу последней отправки:
+отправка всех сертификатов, `period` — где подписка относительно периода: `before` (первый день не
+наступил), `active`, `after` (последний день прошёл) или `null` (периода нет). Поле `delivery` показывает судьбу последней отправки:
 - `queued` — письма в очереди;
 - `sent` — сервер их принял;
 - `failed` — не ушли, причина в `last_error`;
@@ -760,7 +782,7 @@ curl -s "$API/api/users?limit=50" -H "Authorization: Bearer $TOKEN"
 | POST | `/api/keymanager/certificates/download` | Ф | Файл сертификата: `common_name`, `serial_number`, `format` (`PEM`, `CRT`, `CER`, `DER`, `P7B`, `PKCS`, `JKS`, `KEY`); имя — в `Content-Disposition` |
 | POST | `/api/keymanager/certificates/private-key` | Ф | Закрытый ключ PEM и пароль: `common_name`, `serial_number` → `{"private_key", "passphrase"}` |
 | GET | `/api/certificate-subscriptions`, `/{id}` | | Подписки на сертификаты |
-| POST | `/api/certificate-subscriptions` | Ф | Завести: `common_names` (или `common_name`), `recipients`, `formats`, `on_change`, `interval_days`, `include_passphrase`, `locale`, `enabled`, `description` |
+| POST | `/api/certificate-subscriptions` | Ф | Завести: `common_names` (или `common_name`), `recipients`, `formats`, `on_change`, `interval_days`, `include_passphrase`, `locale`, `enabled`, `description`, `active_from`, `active_until`, `send_time`, `time_zone` |
 | PATCH | `/api/certificate-subscriptions/{id}` | Ф | Изменить те же поля |
 | DELETE | `/api/certificate-subscriptions/{id}` | Ф | Удалить |
 | POST | `/api/certificate-subscriptions/{id}/send` | Ф | Отправить текущий сертификат сейчас |
