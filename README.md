@@ -42,7 +42,7 @@ and send them to every team that installs them. EAMS ssl sender does that for yo
 
 ## Features
 
-| | |
+| Feature | What you get |
 |---|---|
 | **Subscriptions** | Which certificates (1–50), to whom (up to 20 addresses), which files and when. A short description says who the subscription is for. |
 | **When to send** | When a certificate is renewed (only the renewed one goes out), every N days (all of them), at a set time of day, within a planned start and end date. **Send now** works at any time. |
@@ -67,12 +67,10 @@ and send them to every team that installs them. EAMS ssl sender does that for yo
     <td align="center"><sub>Certificates sorted by expiry · the Key Manager Plus connection</sub></td>
   </tr>
   <tr>
-    <td width="50%"><img src="docs/images/letter-en.png" alt="Letter to a recipient"></td>
-    <td width="50%" align="center"><img src="docs/images/mobile-delivery.png" alt="Panel on a phone" width="45%"> <img src="docs/images/mobile-certificates.png" alt="Certificates on a phone" width="45%"></td>
+    <td colspan="2" align="center"><img src="docs/images/mobile-delivery.png" alt="Delivery on a phone" width="30%">&nbsp;&nbsp;&nbsp;<img src="docs/images/mobile-certificates.png" alt="Certificates on a phone" width="30%"></td>
   </tr>
   <tr>
-    <td align="center"><sub>What a recipient gets</sub></td>
-    <td align="center"><sub>The panel on a phone</sub></td>
+    <td colspan="2" align="center"><sub>The panel on a phone: subscriptions and certificates</sub></td>
   </tr>
 </table>
 
