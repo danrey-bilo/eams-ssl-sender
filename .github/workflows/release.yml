@@ -93,6 +93,7 @@ jobs:
             > "pkg/$PKG/docker-compose.yml"
           sed "s|^SENDER_IMAGE=.*|SENDER_IMAGE=$IMAGE:$VERSION|" deploy/portainer/.env.example > "pkg/$PKG/.env.example"
           sed -e "s|vX\.Y\.Z|$TAG|g" -e "s|:X\.Y\.Z|:$VERSION|g" deploy/portainer/README.md > "pkg/$PKG/README.md"
+          cp LICENSE LICENSE.ru.md "pkg/$PKG/"
           (cd pkg && zip -qr "../$PKG.zip" "$PKG")
 
           # Вариант для командной строки — секреты файлами, скрипты установки.
@@ -100,6 +101,7 @@ jobs:
           sed "s|\${SENDER_IMAGE:-[^}]*}|\${SENDER_IMAGE:-$IMAGE:$VERSION}|" docker-compose.yml \
             > "cli/email-ssl-sender/docker-compose.yml"
           cp .env.example "cli/email-ssl-sender/.env.example"
+          cp LICENSE LICENSE.ru.md "cli/email-ssl-sender/"
           cp scripts/gen-secrets.sh scripts/set-tunnel-token.sh scripts/reset-access.sh "cli/email-ssl-sender/scripts/"
           chmod +x cli/email-ssl-sender/scripts/*.sh
           (cd cli && zip -qr "../email-ssl-sender-cli-$TAG.zip" email-ssl-sender)

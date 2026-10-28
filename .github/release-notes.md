@@ -1,4 +1,4 @@
-Образ: `{IMAGE}:{VERSION}`
+Образ / Image: `{IMAGE}:{VERSION}`
 
 ## Установка через Portainer
 
@@ -19,6 +19,18 @@
 ## Командная строка
 
 `email-ssl-sender-cli-{TAG}.zip` — вариант с секретами в файлах:
-[инструкция](https://github.com/{REPOSITORY}#установка).
+[инструкция](https://github.com/{REPOSITORY}/blob/main/README.ru.md#установка).
 
-Контрольные суммы — в `SHA256SUMS`.
+## In English
+
+- **Portainer:** download **`email-ssl-sender-{TAG}.zip`**, import `email-ssl-sender-image-{TAG}.tar`
+  in **Images → Import**, fill in `.env.example`, then **Stacks → Add stack → Upload** the
+  `docker-compose.yml` with **Load variables from .env file**. In Cloudflare, point the tunnel's
+  Public Hostname to `HTTP` `api:8001`.
+- **Update:** import the new image, set `SENDER_IMAGE={IMAGE}:{VERSION}` in the stack variables,
+  **Update the stack** — migrations run by themselves.
+- **Command line:** `email-ssl-sender-cli-{TAG}.zip` keeps secrets in files —
+  [instructions](https://github.com/{REPOSITORY}#installation-from-the-command-line).
+- Free to use, no code copying — see [LICENSE](https://github.com/{REPOSITORY}/blob/main/LICENSE).
+
+Контрольные суммы / Checksums — `SHA256SUMS`.

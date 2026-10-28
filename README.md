@@ -1,196 +1,235 @@
-# EAMS ssl sender
+<p align="center">
+  <img src="docs/images/logo.svg" width="88" height="88" alt="EAMS ssl sender">
+</p>
 
-Рассылка SSL-сертификатов из **ManageEngine Key Manager Plus** по почте. Сертификат обновился
-в Key Manager Plus — нужные люди получают его файлы письмом. Без ручной выгрузки и пересылки.
+<h1 align="center">EAMS ssl sender</h1>
 
-- **Подписки:** какие сертификаты (один или несколько), кому, какие файлы (`PEM`, `KEY`, `CRT`, `PFX`,
-  `JKS`…), когда — при обновлении (уходит только обновлённый) и/или раз в N дней (уходят все).
-- **Веб-панель** с входом по паролю и коду из приложения-аутентификатора.
-- **Почта через ваш SMTP** по SSL/TLS, очередь с повторами.
-- **Docker:** один образ сервиса, PostgreSQL и Cloudflare Tunnel — без открытых портов на сервере.
+<p align="center">
+  <b>SSL certificates from ManageEngine Key Manager Plus, delivered by email — automatically.</b><br>
+  A certificate is renewed in Key Manager Plus, and the people who install it get its files in their inbox.
+</p>
 
-Письмо получателю — файлы одним архивом ZIP (Outlook блокирует вложения `.crt`, `.cer`, `.der`):
+<p align="center">
+  <a href="https://github.com/danrey-bilo/email_ssl_sender/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/danrey-bilo/email_ssl_sender?style=flat-square&color=2563eb&label=release"></a>
+  <a href="LICENSE"><img alt="License: free to use, no code copying" src="https://img.shields.io/badge/license-free%20to%20use%20%C2%B7%20no%20code%20copying-0f172a?style=flat-square"></a>
+  <img alt="Key Manager Plus 7.1.1+" src="https://img.shields.io/badge/Key%20Manager%20Plus-7.1.1%2B-0ea5e9?style=flat-square">
+  <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512bd4?style=flat-square&logo=dotnet&logoColor=white">
+  <img alt="React 19" src="https://img.shields.io/badge/React-19-149eca?style=flat-square&logo=react&logoColor=white">
+  <img alt="PostgreSQL 16" src="https://img.shields.io/badge/PostgreSQL-16-4169e1?style=flat-square&logo=postgresql&logoColor=white">
+  <img alt="Docker" src="https://img.shields.io/badge/Docker-ready-2496ed?style=flat-square&logo=docker&logoColor=white">
+  <img alt="Cloudflare Tunnel" src="https://img.shields.io/badge/Cloudflare-Tunnel-f38020?style=flat-square&logo=cloudflare&logoColor=white">
+</p>
 
-```
-Тема: SSL-сертификат example.com
-Вложение: example.com.zip
+<p align="center">
+  <b>English</b> · <a href="README.ru.md">Русский</a>
+</p>
 
-Здравствуйте!
+<p align="center">
+  <img src="docs/images/delivery.png" alt="Subscriptions in the web panel" width="900">
+</p>
 
-Отправляем файлы SSL-сертификата.
+## Why
 
-Сертификат: example.com
-Форматы: CRT, KEY
-Действует до: 08.01.2027
+Certificates live and get renewed in ManageEngine Key Manager Plus — often automatically, and more
+often than ever as certificate lifetimes get shorter. Someone still has to download the new files
+and send them to every team that installs them. EAMS ssl sender does that for you:
 
-Во вложении — архив example.com.zip:
-  • example.com.crt
-  • example.com.key
-  • passphrase.txt
+- it **watches Key Manager Plus** and notices a renewed certificate on its own;
+- it **emails the right files to the right people** — only what they need, in the format their
+  servers use;
+- it keeps **keys and secrets protected** on the way: two-factor sign-in, encryption at rest, strict
+  TLS everywhere, an append-only audit log.
 
-Спасибо,
-EAMS ssl sender
-```
+## Features
 
----
-
-## Содержание
-
-1. [Требования](#требования)
-2. [Установка через Portainer](#установка-через-portainer)
-3. [Установка из командной строки](#установка)
-4. [Настройка в панели](#настройка-в-панели)
-5. [Безопасность](#безопасность)
-6. [Обновление](#обновление)
-7. [Резервные копии и восстановление доступа](#резервные-копии-и-восстановление-доступа)
-8. [Справочник](#справочник)
-
----
-
-## Требования
-
-| Что | Зачем |
+| | |
 |---|---|
-| Сервер Linux с Docker Engine и Compose v2 или Portainer | Сервис, база и туннель в контейнерах |
-| Домен в Cloudflare | Публикация панели через Cloudflare Tunnel (или свой обратный прокси с TLS) |
-| Почтовый ящик с доступом по SMTP | С него уходят письма |
-| Key Manager Plus 7.1.1+ и ключ его REST API | Откуда берутся сертификаты |
+| **Subscriptions** | Which certificates (1–50), to whom (up to 20 addresses), which files and when. A short description says who the subscription is for. |
+| **When to send** | When a certificate is renewed (only the renewed one goes out), every N days (all of them), at a set time of day, within a planned start and end date. **Send now** works at any time. |
+| **Files** | Any of the eight Key Manager Plus formats — `PEM`, `CRT`, `CER`, `DER`, `P7B`, `PFX`, `JKS`, `KEY` — plus the key passphrase, packed into one ZIP archive per letter. |
+| **Letters** | In English, Ukrainian or Russian. HTML with a certificate table (name, formats, valid until, days left) plus a plain-text part. No links, no images, no tracking. |
+| **Web panel** | Certificates with expiry highlighting and sorting, download of any format, viewing the private key, users and invitations, security settings. Works on phones too. |
+| **Security** | Password plus authenticator app (TOTP), a fresh code before every sensitive action, AES-256-GCM encryption of secrets, full TLS validation, secrets bound to their server, append-only audit log. |
+| **Deployment** | One Docker image, PostgreSQL and Cloudflare Tunnel — no inbound ports on your server. Portainer-friendly. |
 
-Серверу нужен исходящий доступ к Cloudflare, SMTP-серверу и Key Manager Plus (порт 6565).
-Входящие порты не нужны.
+> The web panel is in Russian. Letters to recipients can be in English, Ukrainian or Russian, and
+> the [user guide](#documentation) is available in both English and Russian.
 
----
+## Screenshots
 
-## Установка через Portainer
+<table>
+  <tr>
+    <td width="50%"><img src="docs/images/subscription.png" alt="Subscription dialog"></td>
+    <td width="50%"><img src="docs/images/certificates.png" alt="Certificates sorted by expiry"><br><br><img src="docs/images/keymanager.png" alt="Key Manager Plus connection"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>A subscription: two certificates, sent on renewal at 09:00, with KEY, CRT and PFX</sub></td>
+    <td align="center"><sub>Certificates sorted by expiry · the Key Manager Plus connection</sub></td>
+  </tr>
+  <tr>
+    <td width="50%"><img src="docs/images/letter-en.png" alt="Letter to a recipient"></td>
+    <td width="50%" align="center"><img src="docs/images/mobile-delivery.png" alt="Panel on a phone" width="45%"> <img src="docs/images/mobile-certificates.png" alt="Certificates on a phone" width="45%"></td>
+  </tr>
+  <tr>
+    <td align="center"><sub>What a recipient gets</sub></td>
+    <td align="center"><sub>The panel on a phone</sub></td>
+  </tr>
+</table>
 
-Архив **`email-ssl-sender-vX.Y.Z.zip`** со страницы [Releases](../../releases) — всё для стека:
+## How it works
 
-| Файл | Что это |
+```mermaid
+flowchart LR
+    KMP["ManageEngine<br/>Key Manager Plus"] -- "REST API, HTTPS<br/>every 15 minutes" --> S["EAMS ssl sender"]
+    S -- "SMTP, SSL/TLS" --> MAIL["Your mail server"]
+    MAIL -- "letter + ZIP" --> R["Recipients"]
+    ADMIN["Administrators"] -- "HTTPS via<br/>Cloudflare Tunnel" --> S
+    S --- DB[("PostgreSQL")]
+```
+
+1. Every 15 minutes (configurable) the service asks Key Manager Plus for the list of SSL
+   certificates: Common Name, serial number and expiry date.
+2. A renewal is a new serial number for the same Common Name. The service remembers what it has
+   already sent to each subscription and notices the new one.
+3. For each subscription it decides whether it is time: a certificate was renewed, N days have
+   passed, the send time has come, the subscription is within its planned dates.
+4. It downloads the selected files and the key passphrase from Key Manager Plus, packs them into
+   one ZIP archive and sends a separate letter to each recipient through your SMTP server.
+5. The panel shows when and what was sent, and why if something failed.
+
+## What recipients get
+
+<img src="docs/images/letter-en.png" alt="Letter with two certificates" width="560">
+
+One letter per recipient with one attachment. Outlook blocks `.crt`, `.cer` and `.der`
+attachments, so the files always come in a ZIP archive:
+
+| Sent | Archive | Inside |
+|---|---|---|
+| One certificate | `vpn.example.com.zip` | `vpn.example.com.pem`, `vpn.example.com.key`, `passphrase.txt` |
+| Several certificates | `ssl-certificates.zip` | a folder per certificate, e.g. `wildcard.example.com/` with `.crt`, `.key`, `.pfx`, `passphrase.txt` |
+
+| Format | File | Contains | Private key | Typical use |
+|---|---|---|---|---|
+| PEM | `.pem` | Certificate, often with the intermediate chain (text) | No | nginx, Apache, HAProxy, Linux, appliances |
+| CRT / CER | `.crt` / `.cer` | Certificate | No | Apache, nginx; Windows trust stores |
+| DER | `.der` | Certificate, binary | No | Java, Android, some appliances |
+| P7B | `.p7b` | PKCS#7: certificate with its chain | No | Windows / IIS chain install, Java |
+| PKCS | `.pfx` | PKCS#12: certificate, chain and private key under a password | **Yes** | IIS, Exchange, Windows, Azure |
+| JKS | `.jks` | Java KeyStore | **Yes** | Tomcat and Java applications |
+| KEY | `.key` | Private key only (often encrypted) | **Yes** | nginx, Apache, HAProxy — with CRT/PEM |
+| — | `passphrase.txt` | The key passphrase from Key Manager Plus | — | Opening an encrypted KEY, PFX or JKS |
+
+> **A letter with KEY, PFX or JKS carries a private key.** Send it only to the people who install
+> the certificate on a server. Partners and clients who only need to trust a certificate should get
+> CRT, CER, DER or P7B.
+
+## Requirements
+
+| What | Why |
 |---|---|
-| `docker-compose.yml` | Стек: база, миграции, сервис, Cloudflare Tunnel |
-| `.env.example` | Переменные: секреты, токен туннеля, первый администратор — с подсказками |
-| `email-ssl-sender-image-vX.Y.Z.tar` | Образ сервиса |
-| `README.md` | Эти шаги подробно |
+| A Linux server with Docker Engine and Compose v2, or Portainer | The service, its database and the tunnel run in containers |
+| A domain in Cloudflare | Publishing the panel through Cloudflare Tunnel (or your own reverse proxy with TLS) |
+| A mailbox with SMTP access | Letters are sent from it |
+| Key Manager Plus 7.1.1+ with a certificate issued by a certificate authority, and its REST API key | Where the certificates come from |
+
+The server needs outbound access to Cloudflare, your SMTP server and Key Manager Plus (port 6565).
+No inbound ports are needed.
+
+## Installation with Portainer
+
+The **`email-ssl-sender-vX.Y.Z.zip`** archive from [Releases](../../releases) has everything for
+the stack: `docker-compose.yml`, `.env.example` with hints, the service image
+`email-ssl-sender-image-vX.Y.Z.tar` and a step-by-step README.
 
 1. **Images → Import** → `email-ssl-sender-image-vX.Y.Z.tar`.
-2. Заполните `.env.example`: `SENDER_MASTER_KEK` (`openssl rand -base64 32`), `POSTGRES_PASSWORD` и
-   `SENDER_APP_PASSWORD` (`openssl rand -hex 24`, разные), `CLOUDFLARE_TUNNEL_TOKEN`,
-   `SENDER_INIT_ADMIN_EMAIL` и `SENDER_INIT_ADMIN_PASSWORD`.
-3. **Stacks → Add stack** → Name `email-ssl-sender` → **Upload** → `docker-compose.yml` →
+2. Fill in `.env.example`: `SENDER_MASTER_KEK` (`openssl rand -base64 32`), `POSTGRES_PASSWORD` and
+   `SENDER_APP_PASSWORD` (`openssl rand -hex 24`, different ones), `CLOUDFLARE_TUNNEL_TOKEN`,
+   `SENDER_INIT_ADMIN_EMAIL` and `SENDER_INIT_ADMIN_PASSWORD`.
+3. **Stacks → Add stack** → name `email-ssl-sender` → **Upload** → `docker-compose.yml` →
    **Load variables from .env file** → **Deploy the stack**.
-4. В Cloudflare у туннеля: **Public Hostname** → `HTTP` `api:8001`. Включите Cloudflare Access
-   (шаг 5 ниже).
-5. Войдите администратором, подключите приложение-аутентификатор; в переменных стека очистите
-   `SENDER_INIT_ADMIN_PASSWORD` → **Update the stack**.
+4. In Cloudflare, for the tunnel: **Public Hostname** → `HTTP` `api:8001`. Turn on Cloudflare Access
+   (see below).
+5. Sign in as the administrator and connect an authenticator app; then clear
+   `SENDER_INIT_ADMIN_PASSWORD` in the stack variables → **Update the stack**.
 
-Миграции выполняет служба `migrate` при каждом развёртывании — она же заводит первого
-администратора и сбрасывает доступ (`SENDER_RESET_ACCESS_*` — один раз на пару «адрес + пароль»),
-потому что консоли в Portainer нет.
-Обновление: импорт нового образа → новый `SENDER_IMAGE` → **Update the stack**. Подробно —
-[deploy/portainer/README.md](deploy/portainer/README.md).
+The `migrate` service applies database migrations on every deployment; it also creates the first
+administrator and can reset access (`SENDER_RESET_ACCESS_*`, once per address + password pair),
+because Portainer has no console. To update: import the new image → set the new `SENDER_IMAGE` →
+**Update the stack**.
 
-> ⚠ Секреты в Portainer хранятся переменными стека: доступ к Portainer равен доступу к ним.
-> Сохраните копию `SENDER_MASTER_KEK` отдельно.
+> Secrets in Portainer are stack variables: access to Portainer equals access to them. Keep a copy
+> of `SENDER_MASTER_KEK` somewhere safe and separate.
 
----
+## Installation from the command line
 
-## Установка
+With secrets in files, on a server with Docker Compose v2.
 
-Из командной строки, с секретами в файлах (Docker Compose v2 на сервере).
-
-**1. Файлы установки.** Скачайте `email-ssl-sender-cli-vX.Y.Z.zip` со страницы
-[Releases](../../releases) и распакуйте на сервере.
+**1. Files.** Download `email-ssl-sender-cli-vX.Y.Z.zip` from [Releases](../../releases) and unpack
+it on the server.
 
 ```bash
 unzip email-ssl-sender-cli-v*.zip && cd email-ssl-sender
 ```
 
-**2. Образ.** Из файла главного архива релиза (`email-ssl-sender-vX.Y.Z.zip`):
+**2. Image.** From the main release archive (`email-ssl-sender-vX.Y.Z.zip`):
 
 ```bash
 docker load -i email-ssl-sender-image-vX.Y.Z.tar
 ```
 
-Или из реестра GitHub (токен с правом `read:packages`):
-
-```bash
-echo ТОКЕН | docker login ghcr.io -u ЛОГИН_GITHUB --password-stdin
-docker compose pull api
-```
-
-**3. Секреты.** Скрипт создаёт мастер-ключ шифрования и пароль базы в `secrets/`. Существующие
-файлы не перезаписывает.
+**3. Secrets.** The script creates the master encryption key and the database passwords in
+`secrets/`. Existing files are never overwritten.
 
 ```bash
 ./scripts/gen-secrets.sh
 ```
 
-> ⚠ Сохраните копию `secrets/sender_master_kek` в надёжном месте **отдельно** от копий базы.
-> Без него зашифрованные данные не открыть.
+> Keep a copy of `secrets/sender_master_kek` in a safe place, **separate** from database backups.
+> Encrypted data cannot be opened without it.
 
-**4. Cloudflare Tunnel.** В Cloudflare: **Zero Trust → Networks → Tunnels → Create a tunnel**
-(тип Cloudflared). Скопируйте токен из команды установки — длинную строку после `--token` — и
-вставьте его в скрипт (ввод скрыт, токен ложится в файл секрета, а не в `.env`):
+**4. Cloudflare Tunnel.** In Cloudflare: **Zero Trust → Networks → Tunnels → Create a tunnel**
+(type Cloudflared). Copy the token from the install command — the long string after `--token` —
+and paste it into the script (input is hidden; the token goes to a secret file, not to `.env`):
 
 ```bash
 cp .env.example .env
 ./scripts/set-tunnel-token.sh
 ```
 
-Затем в туннеле **Public Hostname → Add**:
+Then **Public Hostname → Add**: your panel address (for example `certs.example.com`), service type
+`HTTP`, URL `api:8001`. `api:8001` is the service name inside Docker, not your server's address;
+Cloudflare provides HTTPS for the browser.
 
-| Поле | Значение |
-|---|---|
-| Subdomain / Domain | адрес панели, например `certs.example.com` |
-| Service → Type | `HTTP` |
-| Service → URL | `api:8001` |
+**5. Cloudflare Access — employees only.** Without it the sign-in page is open to the whole
+internet. **Zero Trust → Access → Applications → Add an application → Self-hosted**: your panel
+domain, session duration `8 hours`, policy `Allow` for `Emails ending in @example.com` or a group
+from your corporate identity provider. The password and the authenticator code remain the second
+line of defence.
 
-`api:8001` — имя сервиса внутри Docker, а не адрес сервера. HTTPS для браузера даёт Cloudflare.
-
-**5. Cloudflare Access — доступ только сотрудникам.** Без него страница входа открыта всему
-интернету. **Zero Trust → Access → Applications → Add an application → Self-hosted**:
-
-| Поле | Значение |
-|---|---|
-| Application domain | адрес панели, например `certs.example.com` |
-| Session duration | `8 hours` |
-| Policy → Action | `Allow` |
-| Policy → Include | `Emails ending in` `@example.com` или группа из корпоративного IdP |
-
-Теперь до панели дойдёт только тот, кто подтвердил корпоративную почту. Пароль и код из
-приложения по-прежнему нужны — это второй рубеж.
-
-**6. База и первый администратор.** Пароль спрашивается скрытым вводом.
+**6. Database and the first administrator.** The password is asked with hidden input.
 
 ```bash
 docker compose run --rm migrate
 docker compose run --rm api create-superadmin --email admin@example.com
 ```
 
-`migrate` накатывает схему и заводит роль базы `sender_app`, которой ходит сервис: она только
-читает и пишет строки. Пароль владельца схемы есть только у службы `migrate`.
-
-**7. Запуск.**
+**7. Start and check.**
 
 ```bash
 docker compose up -d
-```
-
-**8. Проверка.**
-
-```bash
 docker compose ps
 curl -s http://127.0.0.1:8001/api/ready
-docker compose logs cloudflared | grep -m1 'Registered tunnel connection'
 ```
 
-Откройте `https://certs.example.com` и войдите.
+Open `https://certs.example.com` and sign in.
 
 <details>
-<summary>Без Cloudflare — свой обратный прокси</summary>
+<summary>Without Cloudflare — your own reverse proxy</summary>
 
-Уберите из `.env` строки туннеля. Сервис слушает только `127.0.0.1:8001`; опубликуйте его через
-nginx, Caddy или Traefik **с HTTPS** (по HTTP браузер не сохранит сессию). Пример Caddy:
+Remove the tunnel lines from `.env`. The service listens on `127.0.0.1:8001` only; publish it via
+nginx, Caddy or Traefik **with HTTPS** (the browser will not keep the session over plain HTTP).
+Example for Caddy:
 
 ```
 certs.example.com {
@@ -198,8 +237,8 @@ certs.example.com {
 }
 ```
 
-Чтобы ограничение попыток входа считалось по адресу пользователя, укажите в `.env` адрес, с
-которого прокси приходит в контейнер (обычно шлюз сети Docker):
+For sign-in rate limits to count per user address, set the address the proxy comes from (usually
+the Docker network gateway) in `.env`:
 
 ```
 SENDER_TRUSTED_PROXY_NETWORKS=172.18.0.1/32
@@ -207,238 +246,104 @@ SENDER_TRUSTED_PROXY_NETWORKS=172.18.0.1/32
 
 </details>
 
----
+## Setting up in the panel
 
-## Настройка в панели
+1. **Sign in** with the email and password from installation, then scan the QR code with an
+   authenticator app (Google Authenticator, Microsoft Authenticator, Aegis, 1Password).
+2. **Настройки → Почта** (Settings → Mail): your SMTP server, port and security (`465` / `SSL/TLS`
+   or `587` / `STARTTLS`), login, password, sender address and the panel address. Save and send a
+   **test letter**.
+3. **Настройки → Key Manager** (Settings → Key Manager): the address `https://server-name:6565` —
+   the name from the server's certificate, not an IP — and the API key from Key Manager Plus
+   (**Settings → General Settings → API Key → Generate**). Save and press **Проверить** (Check):
+   the panel shows how many certificates it sees.
+4. **Рассылка → Добавить** (Delivery → Add): certificates, recipients, files and when to send.
+5. **Пользователи → Пригласить** (Users → Invite): invite colleagues; each sets their own password
+   and authenticator.
 
-Вкладки: **Рассылка**, **Сертификаты**, **Пользователи**, **Настройки**, **Безопасность**; профиль —
-инициалы справа вверху.
+The full walkthrough with screenshots is in the [user guide](#documentation).
 
-**1. Вход.** Почта и пароль из шага 6, затем QR-код для приложения-аутентификатора (Google
-Authenticator, Microsoft Authenticator, Aegis, 1Password). Дальше вход — пароль и шестизначный код
-из приложения. Код на почту заменить приложение не может: потерян телефон — второй фактор
-снимает другой администратор или команда из раздела [восстановления](#резервные-копии-и-восстановление-доступа).
+## Security
 
-**2. Настройки → Почта** — поля SMTP вашего ящика:
+- **Sign-in only with a second factor** (TOTP). An emailed code cannot replace it, so a hijacked
+  mailbox gives no access. Rate limits per address and account, lockout after a series of failures.
+- **A fresh code before sensitive actions**: downloading certificates and keys, any change of
+  settings, subscriptions or users, test letters, password changes — only with a code confirmed in
+  this session within the last 10 minutes. A stolen session without the phone gets no keys.
+- **Closed by default**: without signing in only the sign-in pages and the health check are
+  reachable.
+- **Secrets are encrypted** with AES-256-GCM under a master key from a file: the SMTP password, the
+  Key Manager Plus API key, TOTP secrets, queued letters. Private keys in attachments are wiped from
+  the database right after sending.
+- **TLS is always validated**: SMTP and Key Manager Plus — full chain, host name and revocation
+  checks. Validation cannot be turned off.
+- **The SMTP password and the API key are bound to their server**: after changing the address they
+  must be entered again, so a signed-in attacker cannot redirect them to their own server.
+- **Letters with keys don't linger**: deleting a subscription or a recipient cancels unsent
+  letters; a letter not sent within 24 hours loses its attachments.
+- **Container**: non-root, read-only file system, no Linux capabilities, no published ports.
+- **Database**: the service uses a role that can only read and write rows; the schema owner's
+  password is known only to the `migrate` service. The database has no internet access.
+- **Append-only audit log** in the database, hash-chained: who signed in, what changed, who
+  downloaded certificates or viewed private keys, who was denied.
 
-| Поле | Пример | |
-|---|---|---|
-| Сервер | `mail.example.com` | только имя, без `https://` |
-| Порт / Защита | `465` / `SSL/TLS` | или `587` / `STARTTLS` |
-| Логин, пароль | `certs@example.com` | пароль хранится зашифрованным |
-| Адрес отправителя | `certs@example.com` | |
-| Адрес панели | `https://certs.example.com` | для ссылок в приглашениях |
+Recommended: Cloudflare Access in front of the panel, a dedicated mailbox for sending, a dedicated
+Key Manager Plus account for the API key, a pinned image version in `.env`, and sending KEY/PFX only
+to the people who need the private key.
 
-Сохраните и нажмите **Тестовое письмо**. При отказе панель покажет ответ почтового сервера.
-Пароль привязан к серверу, порту, защите и логину: сменили что-то из них — введите пароль заново.
-
-**3. Настройки → Key Manager.**
-
-- **Ключ API:** в Key Manager Plus — **Settings → General Settings → API Key → Generate**.
-- **Адрес:** `https://имя-сервера:6565`. Имя должно совпадать с сертификатом Key Manager Plus
-  (не IP). Сертификат Key Manager Plus должен быть выдан удостоверяющим центром —
-  самоподписанный сервис не принимает (с 2.5).
-
-Нажмите **Сохранить**, затем **Проверить**: панель покажет, сколько сертификатов видно.
-Ключ привязан к адресу: сменили адрес — введите ключ заново.
-
-**4. Рассылка → Добавить:** один или несколько сертификатов, адреса получателей, файлы, когда
-слать — при обновлении (уходит только обновлённый сертификат) и/или раз в N дней (уходят все).
-Хотя бы один из двух способов обязателен. Первое письмо уходит сразу; **Отправить сейчас** шлёт все
-сертификаты подписки.
-
-**Время отправки** — во сколько уходят письма опроса, например 09:00. Обновление, замеченное после
-этого времени, уйдёт на следующий день в то же время. Пустое время — письма уходят сразу, как опрос
-заметит, что пора.
-
-**Запланированный старт и окончание** — галочка и два дня: с какого и по какой день (оба
-включительно) опрос рассылает подписку. До первого дня и после последнего он её не шлёт; в первый
-день уходят все ещё не отправленные сертификаты. Можно задать только начало или только окончание.
-Дни и время — по часовому поясу браузера, в котором подписку завели. **Отправить сейчас** работает
-всегда — и вне периода.
-
-**Описание** — заметка для себя: для кого и зачем эта рассылка. Видно только в панели, в письма не
-уходит. В списке подписка показывает описание, все свои сертификаты со сроком каждого и всех
-получателей; сертификат, которого нет в Key Manager Plus, помечен «нет в Key Manager».
-
-Письмо — таблица сертификатов, как в уведомлении Key Manager Plus (сертификат, форматы, действует
-до, осталось дней), и архив с файлами: несколько сертификатов — папка на каждый.
-
-**5. Сертификаты** — всё, что видит Key Manager Plus, со сроком действия; истекающие подсвечены.
-Щелчок по заголовку **Действует до** сортирует по сроку: сначала истекающие, повторный щелчок — сначала
-дальние; **Сертификат** — снова по имени. На телефоне порядок выбирается списком над сертификатами.
-Выбор браузер запоминает.
-**Скачать** — файл в нужном формате (PEM, CRT, PFX, KEY и другие). **Ключ** — показать закрытый
-ключ и его пароль, скопировать или сохранить.
-
-**6. Пользователи** — пригласить коллег. Приглашение уходит письмом; пароль и аутентификатор
-человек настраивает сам.
-
-**7. Безопасность** — блокировка после неудачных входов, время сессии, требования к паролю,
-срок ссылок и окно подтверждения кодом.
-
-**Код перед важными действиями.** Скачивание сертификата, показ ключа, изменения настроек,
-безопасности, подписок и пользователей требуют свежего кода из приложения. Панель сама спросит
-его и повторит действие; после кода (и после входа) 10 минут код не спрашивается. Окно
-задаётся во вкладке «Безопасность».
-
-**Телефон.** Вид выбирается по режиму браузера, а не по размеру экрана: Chrome на телефоне —
-мобильный вид с вкладками внизу; «Версия для ПК» — компьютерный вид.
-
----
-
-## Безопасность
-
-**Встроено:**
-
-- **Вход только с вторым фактором** (TOTP). Код письмом его не заменяет: захваченный
-  почтовый ящик не даёт входа. Ограничение попыток по адресу и учётной записи, блокировка после
-  серии неудач, не больше 5 кодов на одну попытку входа.
-- **Свежий код перед важными действиями:** выгрузка сертификатов и ключей, любые изменения
-  настроек, подписок и пользователей, проверочное письмо, смена своего пароля — только с кодом,
-  подтверждённым в этой сессии за последние 10 минут. Панель сама спросит код. Угнанная сессия без
-  телефона ключей не получит.
-- **Всё закрыто по умолчанию:** без входа доступны только страницы входа и проверка здоровья.
-- **Секреты зашифрованы** AES-256-GCM под мастер-ключом из файла: пароль SMTP, ключ API Key
-  Manager Plus, секреты TOTP, письма в очереди. Закрытые ключи во вложениях стираются из базы
-  сразу после отправки.
-- **TLS проверяется всегда:** SMTP и Key Manager Plus — полная проверка цепочки, имени и отзыва.
-  Отключить проверку нельзя, самоподписанный сертификат Key Manager Plus не принимается.
-- **Пароль SMTP и ключ API привязаны к адресу сервера.** Вошедший не может перенаправить их на
-  свой сервер: после смены адреса секрет нужно ввести заново. Пароль по незашифрованному
-  соединению не отправляется.
-- **Письма с ключами не залёживаются:** удалили подписку или получателя — неотправленные письма
-  отменяются; письмо, не ушедшее за 24 часа, теряет вложения.
-- **Контейнер:** не root, файловая система только для чтения, без Linux capabilities. Наружу
-  ни одного порта: сервис слушает `127.0.0.1`, публикация — исходящим туннелем.
-- **База:** сервис ходит ролью `sender_app` — только чтение и запись строк, без права менять
-  схему и без прав суперпользователя. Пароль владельца схемы есть только у службы `migrate`.
-  У самой базы нет выхода в интернет.
-- **Панель:** строгая CSP, без внешних скриптов, запрет встраивания во фрейм, сессия в куке
-  `HttpOnly; Secure; SameSite=Strict`.
-- **Журнал действий в базе** (таблица `audit_log`): кто вошёл, что изменил в настройках, учётных
-  записях и подписках, кто выгружал сертификаты и смотрел закрытые ключи, кому отказано в доступе.
-  Только дописывается — изменить или стереть запись не может даже владелец базы; строки сцеплены
-  хешами, проверка — `docker compose run --rm api verify-audit-chain`. Читать — `GET /api/audit`.
-  Каждое событие — ещё и строка `audit` в логах сервиса (`docker compose logs api | grep audit`).
-- **Закрытый ключ не уходит по почте без шифрования** (`mail.smtp_security = none`), а сужение
-  подписки (убрали `KEY`, пароль ключа, отключили) отменяет письма, ещё стоящие в очереди.
-
-**Рекомендуется для корпоративной установки:**
-
-1. **Cloudflare Access перед панелью.** Zero Trust → Access → Applications → Add → Self-hosted,
-   домен панели, политика Allow — только адреса вашей компании (или группа из корпоративного
-   IdP). Тогда до страницы входа дойдут только сотрудники.
-2. **Отдельный ящик для рассылки** с доступом только по SMTP и надёжным паролем.
-3. **Ключ API Key Manager Plus** — от отдельной служебной учётной записи.
-4. **Закреплённая версия образа** в `.env`: `SENDER_IMAGE=ghcr.io/danrey-bilo/email_ssl_sender:X.Y.Z`.
-5. **Шлите `KEY`/`PFX` только тем, кому нужен закрытый ключ.** Письмо с ключом — секрет.
-
----
-
-## Обновление
+## Updating
 
 ```bash
-./scripts/gen-secrets.sh          # создаст недостающие файлы секретов, существующие не тронет
-docker compose pull
+./scripts/gen-secrets.sh          # creates missing secret files, never touches existing ones
+docker load -i email-ssl-sender-image-vX.Y.Z.tar   # or: docker compose pull
 docker compose run --rm migrate
 docker compose up -d
 ```
 
-`migrate` обязателен после каждого обновления: на старой схеме базы сервис не стартует.
+`migrate` is required after every update: the service does not start on an outdated schema. Take a
+database backup first. Version-specific notes are in the [changelog](CHANGELOG.md) (in Russian).
 
-### Обновление до 2.1
+## Backups and access recovery
 
-Подписки переходят на список сертификатов сами: каждая получает список из одного своего
-сертификата, отправленное засчитывается — повторной рассылки нет. Перед обновлением — копия базы
-(«Резервные копии»): откат на 2.0 возможен только из неё.
-
-### Обновление до 2.2
-
-Журнал действий переезжает в базу (таблица `audit_log`), `migrate` создаёт её сам. Сеть туннеля
-получает закреплённые адреса: cloudflared — `172.31.250.2`, API — `172.31.250.3`. Если вы меняли
-подсеть `SENDER_TUNNEL_SUBNET`, задайте в `.env` и `SENDER_TUNNEL_PROXY_IP`, `SENDER_TUNNEL_API_IP`
-внутри неё. Перед `up -d` остановите службы, чтобы адреса не столкнулись со старыми контейнерами:
-
-```bash
-docker compose stop api cloudflared
-```
-
-### Обновление до 2.0
-
-Версия 2.0 перешла на модули EAMS (учётные записи, сессии, настройки, почта — подробно в
-[docs/REFERENCE.md](docs/REFERENCE.md#модули-eams-подмодулями)). Данные переносятся командой
-`migrate` сами, но шаг необратим без копии — **сначала копия базы**:
-
-```bash
-mkdir -p backups && docker compose exec -T postgres pg_dump -U sender sender > backups/sender-before-2.0.sql
-```
-
-Затем обычные `pull`, `run --rm migrate`, `up -d`. Что делает `migrate` при переходе:
-
-- схема базы доводится до схемы модулей (мост `ModulesBridge`); каждая учётная запись становится
-  суперпользователем — ролей по-прежнему нет, все администраторы равны;
-- секреты TOTP, пароль SMTP и ключ API Key Manager Plus перекладываются в конверт модулей тем же
-  мастер-ключом — в выводе строки «переложено в конверт модулей N из N». Строка
-  «⚠ НЕ ОТКРЫЛОСЬ» означает не тот мастер-ключ: остановитесь и восстановите копию;
-- окно свежего кода остаётся 10 минут.
-
-После перехода:
-
-- **все входят заново** — прежние сессии не действуют; аутентификаторы и пароли прежние;
-- **ссылки приглашений и сброса пароля, выданные до обновления, не действуют** — выдайте заново;
-- письма, не ушедшие до обновления, отмечаются неотправленными: сертификат — кнопкой «Отправить»;
-- код теперь спрашивают и при правке любой настройки, учётной записи, при проверочном письме и
-  смене своего пароля.
-
-> С версии 1.0.2 сервис ходит в базу отдельной ролью `sender_app`. При обновлении со старой
-> версии нужен новый файл `secrets/sender_app_password` — его создаст `gen-secrets.sh` — и
-> `migrate` до `up -d`, иначе сервис не подключится к базе.
-
----
-
-## Резервные копии и восстановление доступа
-
-**Копия базы** (мастер-ключ храните отдельно):
+**Database backup** (keep the master key separately):
 
 ```bash
 mkdir -p backups && docker compose exec -T postgres pg_dump -U sender sender > backups/sender.sql
 ```
 
-**Нет доступа к учётной записи** (забыт пароль, потерян телефон) — одна команда на сервере:
-задаёт новый пароль (спросит дважды, ввод скрыт), снимает второй фактор, снимает блокировку и
-закрывает все сессии. При следующем входе — подключить приложение заново.
+**Lost access** (forgotten password, lost phone) — one command on the server sets a new password
+(asked twice, hidden), removes the second factor and the lockout, and closes all sessions:
 
 ```bash
 ./scripts/reset-access.sh admin@example.com
 ```
 
-По отдельности: `docker compose run --rm api set-superadmin-password --email …` — только пароль,
-`docker compose run --rm api reset-superadmin-2fa --email …` — только второй фактор.
+## Documentation
 
----
+| Document | Language |
+|---|---|
+| [User guide](<docs/User Guide EAMS ssl sender.docx>) — sign-in, mail and Key Manager Plus, certificates, delivery setup, letters and file formats, users, security, FAQ (Word, with screenshots) | English |
+| [Руководство пользователя](<docs/Инструкция пользователя EAMS ssl sender.docx>) — то же по-русски | Russian |
+| [Reference](docs/REFERENCE.md) — architecture, REST API, all settings, master key rotation, development | Russian |
+| [Key Manager Plus API](docs/KEYMANAGER-API.md) — which REST API methods are called and what is taken from them | Russian |
+| [Portainer installation](deploy/portainer/README.md) | Russian |
+| [Changelog](CHANGELOG.md) | Russian |
 
-## Справочник
+## License
 
-**Руководство пользователя** со снимками панели — [docs/Инструкция пользователя EAMS ssl
-sender.docx](<docs/Инструкция пользователя EAMS ssl sender.docx>) (Word): вход, подключение почты и Key
-Manager Plus, сертификаты, настройка рассылки, что получает получатель, форматы файлов и что выбрать
-для nginx, IIS и Java, частые вопросы.
+EAMS ssl sender is **free to use**, but it is **not open source**. See [LICENSE](LICENSE)
+([Russian translation](LICENSE.ru.md)).
 
-[docs/REFERENCE.md](docs/REFERENCE.md) — устройство сервиса, REST API, все настройки, ротация
-мастер-ключа, разработка и тесты. Какие методы REST API Key Manager Plus вызывает сервис и что
-каждый даёт — [docs/KEYMANAGER-API.md](docs/KEYMANAGER-API.md). Изменения по версиям —
-[CHANGELOG.md](CHANGELOG.md).
+| ✅ Allowed | ❌ Not allowed without written permission |
+|---|---|
+| Install and run the official builds for any purpose, including inside your company, on any number of servers, free of charge | Copying the source code, in whole or in part |
+| Back up the official builds and adapt the shipped deployment files to run the service | Modifying the code, building or running modified versions |
+| View the source code to evaluate it and review its security | Redistributing, selling or sublicensing the code or the builds |
+| | Using the code to develop or train other software, services or models |
 
-**Сборка из исходников:** .NET SDK 10, Node 22+, Docker и доступ к закрытым репозиториям модулей
-EAMS `danrey-bilo/module-*` — они подключены подмодулями `modules/<имя>` с закреплёнными версиями.
+Third-party open-source components inside the builds remain under their own licenses.
 
-```bash
-git clone --recurse-submodules https://github.com/danrey-bilo/email_ssl_sender.git
-```
+## Contributing
 
-```bash
-docker compose build --pull
-```
-
-Лицензия — [EAMS ssl sender License](LICENSE): пользоваться бесплатно; копировать, изменять и распространять код нельзя.
+Code contributions are not accepted. Bug reports and suggestions are welcome in
+[Issues](../../issues). Please report security problems privately — see [SECURITY.md](SECURITY.md).
