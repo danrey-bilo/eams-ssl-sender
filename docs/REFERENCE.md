@@ -74,7 +74,7 @@ git в каталог `modules/<имя>`. Используются только 
 Клонировать вместе с модулями (репозитории модулей закрытые — нужен доступ к ним):
 
 ```bash
-git clone --recurse-submodules https://github.com/danrey-bilo/email_ssl_sender.git
+git clone --recurse-submodules https://github.com/danrey-bilo/eams-ssl-sender.git
 ```
 
 В уже склонированном:
@@ -101,7 +101,7 @@ git add modules/mail
 
 **Сборка образа в GitHub Actions** (`.github/workflows/release.yml`) забирает подмодули секретом
 репозитория `MODULES_TOKEN`: токен задачи читает только свой репозиторий, а модули закрытые. Токен —
-fine-grained, владелец `danrey-bilo`, доступ к репозиториям `email_ssl_sender` и восьми `module-*`,
+fine-grained, владелец `danrey-bilo`, доступ к репозиториям `eams-ssl-sender` и восьми `module-*`,
 право `Contents: Read-only`: GitHub → Settings → Developer settings → Fine-grained tokens, затем в
 репозитории Settings → Secrets and variables → Actions → `MODULES_TOKEN`. Локальная сборка образа
 (`docker compose build`) берёт модули из рабочей копии: подмодули должны быть забраны.
@@ -262,7 +262,7 @@ cp .env.example .env              # в нём COMPOSE_PROFILES=tunnel
 После первого входа в панели задайте **Почта → Адрес сервиса** = `https://sender.example.com`:
 из него собираются ссылки в письмах.
 
-**3. Образ.** Готовый — из релиза (`docker compose pull api`); из исходников — `docker compose build --pull` (`--pull` забирает свежие базовые образы с исправлениями безопасности; без него Docker соберёт на старой копии из кэша).
+**3. Образ.** Готовый — из архива релиза (`docker load -i email-ssl-sender-image-vX.Y.Z.tar`); из исходников — `docker compose build --pull` (`--pull` забирает свежие базовые образы с исправлениями безопасности; без него Docker соберёт на старой копии из кэша).
 
 **4. Схема базы.** Обычный старт на отставшей схеме отказывается работать, поэтому схему
 накатывают только этой командой, в том числе после каждого обновления кода.
@@ -976,7 +976,7 @@ internal sealed class ReportsController(ICurrentUser me, IAuditWriter audit) : C
 репозиториям модулей `danrey-bilo/module-*`. Клонировать — с подмодулями:
 
 ```bash
-git clone --recurse-submodules https://github.com/danrey-bilo/email_ssl_sender.git
+git clone --recurse-submodules https://github.com/danrey-bilo/eams-ssl-sender.git
 ```
 
 **Панель** собирается в `EmailSslSender.Api/wwwroot`, откуда её отдаёт `dotnet run`. Для правки с
@@ -1130,7 +1130,7 @@ docker compose run --rm api verify-audit-chain
 docker compose logs api | grep '"audit '
 ```
 
-**Обновление:** `docker compose pull api` (или `docker compose build --pull` из исходников), затем
+**Обновление:** `docker load -i email-ssl-sender-image-vX.Y.Z.tar` из архива нового релиза (или `docker compose build --pull` из исходников), затем
 `docker compose run --rm migrate`, затем `docker compose up -d`. Переход с 1.x на 2.0 — README,
 «Обновление до 2.0»: копия базы обязательна, все входят заново.
 

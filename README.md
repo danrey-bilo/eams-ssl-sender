@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/danrey-bilo/email_ssl_sender/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/danrey-bilo/email_ssl_sender?style=flat-square&color=2563eb&label=release"></a>
+  <a href="https://github.com/danrey-bilo/eams-ssl-sender/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/danrey-bilo/eams-ssl-sender?style=flat-square&color=2563eb&label=release"></a>
   <a href="LICENSE"><img alt="License: free to use, no code copying" src="https://img.shields.io/badge/license-free%20to%20use%20%C2%B7%20no%20code%20copying-0f172a?style=flat-square"></a>
   <img alt="Key Manager Plus 7.1.1+" src="https://img.shields.io/badge/Key%20Manager%20Plus-7.1.1%2B-0ea5e9?style=flat-square">
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512bd4?style=flat-square&logo=dotnet&logoColor=white">
@@ -293,7 +293,7 @@ to the people who need the private key.
 
 ```bash
 ./scripts/gen-secrets.sh          # creates missing secret files, never touches existing ones
-docker load -i email-ssl-sender-image-vX.Y.Z.tar   # or: docker compose pull
+docker load -i email-ssl-sender-image-vX.Y.Z.tar   # the image from the new release archive
 docker compose run --rm migrate
 docker compose up -d
 ```

@@ -11,7 +11,7 @@
 ## 1. Образ
 
 **Portainer → Images → Import** → выберите `email-ssl-sender-image-vX.Y.Z.tar` → **Upload**.
-Образ появится как `ghcr.io/danrey-bilo/email_ssl_sender:X.Y.Z`.
+Образ появится как `ghcr.io/danrey-bilo/eams-ssl-sender:X.Y.Z`.
 
 ## 2. Переменные
 
@@ -53,7 +53,7 @@
 ## Обновление
 
 1. **Images → Import** — образ новой версии.
-2. В переменных стека — новый `SENDER_IMAGE` (например `ghcr.io/danrey-bilo/email_ssl_sender:X.Y.Z`).
+2. В переменных стека — новый `SENDER_IMAGE` (например `ghcr.io/danrey-bilo/eams-ssl-sender:X.Y.Z`).
 3. **Update the stack**. Миграции выполнятся сами (служба `migrate`).
 
 Перед обновлением снимите копию базы (ниже).

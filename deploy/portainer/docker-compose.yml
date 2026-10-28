@@ -53,7 +53,7 @@ services:
   # Одноразовая служба: накатывает схему, заводит роль sender_app (сервис ходит ею — без права
   # менять схему) и, если заданы, первого администратора или сброс доступа. Завершается с кодом 0.
   migrate:
-    image: ${SENDER_IMAGE:-ghcr.io/danrey-bilo/email_ssl_sender:latest}
+    image: ${SENDER_IMAGE:-ghcr.io/danrey-bilo/eams-ssl-sender:latest}
     command: ["migrate"]
     restart: "no"
     environment:
@@ -79,7 +79,7 @@ services:
         condition: service_healthy
 
   api:
-    image: ${SENDER_IMAGE:-ghcr.io/danrey-bilo/email_ssl_sender:latest}
+    image: ${SENDER_IMAGE:-ghcr.io/danrey-bilo/eams-ssl-sender:latest}
     restart: unless-stopped
     environment:
       ASPNETCORE_ENVIRONMENT: Production

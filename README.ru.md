@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/danrey-bilo/email_ssl_sender/releases/latest"><img alt="Последний релиз" src="https://img.shields.io/github/v/release/danrey-bilo/email_ssl_sender?style=flat-square&color=2563eb&label=релиз"></a>
+  <a href="https://github.com/danrey-bilo/eams-ssl-sender/releases/latest"><img alt="Последний релиз" src="https://img.shields.io/github/v/release/danrey-bilo/eams-ssl-sender?style=flat-square&color=2563eb&label=релиз"></a>
   <a href="LICENSE.ru.md"><img alt="Лицензия: бесплатно, без копирования кода" src="https://img.shields.io/badge/лицензия-бесплатно%20%C2%B7%20без%20копирования%20кода-0f172a?style=flat-square"></a>
   <img alt="Key Manager Plus 7.1.1+" src="https://img.shields.io/badge/Key%20Manager%20Plus-7.1.1%2B-0ea5e9?style=flat-square">
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512bd4?style=flat-square&logo=dotnet&logoColor=white">
@@ -114,13 +114,6 @@ unzip email-ssl-sender-cli-v*.zip && cd email-ssl-sender
 
 ```bash
 docker load -i email-ssl-sender-image-vX.Y.Z.tar
-```
-
-Или из реестра GitHub (токен с правом `read:packages`):
-
-```bash
-echo ТОКЕН | docker login ghcr.io -u ЛОГИН_GITHUB --password-stdin
-docker compose pull api
 ```
 
 **3. Секреты.** Скрипт создаёт мастер-ключ шифрования и пароль базы в `secrets/`. Существующие
@@ -332,14 +325,14 @@ Authenticator, Microsoft Authenticator, Aegis, 1Password). Дальше вход
    IdP). Тогда до страницы входа дойдут только сотрудники.
 2. **Отдельный ящик для рассылки** с доступом только по SMTP и надёжным паролем.
 3. **Ключ API Key Manager Plus** — от отдельной служебной учётной записи.
-4. **Закреплённая версия образа** в `.env`: `SENDER_IMAGE=ghcr.io/danrey-bilo/email_ssl_sender:X.Y.Z`.
+4. **Закреплённая версия образа** в `.env`: `SENDER_IMAGE=ghcr.io/danrey-bilo/eams-ssl-sender:X.Y.Z`.
 5. **Шлите `KEY`/`PFX` только тем, кому нужен закрытый ключ.** Письмо с ключом — секрет.
 
 ## Обновление
 
 ```bash
 ./scripts/gen-secrets.sh          # создаст недостающие файлы секретов, существующие не тронет
-docker compose pull
+docker load -i email-ssl-sender-image-vX.Y.Z.tar   # образ из архива нового релиза
 docker compose run --rm migrate
 docker compose up -d
 ```

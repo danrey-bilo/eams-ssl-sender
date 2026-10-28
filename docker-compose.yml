@@ -4,7 +4,7 @@
 #   ./scripts/gen-secrets.sh
 #   ./scripts/set-tunnel-token.sh # токен Cloudflare Tunnel — в файл секрета, не в .env
 #   cp .env.example .env
-#   docker compose pull           # готовый образ; из исходников — docker compose build
+#   docker load -i email-ssl-sender-image-vX.Y.Z.tar   # образ из архива релиза
 #   docker compose run --rm migrate
 #   docker compose run --rm api create-superadmin --email admin@example.com
 #   docker compose up -d
@@ -26,9 +26,9 @@ x-logging: &logging
 
 services:
   api:
-    # Готовый образ из релиза (`docker compose pull`); без доступа к реестру compose соберёт его
-    # из исходников по `build`. Версию закрепляет SENDER_IMAGE в .env.
-    image: ${SENDER_IMAGE:-ghcr.io/danrey-bilo/email_ssl_sender:latest}
+    # Готовый образ из архива релиза (`docker load`); `build` — сборка из исходников (только у
+    # правообладателя). Версию закрепляет SENDER_IMAGE в .env.
+    image: ${SENDER_IMAGE:-ghcr.io/danrey-bilo/eams-ssl-sender:latest}
     build:
       context: .
       dockerfile: EmailSslSender.Api/Dockerfile
@@ -91,7 +91,7 @@ services:
   # secrets/sender_app_password: SELECT/INSERT/UPDATE/DELETE, без права менять схему.
   # Профиль tools — чтобы `docker compose up -d` её не запускал.
   migrate:
-    image: ${SENDER_IMAGE:-ghcr.io/danrey-bilo/email_ssl_sender:latest}
+    image: ${SENDER_IMAGE:-ghcr.io/danrey-bilo/eams-ssl-sender:latest}
     profiles: ["tools"]
     command: ["migrate"]
     environment:

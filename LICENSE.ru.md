@@ -2,7 +2,7 @@
 
 Версия 1.0 — октябрь 2026
 
-Обязательное уведомление: Copyright (c) 2026 danrey (https://github.com/danrey-bilo/email_ssl_sender)
+Обязательное уведомление: Copyright (c) 2026 danrey (https://github.com/danrey-bilo/eams-ssl-sender)
 
 **Пользоваться — бесплатно. Исходный код можно смотреть, но нельзя копировать, изменять и
 распространять.**
