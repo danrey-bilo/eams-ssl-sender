@@ -23,6 +23,42 @@ const FORMATS: Array<[format: string, title: string, hint: string]> = [
 
 const DAY = 86_400_000;
 
+/** Порядок списка: по имени или по сроку действия — сначала истекающие или сначала дальние. */
+type Order = 'name' | 'expiry-asc' | 'expiry-desc';
+
+const ORDERS: Array<[Order, string]> = [
+  ['name', 'По имени'],
+  ['expiry-asc', 'Сначала истекающие'],
+  ['expiry-desc', 'Сначала дальние'],
+];
+
+/** Выбранный порядок помнит браузер: это удобство одного человека, а не настройка сервиса. */
+const ORDER_KEY = 'certificates.order';
+
+function savedOrder(): Order {
+  try {
+    const value = localStorage.getItem(ORDER_KEY);
+    return value === 'expiry-asc' || value === 'expiry-desc' ? value : 'name';
+  } catch {
+    return 'name';
+  }
+}
+
+const byName = (a: KnownCertificate, b: KnownCertificate) =>
+  a.common_name.localeCompare(b.common_name) || (b.expires_on ?? '').localeCompare(a.expires_on ?? '');
+
+/** По сроку в нужную сторону; сертификат без срока — в конце при любом направлении. */
+const byExpiry = (direction: 1 | -1) => (a: KnownCertificate, b: KnownCertificate) => {
+  if (!a.expires_on || !b.expires_on) return a.expires_on ? -1 : b.expires_on ? 1 : byName(a, b);
+  return direction * a.expires_on.localeCompare(b.expires_on) || byName(a, b);
+};
+
+const COMPARE: Record<Order, (a: KnownCertificate, b: KnownCertificate) => number> = {
+  name: byName,
+  'expiry-asc': byExpiry(1),
+  'expiry-desc': byExpiry(-1),
+};
+
 /** Основа имени файла: «*» в имени файла недопустим. */
 const fileBase = (c: KnownCertificate) => c.common_name.replace('*', 'wildcard');
 
@@ -53,6 +89,12 @@ export function CertificatesPage() {
   ]));
   const { show, run, toast } = useOverlay();
   const [query, setQuery] = useState('');
+  const [order, setOrder] = useState<Order>(savedOrder);
+
+  const choose = (next: Order) => {
+    setOrder(next);
+    try { localStorage.setItem(ORDER_KEY, next); } catch { /* без хранилища — порядок до перезагрузки */ }
+  };
 
   // ⚠ Сервер отдаёт только то, что пришло в последнем опросе: пропавших и чужих здесь нет.
   const rows = useMemo(() => {
@@ -60,8 +102,8 @@ export function CertificatesPage() {
     const q = query.trim().toLowerCase();
     return data[1]
       .filter(c => !q || c.common_name.toLowerCase().includes(q) || c.serial_number.toLowerCase().includes(q))
-      .sort((a, b) => a.common_name.localeCompare(b.common_name) || (b.expires_on ?? '').localeCompare(a.expires_on ?? ''));
-  }, [data, query]);
+      .sort(COMPARE[order]);
+  }, [data, query, order]);
 
   if (error) return <Failed text={error} />;
   if (!data) return <Spinner />;
@@ -116,7 +158,15 @@ export function CertificatesPage() {
               <Icon name="search" />
               <input type="search" placeholder="Поиск по имени или серийному" value={query} onChange={e => setQuery(e.target.value)} />
             </label>
-            <span className="muted small">{rows.length} из {known.length}</span>
+            <div className="inline">
+              {/* На телефоне заголовков таблицы нет — порядок выбирается списком. */}
+              {isMobile && (
+                <select className="order" aria-label="Порядок" value={order} onChange={e => choose(e.target.value as Order)}>
+                  {ORDERS.map(([value, title]) => <option key={value} value={value}>{title}</option>)}
+                </select>
+              )}
+              <span className="muted small">{rows.length} из {known.length}</span>
+            </div>
           </div>
           {rows.length === 0 && <Empty title="Ничего не найдено" />}
           {rows.length > 0 && isMobile && (
@@ -136,7 +186,26 @@ export function CertificatesPage() {
           {rows.length > 0 && !isMobile && (
             <table>
               <thead>
-                <tr><th>Сертификат</th><th>Действует до</th><th>Замечен</th><th /></tr>
+                <tr>
+                  <th aria-sort={order === 'name' ? 'ascending' : 'none'}>
+                    <button type="button" className="sort" title="По имени" onClick={() => choose('name')}>
+                      Сертификат<Icon name={order === 'name' ? 'up' : 'sort'} />
+                    </button>
+                  </th>
+                  <th aria-sort={order === 'expiry-asc' ? 'ascending' : order === 'expiry-desc' ? 'descending' : 'none'}>
+                    {/* Щелчок по сроку переключает направление: сначала истекающие ↔ сначала дальние. */}
+                    <button
+                      type="button"
+                      className="sort"
+                      title={order === 'expiry-asc' ? 'Сначала дальние' : 'Сначала истекающие'}
+                      onClick={() => choose(order === 'expiry-asc' ? 'expiry-desc' : 'expiry-asc')}
+                    >
+                      Действует до<Icon name={order === 'expiry-asc' ? 'up' : order === 'expiry-desc' ? 'down' : 'sort'} />
+                    </button>
+                  </th>
+                  <th>Замечен</th>
+                  <th />
+                </tr>
               </thead>
               <tbody>
                 {rows.map(c => (

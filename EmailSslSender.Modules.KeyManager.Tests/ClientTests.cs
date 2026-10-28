@@ -207,14 +207,15 @@ public sealed class ClientTests
     }
 
     [Fact]
-    public async Task Сбой_TLS_подсказывает_про_отпечаток()
+    public async Task Сбой_TLS_объясняет_что_нужен_сертификат_удостоверяющего_центра()
     {
         var заглушка = new Заглушка(_ => throw new HttpRequestException(
             HttpRequestError.SecureConnectionError, "The SSL connection could not be established"));
 
         var ошибка = await Should.ThrowAsync<KeyManagerException>(() => Клиент(заглушка).ListAsync(Ct));
 
-        ошибка.Message.ShouldContain("keymanager.server_sha256");
+        ошибка.Message.ShouldContain("сертификат удостоверяющего центра");
+        ошибка.Message.ShouldNotContain("keymanager.server_sha256", Case.Insensitive, "отпечатка с 2.5 нет — и совета задать его тоже");
     }
 
     [Fact]

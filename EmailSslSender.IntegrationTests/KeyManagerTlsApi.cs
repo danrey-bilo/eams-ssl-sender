@@ -3,6 +3,7 @@ using System.Net.Http.Json;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
 using System.Text.Json.Nodes;
+using EmailSslSender.Modules.KeyManager;
 using Modules.Core.Data;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -23,13 +24,16 @@ namespace EmailSslSender.IntegrationTests;
 /// </summary>
 /// <remarks>
 /// ⚠ ⚠ <b>Проверяется то, чего не видят тесты клиента на заглушке обработчика:</b> что проверка
-/// TLS действительно включена (самоподписанный без отпечатка — отказ), что закреплённый отпечаток
-/// её проходит, что ключ уходит заголовком — и что ручная отправка доводит файлы до очереди писем
-/// запечатанными вложениями.
+/// TLS действительно включена (самоподписанный сертификат сам по себе — отказ), что сертификат
+/// доверенного корня её проходит, что ключ уходит заголовком — и что ручная отправка доводит файлы
+/// до очереди писем запечатанными вложениями.
 ///
-/// ⚠ ⚠ <b>И что ключ не уходит туда, куда его не вводили:</b> подменённый адрес с отпечатком
-/// подменного сервера — отказ без единого запроса к нему. Поэтому отпечаток в этих тестах
-/// задаётся ДО ключа — ровно как в панели.
+/// ⚠ ⚠ <b>Доверие заглушке — только через <see cref="KeyManagerModuleOptions.TrustedRoots"/></b>: рабочий
+/// хост корни не задаёт, а отпечатка для самоподписанного сертификата с 2.5 нет. Проверка та же —
+/// цепочка, имя (у заглушки — 127.0.0.1 в SAN) и отзыв.
+///
+/// ⚠ ⚠ <b>И что ключ не уходит туда, куда его не вводили:</b> подменённый адрес — отказ без единого
+/// запроса к нему, даже если сертификат подменного сервера проходит проверку.
 /// </remarks>
 [Collection(SenderHost.Collection)]
 public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
@@ -74,26 +78,27 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
         }
 
         host.User.SignOut();
+        Корни(host.Services).Clear();
         await _kmp.DisposeAsync();
     }
 
     [Fact]
-    public async Task Самоподписанный_сервер_без_отпечатка_отвергается()
+    public async Task Самоподписанный_сервер_отвергается()
     {
         var ответ = await host.CreateClient().PostAsync("/api/keymanager/test", null, Ct);
 
         ответ.StatusCode.ShouldBe(HttpStatusCode.Conflict);
         var тело = JsonNode.Parse(await ответ.Content.ReadAsStringAsync(Ct))!;
         тело["code"]!.GetValue<string>().ShouldBe("KEYMANAGER_UNAVAILABLE");
-        тело["details"]!["reason"]!.GetValue<string>().ShouldContain("keymanager.server_sha256");
+        тело["details"]!["reason"]!.GetValue<string>().ShouldContain("самоподписанный не принимается");
 
         _kmp.Запросов.ShouldBe(0, "до сервера с непроверенным сертификатом ключ не доехал");
     }
 
     [Fact]
-    public async Task Закреплённый_отпечаток_пропускает_и_ключ_едет_заголовком()
+    public async Task Сертификат_доверенного_корня_пропускает_и_ключ_едет_заголовком()
     {
-        await ЗакрепитьAsync();
+        Довериться(_kmp);
 
         var ответ = await host.CreateClient().PostAsync("/api/keymanager/test", null, Ct);
 
@@ -103,34 +108,15 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Отпечаток_закреплённый_после_ключа_требует_ввести_ключ_заново()
+    public async Task Ключ_не_уходит_на_подменённый_адрес()
     {
-        // Ключ вводили без отпечатка — закрепление после него меняет адресата ключа.
-        host.Settings.Values["keymanager.server_sha256"] = _kmp.Отпечаток;
-
-        var ответ = await host.CreateClient().PostAsync("/api/keymanager/test", null, Ct);
-
-        ответ.StatusCode.ShouldBe(HttpStatusCode.Conflict);
-        var тело = JsonNode.Parse(await ответ.Content.ReadAsStringAsync(Ct))!;
-        тело["code"]!.GetValue<string>().ShouldBe("KEYMANAGER_UNAVAILABLE");
-        тело["details"]!["reason"]!.GetValue<string>().ShouldContain("Введите ключ API заново");
-        _kmp.Запросов.ShouldBe(0);
-
-        await ЗакрепитьAsync();
-
-        (await host.CreateClient().PostAsync("/api/keymanager/test", null, Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
-    }
-
-    [Fact]
-    public async Task Ключ_не_уходит_на_подменённый_адрес_с_его_отпечатком()
-    {
-        // ⚠ Сценарий перехваченной сессии: адрес и отпечаток переставлены на свой сервер, и
-        // «проверить связь» понесла бы ключ туда.
+        // ⚠ Сценарий перехваченной сессии: адрес переставлен на свой сервер, и «проверить связь»
+        // понесла бы ключ туда. Сертификат подменного сервера проходит проверку — отказывает привязка ключа.
         await using var подменный = new ЗаглушкаKmp("ключ-подменного");
         await подменный.ЗапуститьAsync();
+        Довериться(подменный);
 
         host.Settings.Values["keymanager.base_url"] = подменный.Адрес;
-        host.Settings.Values["keymanager.server_sha256"] = подменный.Отпечаток;
 
         var ответ = await host.CreateClient().PostAsync("/api/keymanager/test", null, Ct);
 
@@ -145,7 +131,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
     [Fact]
     public async Task Правка_и_удаление_подписки_отменяют_её_письма_в_очереди()
     {
-        await ЗакрепитьAsync();
+        Довериться(_kmp);
         ПочтаНаНедоступныйСервер();
 
         var клиент = host.CreateClient();
@@ -177,7 +163,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
     [Fact]
     public async Task Ключ_не_уходит_по_почте_без_шифрования()
     {
-        await ЗакрепитьAsync();
+        Довериться(_kmp);
         host.Settings.Values["mail.enabled"] = true;
         host.Settings.Values["mail.smtp_host"] = "127.0.0.1";
         host.Settings.Values["mail.smtp_port"] = 1;
@@ -221,7 +207,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
     [Fact]
     public async Task Ручная_отправка_кладёт_письма_с_запечатанными_вложениями()
     {
-        await ЗакрепитьAsync();
+        Довериться(_kmp);
         host.Settings.Values["mail.enabled"] = true;
         host.Settings.Values["mail.smtp_host"] = "127.0.0.1";
         host.Settings.Values["mail.smtp_port"] = 1;
@@ -278,7 +264,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
     [Fact]
     public async Task Выгрузка_сертификата_отдаёт_файл_под_именем_вложения_и_без_кэша()
     {
-        await ЗакрепитьAsync();
+        Довериться(_kmp);
         await СнимокAsync();
 
         var ответ = await host.CreateClient().PostAsJsonAsync(
@@ -303,7 +289,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
     [InlineData(false)]
     public async Task Закрытый_ключ_приходит_текстом_PEM_и_пароль_по_возможности(bool парольЕсть)
     {
-        await ЗакрепитьAsync();
+        Довериться(_kmp);
         await СнимокAsync();
         _kmp.Пароль = парольЕсть ? ЗаглушкаKmp.ПарольКлюча : null;
 
@@ -337,7 +323,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
     [Fact]
     public async Task Ключ_не_текстом_PEM_отвечает_409_с_причиной()
     {
-        await ЗакрепитьAsync();
+        Довериться(_kmp);
         await СнимокAsync();
         _kmp.КлючВDer = true;
 
@@ -358,7 +344,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
     [Fact]
     public async Task Показ_ключа_пишется_в_журнал_без_ключа_и_пароля()
     {
-        await ЗакрепитьAsync();
+        Довериться(_kmp);
         await СнимокAsync();
         _kmp.Пароль = ЗаглушкаKmp.ПарольКлюча;
 
@@ -372,6 +358,9 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
             // хоста — так видна каждая строка, своя и чужая (EF, MVC), на всех уровнях.
             services.AddSingleton<ILoggerFactory>(new LoggerFactory([перо]));
         }));
+
+        // ⚠ У отдельного хоста свои опции модуля: доверие заглушке задаётся и ему.
+        Корни(фабрика.Services).Add(_kmp.Корень);
 
         var клиент = фабрика.CreateClient();
 
@@ -462,14 +451,12 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
         }
     }
 
-    /// <summary>Закрепить отпечаток заглушки и ввести ключ после него — как это делает панель.</summary>
-    private async Task ЗакрепитьAsync()
-    {
-        host.Settings.Values["keymanager.server_sha256"] = _kmp.Отпечаток;
+    /// <summary>Корни, которым соединение с Key Manager Plus доверяет в этом хосте.</summary>
+    private static X509Certificate2Collection Корни(IServiceProvider services) =>
+        services.GetRequiredService<KeyManagerModuleOptions>().TrustedRoots;
 
-        (await host.CreateClient().PutAsJsonAsync("/api/keymanager/api-key", new { api_key = Ключ }, Ct))
-            .StatusCode.ShouldBe(HttpStatusCode.NoContent);
-    }
+    /// <summary>Доверять сертификату заглушки — как рабочий хост доверяет удостоверяющему центру.</summary>
+    private void Довериться(ЗаглушкаKmp заглушка) => Корни(host.Services).Add(заглушка.Корень);
 
     /// <summary>Почта настроена, но сервер недоступен: письма копятся в очереди.</summary>
     private void ПочтаНаНедоступныйСервер()
@@ -538,7 +525,8 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
 
         public string Адрес { get; private set; } = "";
 
-        public string Отпечаток { get; private set; } = "";
+        /// <summary>Сертификат заглушки — он же корень своей цепочки.</summary>
+        public X509Certificate2 Корень => _сертификат ?? throw new InvalidOperationException("заглушка не запущена");
 
         public int Запросов => _запросов;
 
@@ -552,11 +540,17 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
         {
             using var пара = RSA.Create(2048);
             var запрос = new CertificateRequest("CN=kmp.example.test", пара, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+
+            // ⚠ Имя из адреса — в SAN: проверка имени хоста у соединителя не выключается.
+            var имена = new SubjectAlternativeNameBuilder();
+            имена.AddIpAddress(IPAddress.Loopback);
+            имена.AddDnsName("localhost");
+            запрос.CertificateExtensions.Add(имена.Build());
+
             using var временный = запрос.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1), DateTimeOffset.UtcNow.AddDays(7));
 
             // ⚠ Через PKCS#12: SChannel не принимает эфемерный ключ, а CreateSelfSigned даёт именно его.
             _сертификат = X509CertificateLoader.LoadPkcs12(временный.Export(X509ContentType.Pkcs12), null);
-            Отпечаток = Convert.ToHexString(SHA256.HashData(_сертификат.RawData));
 
             var строитель = WebApplication.CreateSlimBuilder();
             строитель.WebHost.ConfigureKestrel(kestrel =>

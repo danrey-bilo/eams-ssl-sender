@@ -112,9 +112,8 @@ internal sealed class KeyManagerController(
 
     /// <summary>Задать или снять ключ API (Settings → General Settings → API Key в Key Manager Plus).</summary>
     /// <remarks>
-    /// ⚠ ⚠ <b>Ключ привязывается к адресу и отпечатку, заданным на момент ввода</b>
-    /// (<c>keymanager.base_url</c>, <c>keymanager.server_sha256</c>): сначала они, потом ключ.
-    /// Сменили адрес или отпечаток — ключ вводится заново, иначе проверка и опрос отказывают.
+    /// ⚠ ⚠ <b>Ключ привязывается к адресу, заданному на момент ввода</b> (<c>keymanager.base_url</c>):
+    /// сначала адрес, потом ключ. Сменили адрес — ключ вводится заново, иначе проверка и опрос отказывают.
     ///
     /// ⚠ В журнал идёт факт, а не значение.
     /// </remarks>
@@ -130,7 +129,7 @@ internal sealed class KeyManagerController(
             async token =>
             {
                 await apiKey.PutAsync(
-                    body.ApiKey, ApiKeyStore.Target(настройки.BaseUrl, настройки.ServerSha256), token);
+                    body.ApiKey, ApiKeyStore.Target(настройки.BaseUrl), token);
 
                 audit.Write(new AuditEntry(
                     KeyManagerActions.ApiKeySet,

@@ -10,8 +10,12 @@ namespace EmailSslSender.Modules.KeyManager.Settings;
 /// ключ API отдаёт любые сертификаты вместе с закрытыми ключами. Он лежит запечатанным в
 /// <c>keymanager_state</c> и наружу отдаётся только признаком «задан».
 ///
-/// ⚠ <b>Все помечены настройками защиты.</b> Подменивший адрес Key Manager Plus получает ключ
-/// API первым же опросом, а снявший отпечаток — открывает дорогу тому, кто встал посередине.
+/// ⚠ <b>Все помечены настройками защиты.</b> Подменивший адрес Key Manager Plus получил бы ключ
+/// API первым же опросом — поэтому ключ привязан к адресу и после его смены вводится заново.
+///
+/// ⚠ Отпечатка сертификата сервера (<c>keymanager.server_sha256</c>) с 2.5 нет: сертификат
+/// проверяется только цепочкой удостоверяющего центра. Строку прежних установок убирает миграция
+/// <c>DropServerPin</c>.
 ///
 /// ⚠ Подписи по-английски (решение 0027), как у остальных модулей.
 /// </remarks>
@@ -56,24 +60,6 @@ internal static class KeyManagerSettings
         IsSecurity: true,
         Minimum: 1,
         Maximum: 1440);
-
-    /// <summary>Закреплённый отпечаток сертификата сервера.</summary>
-    /// <remarks>
-    /// ⚠ ⚠ <b>Замена проверке, а не её отключение.</b> Key Manager Plus обычно стоит с
-    /// самоподписанным сертификатом. Выключить проверку TLS значило бы отдать ключ API любому,
-    /// кто встал посередине. Закреплённый SHA-256 принимает ровно один сертификат — тот, что
-    /// администратор сверил сам.
-    /// </remarks>
-    public static readonly SettingKey<string?> ServerSha256 = new(
-        "keymanager.server_sha256",
-        Default: null,
-        "Pinned server certificate (SHA-256)",
-        "SHA-256 fingerprint of the Key Manager Plus server certificate, hex with or without "
-        + "colons. Set it when the server uses a self-signed certificate: only that exact "
-        + "certificate is accepted. Empty means the usual chain validation.",
-        Category,
-        IsSecurity: true,
-        Maximum: 128);
 }
 
 /// <summary>Объявления настроек модуля.</summary>
@@ -84,6 +70,5 @@ internal sealed class KeyManagerSettingDeclarations : ISettingDeclarationProvide
         KeyManagerSettings.Enabled,
         KeyManagerSettings.BaseUrl,
         KeyManagerSettings.PollMinutes,
-        KeyManagerSettings.ServerSha256,
     ];
 }

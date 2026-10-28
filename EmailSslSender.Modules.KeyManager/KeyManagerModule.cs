@@ -1,3 +1,4 @@
+using System.Security.Cryptography.X509Certificates;
 using EmailSslSender.Modules.KeyManager.Client;
 using EmailSslSender.Modules.KeyManager.Contracts;
 using EmailSslSender.Modules.KeyManager.Delivery;
@@ -34,6 +35,17 @@ public sealed class KeyManagerModuleOptions
 
     /// <summary>Переключатели модуля. Своих подвозможностей у модуля нет — модуль целиком.</summary>
     public KeyManagerModuleFeatures Features { get; } = new();
+
+    /// <summary>
+    /// Корневые сертификаты, которым соединение с Key Manager Plus доверяет вместо системных.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ ⚠ <b>Только для тестов хоста</b>: их заглушка Key Manager Plus с самоподписанным сертификатом
+    /// проходит ту же проверку цепочки, имени и отзыва. Рабочий хост корни не задаёт — сертификат
+    /// проверяется системным хранилищем (свой удостоверяющий центр — <c>SSL_CERT_FILE</c>). Ни
+    /// настройкой, ни через API это не задаётся.
+    /// </remarks>
+    public X509Certificate2Collection TrustedRoots { get; } = [];
 }
 
 /// <summary>Переключатели модуля Key Manager Plus (своих подвозможностей нет).</summary>
@@ -102,7 +114,7 @@ public static class KeyManagerModule
     }
 
     /// <summary>
-    /// Привязать ключ API, заданный до привязки к адресу (1.x), к текущему адресу и отпечатку Key Manager Plus.
+    /// Привязать ключ API, заданный до привязки к адресу (1.x), к текущему адресу Key Manager Plus.
     /// </summary>
     /// <remarks>
     /// ⚠ Зовёт только команда <c>migrate</c> хоста: «доверие с первого раза» — тому адресу, что задан при
@@ -123,9 +135,7 @@ public static class KeyManagerModule
             return false;
         }
 
-        var отпечаток = await settings.GetAsync(KeyManagerSettings.ServerSha256, cancellationToken);
-
         return await scope.ServiceProvider.GetRequiredService<ApiKeyStore>()
-            .BindLegacyAsync(ApiKeyStore.Target(адрес, отпечаток), cancellationToken);
+            .BindLegacyAsync(ApiKeyStore.Target(адрес), cancellationToken);
     }
 }

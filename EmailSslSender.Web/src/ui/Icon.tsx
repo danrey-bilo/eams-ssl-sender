@@ -20,6 +20,9 @@ const PATHS = {
   check: ['M20 6L9 17l-5-5'],
   pause: ['M9 5v14', 'M15 5v14'],
   play: ['M7 4.5v15l12.5-7.5z'],
+  up: ['M12 19V5', 'M6 11l6-6 6 6'],
+  down: ['M12 5v14', 'M18 13l-6 6-6-6'],
+  sort: ['M8 4v16', 'M4 8l4-4 4 4', 'M16 20V4', 'M20 16l-4 4-4-4'],
 } as const;
 
 export type IconName = keyof typeof PATHS;

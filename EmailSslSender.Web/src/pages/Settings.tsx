@@ -234,7 +234,6 @@ function ConnectionForm({ km, settings, onSaved, onDropKey }: {
   const [enabled, setEnabled] = useState(settings['keymanager.enabled']?.value === true);
   const [url, setUrl] = useState(text(settings, 'keymanager.base_url'));
   const [apiKey, setApiKey] = useState('');
-  const [pin, setPin] = useState(text(settings, 'keymanager.server_sha256'));
   const [minutes, setMinutes] = useState(text(settings, 'keymanager.poll_minutes'));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -242,9 +241,8 @@ function ConnectionForm({ km, settings, onSaved, onDropKey }: {
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setError('');
-    // Ключ привязан к адресу и отпечатку: сервер не отдаст его на новый адрес без повторного ввода.
-    const moved = url.trim() !== text(settings, 'keymanager.base_url').trim()
-      || pin.trim() !== text(settings, 'keymanager.server_sha256').trim();
+    // Ключ привязан к адресу: сервер не отдаст его на новый адрес без повторного ввода.
+    const moved = url.trim() !== text(settings, 'keymanager.base_url').trim();
     if (km.api_key_set && moved && !apiKey.trim()) {
       setError('Адрес изменился — введите ключ API заново.');
       return;
@@ -254,7 +252,6 @@ function ConnectionForm({ km, settings, onSaved, onDropKey }: {
       await saveSettings(settings, {
         'keymanager.enabled': enabled,
         'keymanager.base_url': url.trim(),
-        'keymanager.server_sha256': pin.trim(),
         'keymanager.poll_minutes': minutes ? Number(minutes) : '',
       });
       if (apiKey.trim()) await api.put('/api/keymanager/api-key', { api_key: apiKey.trim() });
@@ -279,21 +276,18 @@ function ConnectionForm({ km, settings, onSaved, onDropKey }: {
         <h2>Подключение</h2>
         <Check label="Опрашивать" checked={enabled} onChange={setEnabled} />
       </div>
-      <Field label="Адрес" hint="Имя сервера из его сертификата, а не IP">
-        <input type="url" placeholder="https://kmp.example.com:6565" value={url} onChange={e => setUrl(e.target.value)} />
-      </Field>
-      <Field label="Ключ API" hint="Key Manager Plus → Settings → General Settings → API Key">
-        <input type="password" autoComplete="off" placeholder={km.api_key_set ? '•••••••• задан' : ''}
-          value={apiKey} onChange={e => setApiKey(e.target.value)} />
-      </Field>
-      <div className="row">
-        <Field label="Отпечаток SHA-256" hint="Только для самоподписанного сертификата">
-          <input type="text" className="mono" value={pin} onChange={e => setPin(e.target.value)} />
+      <div className="row three">
+        <Field label="Адрес" hint="Имя сервера из его сертификата, а не IP">
+          <input type="url" placeholder="https://kmp.example.com:6565" value={url} onChange={e => setUrl(e.target.value)} />
         </Field>
         <Field label="Опрос, мин">
           <input type="number" min={1} max={1440} value={minutes} onChange={e => setMinutes(e.target.value)} />
         </Field>
       </div>
+      <Field label="Ключ API" hint="Key Manager Plus → Settings → General Settings → API Key">
+        <input type="password" autoComplete="off" placeholder={km.api_key_set ? '•••••••• задан' : ''}
+          value={apiKey} onChange={e => setApiKey(e.target.value)} />
+      </Field>
       <ErrorText text={error} />
       <div className="actions-row">
         {km.api_key_set && <button type="button" className="danger" onClick={onDropKey}>Снять ключ</button>}

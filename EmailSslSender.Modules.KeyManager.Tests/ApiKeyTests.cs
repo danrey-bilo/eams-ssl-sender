@@ -23,9 +23,7 @@ public sealed class ApiKeyTests(KeyManagerDatabase база) : IAsyncLifetime
 
     private const string Адрес = "https://kmp.example.test:6565";
 
-    private const string Отпечаток = "AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89:AB:CD:EF:01:23:45:67:89";
-
-    private static readonly string Цель = ApiKeyStore.Target(Адрес, null);
+    private static readonly string Цель = ApiKeyStore.Target(Адрес);
 
     public ValueTask InitializeAsync()
     {
@@ -71,49 +69,56 @@ public sealed class ApiKeyTests(KeyManagerDatabase база) : IAsyncLifetime
     }
 
     [Fact]
-    public async Task Ключ_не_открывается_для_другого_адреса_или_отпечатка()
+    public async Task Ключ_не_открывается_для_другого_адреса()
     {
-        // ⚠ Ровно сценарий перехваченной сессии: адрес (и отпечаток) переставлены на свой сервер,
-        // и проверка связи понесла бы ключ туда.
+        // ⚠ Ровно сценарий перехваченной сессии: адрес переставлен на свой сервер, и проверка связи
+        // понесла бы ключ туда.
         await Задать(Ключ);
 
         await using var scope = база.Scope();
         var хранилище = scope.ServiceProvider.GetRequiredService<ApiKeyStore>();
 
         var чужойАдрес = await Should.ThrowAsync<KeyManagerException>(
-            () => хранилище.GetForAsync(ApiKeyStore.Target("https://evil.example.test:6565", null), Ct));
+            () => хранилище.GetForAsync(ApiKeyStore.Target("https://evil.example.test:6565"), Ct));
         чужойАдрес.Message.ShouldContain("Введите ключ API заново");
         чужойАдрес.Message.ShouldNotContain(Ключ);
 
         await Should.ThrowAsync<KeyManagerException>(
-            () => хранилище.GetForAsync(ApiKeyStore.Target(Адрес, Отпечаток), Ct));
-
-        await Should.ThrowAsync<KeyManagerException>(
-            () => хранилище.GetForAsync(ApiKeyStore.Target("https://kmp.example.test:7070", null), Ct));
+            () => хранилище.GetForAsync(ApiKeyStore.Target("https://kmp.example.test:7070"), Ct));
 
         (await хранилище.GetForAsync(Цель, Ct)).ShouldBe(Ключ, "свой адрес по-прежнему открывает");
     }
 
     [Theory]
-    [InlineData("https://KMP.Example.Test:6565/", null)]
-    [InlineData(" https://kmp.example.test:6565 ", "")]
-    [InlineData("https://kmp.example.test:6565/?x=1", null)]
-    public void Один_адрес_в_разной_записи_одна_цель(string адрес, string? отпечаток)
+    [InlineData("https://KMP.Example.Test:6565/")]
+    [InlineData(" https://kmp.example.test:6565 ")]
+    [InlineData("https://kmp.example.test:6565/?x=1")]
+    public void Один_адрес_в_разной_записи_одна_цель(string адрес)
     {
-        ApiKeyStore.Target(адрес, отпечаток).ShouldBe(Цель);
+        ApiKeyStore.Target(адрес).ShouldBe(Цель);
     }
 
     [Fact]
-    public void Умолчательный_порт_и_отпечаток_в_разной_записи_одна_цель()
+    public void Умолчательный_порт_в_разной_записи_одна_цель()
     {
-        ApiKeyStore.Target("https://kmp.example.test", null)
-            .ShouldBe(ApiKeyStore.Target("https://kmp.example.test:443/", null));
+        ApiKeyStore.Target("https://kmp.example.test").ShouldBe(ApiKeyStore.Target("https://kmp.example.test:443/"));
+        ApiKeyStore.Target("https://kmp.example.test:6565/kmp").ShouldNotBe(Цель);
+    }
 
-        ApiKeyStore.Target(Адрес, Отпечаток.ToLowerInvariant())
-            .ShouldBe(ApiKeyStore.Target(Адрес, Отпечаток.Replace(":", "", StringComparison.Ordinal)));
+    [Fact]
+    public async Task Ключ_введённый_при_закреплённом_отпечатке_вводится_заново()
+    {
+        // ⚠ До 2.5 к адресу привязки дописывался отпечаток. Такой ключ после обновления не открывается
+        // для голого адреса — отказ «введите заново», а не ключ на сервер, сертификат которого раньше
+        // принимался только по отпечатку. Ключ без отпечатка (у рабочей установки) открывается как был.
+        await using var scope = база.Scope();
+        var хранилище = scope.ServiceProvider.GetRequiredService<ApiKeyStore>();
 
-        ApiKeyStore.Target(Адрес, Отпечаток).ShouldNotBe(Цель);
-        ApiKeyStore.Target("https://kmp.example.test:6565/kmp", null).ShouldNotBe(Цель);
+        await хранилище.PutAsync(Ключ, Цель + " sha256=" + new string('A', 64), Ct);
+        await scope.ServiceProvider.GetRequiredService<AppDbContext>().SaveChangesAsync(Ct);
+
+        (await Should.ThrowAsync<KeyManagerException>(() => хранилище.GetForAsync(Цель, Ct)))
+            .Message.ShouldContain("Введите ключ API заново");
     }
 
     [Fact]
@@ -173,7 +178,7 @@ public sealed class ApiKeyTests(KeyManagerDatabase база) : IAsyncLifetime
             var хранилище = scope.ServiceProvider.GetRequiredService<ApiKeyStore>();
 
             await Should.ThrowAsync<KeyManagerException>(
-                () => хранилище.GetForAsync(ApiKeyStore.Target("https://evil.example.test", null), Ct));
+                () => хранилище.GetForAsync(ApiKeyStore.Target("https://evil.example.test"), Ct));
             (await хранилище.GetForAsync(Цель, Ct)).ShouldBe(Ключ);
         }
     }
@@ -186,7 +191,7 @@ public sealed class ApiKeyTests(KeyManagerDatabase база) : IAsyncLifetime
 
         await using var scope = база.Scope();
         var соединитель = new KeyManagerConnector(
-            база.Настройки, scope.ServiceProvider.GetRequiredService<ApiKeyStore>());
+            база.Настройки, scope.ServiceProvider.GetRequiredService<ApiKeyStore>(), new KeyManagerModuleOptions());
 
         // Свой адрес — клиент открывается (сети при этом нет: запросов не было).
         using (await соединитель.OpenAsync(Ct))
@@ -197,11 +202,6 @@ public sealed class ApiKeyTests(KeyManagerDatabase база) : IAsyncLifetime
 
         var ошибка = await Should.ThrowAsync<KeyManagerException>(() => соединитель.OpenAsync(Ct));
         ошибка.Message.ShouldContain("заново");
-
-        база.Настройки.Значения[KeyManagerSettings.BaseUrl.Name] = Адрес;
-        база.Настройки.Значения[KeyManagerSettings.ServerSha256.Name] = Отпечаток;
-
-        await Should.ThrowAsync<KeyManagerException>(() => соединитель.OpenAsync(Ct));
     }
 
     [Fact]
@@ -240,9 +240,7 @@ public sealed class ApiKeyTests(KeyManagerDatabase база) : IAsyncLifetime
 
         await scope.ServiceProvider.GetRequiredService<ApiKeyStore>().PutAsync(
             значение,
-            ApiKeyStore.Target(
-                (string?)база.Настройки.Значения.GetValueOrDefault(KeyManagerSettings.BaseUrl.Name) ?? Адрес,
-                (string?)база.Настройки.Значения.GetValueOrDefault(KeyManagerSettings.ServerSha256.Name)),
+            ApiKeyStore.Target((string?)база.Настройки.Значения.GetValueOrDefault(KeyManagerSettings.BaseUrl.Name) ?? Адрес),
             Ct);
         await db.SaveChangesAsync(Ct);
     }

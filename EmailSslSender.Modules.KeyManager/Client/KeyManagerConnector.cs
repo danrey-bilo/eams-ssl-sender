@@ -1,5 +1,6 @@
 using EmailSslSender.Modules.KeyManager.Contracts;
 using System.Net;
+using System.Net.Security;
 using System.Security.Cryptography.X509Certificates;
 using EmailSslSender.Modules.KeyManager.Secrets;
 using EmailSslSender.Modules.KeyManager.Settings;
@@ -9,7 +10,7 @@ using Modules.Core.Errors;
 namespace EmailSslSender.Modules.KeyManager.Client;
 
 /// <summary>Что задано для связи с Key Manager Plus — без открытия ключа API.</summary>
-internal sealed record KeyManagerConfiguration(bool Enabled, string? BaseUrl, string? ServerSha256, bool ApiKeySet)
+internal sealed record KeyManagerConfiguration(bool Enabled, string? BaseUrl, bool ApiKeySet)
 {
     /// <summary>Можно ли хотя бы попробовать соединиться: адрес и ключ заданы.</summary>
     public bool Ready => !string.IsNullOrWhiteSpace(BaseUrl) && ApiKeySet;
@@ -34,7 +35,7 @@ internal interface IKeyManagerConnector
     /// <summary>Открыть клиента.</summary>
     /// <exception cref="AppException"><c>KEYMANAGER_NOT_CONFIGURED</c>: нет адреса или ключа.</exception>
     /// <exception cref="KeyManagerException">
-    /// Адрес или отпечаток заданы неверно либо сменились после ввода ключа API.
+    /// Адрес задан неверно либо сменился после ввода ключа API.
     /// </exception>
     Task<IKeyManagerClient> OpenAsync(CancellationToken cancellationToken = default);
 }
@@ -43,8 +44,8 @@ internal interface IKeyManagerConnector
 /// Открывает клиента на свежем <see cref="SocketsHttpHandler"/> по текущим настройкам.
 /// </summary>
 /// <remarks>
-/// ⚠ <b>Соединение собирается на проход, а не живёт синглтоном.</b> Адрес и отпечаток правятся
-/// без перезапуска, а проверка TLS зашивается в обработчик при создании; опрос же ходит раз в
+/// ⚠ <b>Соединение собирается на проход, а не живёт синглтоном.</b> Адрес правится без
+/// перезапуска, а проверка TLS зашивается в обработчик при создании; опрос же ходит раз в
 /// четверть часа, и цена нового рукопожатия ничтожна.
 ///
 /// ⚠ ⚠ <b>Перенаправления выключены.</b> <c>HttpClient</c> при перенаправлении снимает только
@@ -52,15 +53,16 @@ internal interface IKeyManagerConnector
 /// укажет <c>Location</c>.
 ///
 /// ⚠ ⚠ <b>Ключ открывается только для адреса, для которого его ввели</b> (<c>ApiKeyStore</c>):
-/// сменивший <c>keymanager.base_url</c> или <c>keymanager.server_sha256</c> получает отказ, а не
-/// соединение с ключом в заголовке.
+/// сменивший <c>keymanager.base_url</c> получает отказ, а не соединение с ключом в заголовке.
 ///
-/// ⚠ <b>Без закреплённого отпечатка проверяется и отзыв</b> (<c>Online</c>): у живого сервера
-/// владельца сертификат Sectigo, и отозванный сертификат обязан не пройти. Значит, серверу нужен
-/// выход к OCSP/CRL удостоверяющего центра. С отпечатком отзыв не спрашивается: принимается ровно
-/// закреплённый лист, и цепочки у него обычно нет.
+/// ⚠ ⚠ <b>Сертификат сервера — только по цепочке удостоверяющего центра</b> (решение владельца
+/// 2026-10-28, версия 2.5): цепочка, имя хоста и отзыв (<c>Online</c>). У живого сервера владельца
+/// сертификат Sectigo, и отозванный сертификат обязан не пройти — значит, серверу нужен выход к
+/// OCSP/CRL центра. Закреплённого отпечатка для самоподписанного сертификата больше нет, и
+/// отключить проверку нечем; свой центр — корневой сертификат в <c>SSL_CERT_FILE</c> контейнера.
 /// </remarks>
-internal sealed class KeyManagerConnector(ISettingsReader settings, ApiKeyStore apiKey) : IKeyManagerConnector
+internal sealed class KeyManagerConnector(
+    ISettingsReader settings, ApiKeyStore apiKey, KeyManagerModuleOptions options) : IKeyManagerConnector
 {
     /// <summary>Сколько ждём ответа целиком.</summary>
     private static readonly TimeSpan Таймаут = TimeSpan.FromSeconds(30);
@@ -72,7 +74,6 @@ internal sealed class KeyManagerConnector(ISettingsReader settings, ApiKeyStore 
         new(
             await settings.GetAsync(KeyManagerSettings.Enabled, cancellationToken),
             await settings.GetAsync(KeyManagerSettings.BaseUrl, cancellationToken),
-            await settings.GetAsync(KeyManagerSettings.ServerSha256, cancellationToken),
             await apiKey.HasAsync(cancellationToken));
 
     public async Task<IKeyManagerClient> OpenAsync(CancellationToken cancellationToken = default)
@@ -95,17 +96,7 @@ internal sealed class KeyManagerConnector(ISettingsReader settings, ApiKeyStore 
                 + "по открытому HTTP его прочтёт любой на пути.");
         }
 
-        var отпечаток = ServerCertificatePin.Normalize(настройки.ServerSha256);
-
-        if (отпечаток is null && !string.IsNullOrWhiteSpace(настройки.ServerSha256))
-        {
-            throw new KeyManagerException(
-                "keymanager.server_sha256 не похож на отпечаток SHA-256: нужны 64 шестнадцатеричных "
-                + "знака, двоеточия допустимы.");
-        }
-
-        var ключ = await apiKey.GetForAsync(
-                ApiKeyStore.Target(настройки.BaseUrl, настройки.ServerSha256), cancellationToken)
+        var ключ = await apiKey.GetForAsync(ApiKeyStore.Target(настройки.BaseUrl), cancellationToken)
             ?? throw new AppException(
                 KeyManagerErrorCodes.NotConfigured, "Ключ API Key Manager Plus не задан.", HttpStatusCode.Conflict);
 
@@ -116,12 +107,22 @@ internal sealed class KeyManagerConnector(ISettingsReader settings, ApiKeyStore 
             PooledConnectionLifetime = TimeSpan.FromMinutes(5),
         };
 
-        обработчик.SslOptions.RemoteCertificateValidationCallback =
-            (_, сертификат, _, ошибки) => ServerCertificatePin.Accept(сертификат, ошибки, отпечаток);
+        // ⚠ Принимается только сертификат без единой ошибки: цепочка, имя хоста, отзыв.
+        обработчик.SslOptions.RemoteCertificateValidationCallback = (_, _, _, ошибки) => ошибки == SslPolicyErrors.None;
+        обработчик.SslOptions.CertificateRevocationCheckMode = X509RevocationMode.Online;
 
-        // ⚠ Без отпечатка — обычная цепочка вместе с отзывом; с отпечатком решает только он.
-        обработчик.SslOptions.CertificateRevocationCheckMode =
-            отпечаток is null ? X509RevocationMode.Online : X509RevocationMode.NoCheck;
+        if (options.TrustedRoots.Count > 0)
+        {
+            // Только тесты хоста: заглушка Key Manager Plus — корень своей цепочки. Проверка та же, меняется
+            // лишь хранилище корней.
+            var политика = new X509ChainPolicy
+            {
+                TrustMode = X509ChainTrustMode.CustomRootTrust,
+                RevocationMode = X509RevocationMode.Online,
+            };
+            политика.CustomTrustStore.AddRange(options.TrustedRoots);
+            обработчик.SslOptions.CertificateChainPolicy = политика;
+        }
 
         var http = new HttpClient(обработчик, disposeHandler: true)
         {

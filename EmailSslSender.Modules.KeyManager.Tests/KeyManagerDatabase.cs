@@ -367,7 +367,7 @@ internal sealed class ПодставнойKmp : IKeyManagerConnector, IKeyManage
     private int _выгрузок;
     private int _списков;
 
-    public static KeyManagerConfiguration Готово { get; } = new(true, "https://kmp.example.test:6565", null, true);
+    public static KeyManagerConfiguration Готово { get; } = new(true, "https://kmp.example.test:6565", true);
 
     public void Задержать() => Задвижка = Новый();
 

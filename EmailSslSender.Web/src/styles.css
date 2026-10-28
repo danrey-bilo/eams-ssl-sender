@@ -162,6 +162,12 @@ main { max-width: 1120px; margin: 0 auto; padding: 32px 24px 72px; }
 table { width: 100%; border-collapse: separate; border-spacing: 0; }
 th, td { text-align: left; padding: 13px 20px; border-top: 1px solid var(--line); vertical-align: middle; }
 th { font-weight: 500; font-size: 12px; color: var(--muted); border-top: 0; padding-top: 11px; padding-bottom: 11px; background: color-mix(in srgb, var(--hover) 60%, transparent); }
+/* Заголовок, по которому сортируется таблица: кнопка без рамки, стрелка — направление. */
+th button.sort { border: 0; background: none; padding: 0; min-height: 0; font: inherit; color: inherit; gap: 5px; }
+th button.sort:hover { background: none; color: var(--text); }
+th button.sort svg { width: 13px; height: 13px; opacity: .45; }
+th[aria-sort=ascending] button.sort, th[aria-sort=descending] button.sort { color: var(--text); }
+th[aria-sort=ascending] button.sort svg, th[aria-sort=descending] button.sort svg { opacity: 1; color: var(--accent); }
 tbody tr:hover td { background: color-mix(in srgb, var(--hover) 55%, transparent); }
 tr.off td:not(.actions) { opacity: .5; }
 td.actions { text-align: right; white-space: nowrap; width: 1%; }
@@ -187,6 +193,7 @@ td.actions { text-align: right; white-space: nowrap; width: 1%; }
 label.search { position: relative; display: block; width: 340px; max-width: 100%; }
 label.search svg { position: absolute; left: 11px; top: 50%; width: 15px; height: 15px; transform: translateY(-50%); color: var(--faint); pointer-events: none; }
 label.search input { padding-left: 34px; }
+.toolbar select.order { width: auto; }
 
 .list .item {
   display: flex; flex-wrap: wrap; align-items: flex-start; gap: 4px 12px;
@@ -504,6 +511,7 @@ html[data-device="mobile"] .card { padding: 16px; border-radius: 14px; }
 html[data-device="mobile"] .card.flush { padding: 0; }
 html[data-device="mobile"] .toolbar { flex-wrap: wrap; }
 html[data-device="mobile"] label.search { width: 100%; }
+html[data-device="mobile"] .toolbar > .inline { width: 100%; justify-content: space-between; }
 html[data-device="mobile"] .pills { overflow-x: auto; scrollbar-width: none; margin: 0 -14px 16px; padding: 0 14px; }
 html[data-device="mobile"] .banner { flex-wrap: wrap; }
 html[data-device="mobile"] .banner button { width: 100%; }
