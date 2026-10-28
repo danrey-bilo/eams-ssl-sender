@@ -73,8 +73,20 @@ internal sealed class CertificateSubscription
     /// <summary>Сколько сертификатов в одной подписке.</summary>
     public const int MaxCertificates = 50;
 
+    /// <summary>Самое длинное описание подписки, в знаках.</summary>
+    public const int MaxDescription = 500;
+
     /// <summary>UUIDv7 из приложения.</summary>
     public required Guid Id { get; set; }
+
+    /// <summary>
+    /// Описание для администраторов: что это за рассылка и для кого. <c>null</c> — без описания.
+    /// </summary>
+    /// <remarks>
+    /// ⚠ Только в системе (решение владельца 2026-10-28): в письма и в журнал не уходит — в журнал
+    /// пишется лишь его длина, текст может называть людей.
+    /// </remarks>
+    public string? Description { get; set; }
 
     /// <summary>Common Name сертификатов в Key Manager Plus, например <c>*.example.com</c>; в порядке, заданном администратором.</summary>
     public required string[] CommonNames { get; set; }

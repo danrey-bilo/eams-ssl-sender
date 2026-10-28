@@ -12,10 +12,33 @@ import { useOverlay } from '../ui/Overlay';
 
 const FORMATS = ['PEM', 'KEY', 'CRT', 'CER', 'DER', 'P7B', 'PKCS', 'JKS'];
 const LOCALES: Array<[string, string]> = [['ru', 'Русский'], ['uk', 'Українська'], ['en', 'English']];
+/** Как у сервера: `CertificateSubscription.MaxDescription`. */
+const DESCRIPTION_MAX = 500;
 
-/** Сертификаты подписки коротко: первый и «+N». */
+/** Сертификаты подписки коротко — для заголовков окон: первый и «+N». */
 function namesText(s: Subscription): string {
   return s.common_names[0] + (s.common_names.length > 1 ? ' +' + (s.common_names.length - 1) : '');
+}
+
+/**
+ * Все сертификаты подписки, по строке на каждый, со сроком из снимка Key Manager. Имени, которого в снимке
+ * нет, сказано об этом — так видна опечатка; пустой снимок (опроса ещё не было) молчит.
+ */
+function Names({ s, expiry }: { s: Subscription; expiry: Map<string, string | null> }) {
+  return (
+    <ul className="names">
+      {s.common_names.map(n => {
+        const until = expiry.get(n.toLowerCase());
+        return (
+          <li key={n}>
+            <span className="strong">{n}</span>
+            {until ? <span className="until">до {fmtDate(until)}</span>
+              : expiry.size > 0 && !expiry.has(n.toLowerCase()) && <span className="until">нет в Key Manager</span>}
+          </li>
+        );
+      })}
+    </ul>
+  );
 }
 
 /** «1 сертификат», «2 сертификата», «5 сертификатов». */
@@ -64,12 +87,6 @@ export function DeliveryPage() {
     }
     return map;
   }, [data]);
-
-  // Ближайший срок среди сертификатов подписки — его и видно в списке.
-  const soonest = (s: Subscription) => s.common_names
-    .map(n => expiry.get(n.toLowerCase()))
-    .filter((d): d is string => !!d)
-    .sort()[0];
 
   if (error) return <Failed text={error} />;
   if (!data) return <Spinner />;
@@ -120,27 +137,23 @@ export function DeliveryPage() {
       ) : isMobile ? (
         <div className="card flush">
           <div className="list">
-            {subscriptions.map(s => {
-              const expires = soonest(s);
-              return (
-                <div key={s.id} className={'item' + (s.enabled ? '' : ' off')}>
-                  <div className="item-main">
-                    <div className="item-title">{namesText(s)}</div>
-                    <div className="item-meta">
-                      {s.recipients[0]}{s.recipients.length > 1 && ' +' + (s.recipients.length - 1)}
-                    </div>
-                    <div className="item-meta">{scheduleText(s)}{expires && ' · до ' + fmtDate(expires)}</div>
-                    <div className="item-status"><LastDelivery s={s} /></div>
-                  </div>
-                  <Menu title={namesText(s)} items={[
-                    { text: 'Отправить сейчас', action: () => send(s) },
-                    { text: 'Изменить', action: () => edit(s) },
-                    { text: s.enabled ? 'Отключить' : 'Включить', action: () => toggle(s) },
-                    { text: 'Удалить', action: () => remove(s), danger: true },
-                  ]} />
+            {subscriptions.map(s => (
+              <div key={s.id} className={'item' + (s.enabled ? '' : ' off')}>
+                <div className="item-main">
+                  {s.description && <span className="desc">{s.description}</span>}
+                  <div className="item-title"><Names s={s} expiry={expiry} /></div>
+                  <div className="item-meta">{s.recipients.join(', ')}</div>
+                  <div className="item-meta">{scheduleText(s)}</div>
+                  <div className="item-status"><LastDelivery s={s} /></div>
                 </div>
-              );
-            })}
+                <Menu title={namesText(s)} items={[
+                  { text: 'Отправить сейчас', action: () => send(s) },
+                  { text: 'Изменить', action: () => edit(s) },
+                  { text: s.enabled ? 'Отключить' : 'Включить', action: () => toggle(s) },
+                  { text: 'Удалить', action: () => remove(s), danger: true },
+                ]} />
+              </div>
+            ))}
           </div>
         </div>
       ) : (
@@ -157,35 +170,30 @@ export function DeliveryPage() {
               </tr>
             </thead>
             <tbody>
-              {subscriptions.map(s => {
-                const expires = soonest(s);
-                return (
-                  <tr key={s.id} className={s.enabled ? '' : 'off'}>
-                    <td title={s.common_names.join('\n')}>
-                      <span className="strong">{s.common_names[0]}</span>
-                      {s.common_names.length > 1 && <span className="muted"> +{s.common_names.length - 1}</span>}
-                      {expires && <span className="sub">до {fmtDate(expires)}</span>}
-                    </td>
-                    <td title={s.recipients.join('\n')}>
-                      {s.recipients[0]}
-                      {s.recipients.length > 1 && <span className="muted"> +{s.recipients.length - 1}</span>}
-                    </td>
-                    <td>
-                      <div className="chips">{s.formats.map(f => <span key={f} className="chip mono">{f}</span>)}</div>
-                    </td>
-                    <td className="muted">{scheduleText(s)}</td>
-                    <td><LastDelivery s={s} /></td>
-                    <td className="actions">
-                      <button className="icon" title="Отправить сейчас" onClick={() => send(s)}><Icon name="send" /></button>
-                      <button className="icon" title="Изменить" onClick={() => edit(s)}><Icon name="edit" /></button>
-                      <button className="icon" title={s.enabled ? 'Отключить' : 'Включить'} onClick={() => toggle(s)}>
-                        <Icon name={s.enabled ? 'pause' : 'play'} />
-                      </button>
-                      <button className="icon danger" title="Удалить" onClick={() => remove(s)}><Icon name="trash" /></button>
-                    </td>
-                  </tr>
-                );
-              })}
+              {subscriptions.map(s => (
+                <tr key={s.id} className={s.enabled ? '' : 'off'}>
+                  <td>
+                    {s.description && <span className="desc">{s.description}</span>}
+                    <Names s={s} expiry={expiry} />
+                  </td>
+                  <td>
+                    <ul className="lines">{s.recipients.map(r => <li key={r}>{r}</li>)}</ul>
+                  </td>
+                  <td>
+                    <div className="chips">{s.formats.map(f => <span key={f} className="chip mono">{f}</span>)}</div>
+                  </td>
+                  <td className="muted">{scheduleText(s)}</td>
+                  <td><LastDelivery s={s} /></td>
+                  <td className="actions">
+                    <button className="icon" title="Отправить сейчас" onClick={() => send(s)}><Icon name="send" /></button>
+                    <button className="icon" title="Изменить" onClick={() => edit(s)}><Icon name="edit" /></button>
+                    <button className="icon" title={s.enabled ? 'Отключить' : 'Включить'} onClick={() => toggle(s)}>
+                      <Icon name={s.enabled ? 'pause' : 'play'} />
+                    </button>
+                    <button className="icon danger" title="Удалить" onClick={() => remove(s)}><Icon name="trash" /></button>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -241,6 +249,7 @@ function SubscriptionDialog({ subscription: s, known, onClose }: {
   const [passphrase, setPassphrase] = useState(s?.include_passphrase ?? false);
   const [enabled, setEnabled] = useState(s ? s.enabled : true);
   const [locale, setLocale] = useState(s?.locale ?? 'ru');
+  const [description, setDescription] = useState(s?.description ?? '');
   const knownNames = useMemo(() => [...new Set(known.map(c => c.common_name))].sort(), [known]);
   const offered = knownNames.filter(n => !names.some(x => x.toLowerCase() === n.toLowerCase()));
 
@@ -266,6 +275,8 @@ function SubscriptionDialog({ subscription: s, known, onClose }: {
       include_passphrase: passphrase,
       locale,
       enabled,
+      // Пустое снимает описание.
+      description: description.trim(),
     };
     if (s) await api.patch('/api/certificate-subscriptions/' + s.id, body);
     else await api.post('/api/certificate-subscriptions', body);
@@ -274,6 +285,10 @@ function SubscriptionDialog({ subscription: s, known, onClose }: {
   return (
     <FormModal title={s ? 'Подписка' : 'Новая подписка'} submit={s ? 'Сохранить' : 'Добавить'} onSubmit={submit} onClose={onClose}>
       <datalist id="known-names">{offered.map(n => <option key={n} value={n} />)}</datalist>
+      <Field label="Описание" hint="Видно только здесь, в письма не уходит.">
+        <textarea rows={2} maxLength={DESCRIPTION_MAX} placeholder="Для кого и зачем эта рассылка"
+          value={description} onChange={e => setDescription(e.target.value)} />
+      </Field>
       <Group label="Сертификаты (Common Name)">
         <div className="stack tight">
           {names.length > 0 && (

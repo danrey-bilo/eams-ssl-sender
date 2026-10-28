@@ -48,11 +48,18 @@ internal sealed record SubscriptionIn
 
     [JsonPropertyName("enabled")]
     public bool? Enabled { get; init; }
+
+    /// <summary>
+    /// Описание для администраторов, до 500 знаков; пустая строка снимает. Только в системе — в письма не уходит.
+    /// </summary>
+    [JsonPropertyName("description")]
+    public string? Description { get; init; }
 }
 
 /// <summary>Подписка с состоянием последней отправки.</summary>
 internal sealed record SubscriptionOut(
     [property: JsonPropertyName("id")] Guid Id,
+    [property: JsonPropertyName("description")] string? Description,
     [property: JsonPropertyName("common_names")] IReadOnlyList<string> CommonNames,
     [property: JsonPropertyName("recipients")] IReadOnlyList<string> Recipients,
     [property: JsonPropertyName("formats")] IReadOnlyList<string> Formats,
@@ -89,7 +96,7 @@ internal sealed record SubscriptionOut(
         };
 
         return new(
-            п.Id, п.CommonNames, п.Recipients, п.Formats, п.IncludePassphrase, п.OnChange, п.IntervalDays,
+            п.Id, п.Description, п.CommonNames, п.Recipients, п.Formats, п.IncludePassphrase, п.OnChange, п.IntervalDays,
             п.Locale, п.Enabled, п.CreatedAt, п.UpdatedAt, п.SentSerials, п.LastSentAt, п.LastFullSentAt,
             п.LastAttemptAt, ошибка, доставка);
     }
@@ -189,6 +196,7 @@ internal sealed class SubscriptionsController(
         var подписка = new CertificateSubscription
         {
             Id = Guid.CreateVersion7(),
+            Description = Описание(body.Description),
             CommonNames = Имена(body),
             Recipients = Адреса(body.Recipients),
             Formats = body.Formats is null ? [.. CertificateFormats.Default] : Форматы(body.Formats),
@@ -218,6 +226,7 @@ internal sealed class SubscriptionsController(
                     {
                         ["common_names"] = подписка.CommonNames,
                         ["recipients"] = подписка.Recipients.Length,
+                        ["description"] = подписка.Description?.Length ?? 0,
                         ["formats"] = подписка.Formats,
                         ["include_passphrase"] = подписка.IncludePassphrase,
                         ["on_change"] = подписка.OnChange,
@@ -365,6 +374,23 @@ internal sealed class SubscriptionsController(
                     var язык = Язык(body.Locale);
                     Поле("locale", строка.Locale, язык);
                     строка.Locale = язык;
+                }
+
+                if (body.Description is not null)
+                {
+                    var описание = Описание(body.Description);
+
+                    // ⚠ В журнал — длина, а не текст: описание пишут свободно, и оно может называть людей.
+                    if (!string.Equals(строка.Description, описание, StringComparison.Ordinal))
+                    {
+                        изменения["description"] = new Dictionary<string, object?>(StringComparer.Ordinal)
+                        {
+                            ["from"] = строка.Description?.Length ?? 0,
+                            ["to"] = описание?.Length ?? 0,
+                        };
+                    }
+
+                    строка.Description = описание;
                 }
 
                 if (отменено > 0)
@@ -596,6 +622,26 @@ internal sealed class SubscriptionsController(
         }
 
         return имена;
+    }
+
+    /// <summary>
+    /// Описание: без пробелов по краям, переводы строк — <c>\n</c>, без прочих управляющих знаков; пустое —
+    /// <c>null</c>, длиннее <see cref="CertificateSubscription.MaxDescription"/> — отказ.
+    /// </summary>
+    private static string? Описание(string? text)
+    {
+        var описание = new string((text ?? string.Empty)
+                .ReplaceLineEndings("\n")
+                .Where(знак => знак == '\n' || !char.IsControl(знак))
+                .ToArray())
+            .Trim();
+
+        if (описание.Length > CertificateSubscription.MaxDescription)
+        {
+            throw Неверно("description", $"Описание — до {CertificateSubscription.MaxDescription} знаков.");
+        }
+
+        return описание.Length > 0 ? описание : null;
     }
 
     /// <summary>Хотя бы один способ отправки — при обновлении или по расписанию.</summary>

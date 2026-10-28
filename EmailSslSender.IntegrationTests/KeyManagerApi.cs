@@ -247,6 +247,39 @@ public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
         (await клиент.DeleteAsync($"{Подписки}/{id}", Ct)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
     }
 
+    [Fact]
+    public async Task Описание_подписки_хранится_меняется_и_снимается()
+    {
+        var клиент = host.CreateClient();
+
+        var создано = await клиент.PostAsJsonAsync(Подписки, new
+        {
+            common_name = "site.example.com",
+            recipients = new[] { "it@example.com" },
+            description = "  Стенд CRM\r\nдля отдела продаж\u0007  ",
+        }, Ct);
+        создано.StatusCode.ShouldBe(HttpStatusCode.Created);
+
+        const string описание = "Стенд CRM\nдля отдела продаж";
+        var подписка = (await создано.Content.ReadFromJsonAsync<JsonObject>(Ct))!;
+        var id = подписка["id"]!.GetValue<Guid>();
+        подписка["description"]!.GetValue<string>().ShouldBe(
+            описание, "без пробелов по краям и управляющих знаков, переводы строк — LF");
+
+        var другое = await клиент.PatchAsJsonAsync($"{Подписки}/{id}", new { locale = "en" }, Ct);
+        (await другое.Content.ReadFromJsonAsync<JsonObject>(Ct))!["description"]!.GetValue<string>()
+            .ShouldBe(описание, "не присланное описание не меняется");
+
+        var новое = await клиент.PatchAsJsonAsync($"{Подписки}/{id}", new { description = "Тестовые домены" }, Ct);
+        (await новое.Content.ReadFromJsonAsync<JsonObject>(Ct))!["description"]!.GetValue<string>().ShouldBe("Тестовые домены");
+
+        var снято = await клиент.PatchAsJsonAsync($"{Подписки}/{id}", new { description = "   " }, Ct);
+        снято.StatusCode.ShouldBe(HttpStatusCode.OK);
+        (await снято.Content.ReadFromJsonAsync<JsonObject>(Ct))!["description"].ShouldBeNull("пустое снимает описание");
+
+        (await клиент.DeleteAsync($"{Подписки}/{id}", Ct)).StatusCode.ShouldBe(HttpStatusCode.NoContent);
+    }
+
     public static TheoryData<string, string> Неверные => new()
     {
         { """{"recipients":["it@example.com"]}""", "common_names" },
@@ -261,6 +294,7 @@ public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
         { """{"common_name":"a","recipients":["it@example.com"],"formats":[]}""", "formats" },
         { """{"common_name":"a","recipients":["it@example.com"],"interval_days":400}""", "interval_days" },
         { """{"common_name":"a","recipients":["it@example.com"],"locale":"de"}""", "locale" },
+        { "{\"common_name\":\"a\",\"recipients\":[\"it@example.com\"],\"description\":\"" + new string('о', 501) + "\"}", "description" },
     };
 
     [Theory]

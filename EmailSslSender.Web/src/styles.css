@@ -166,6 +166,13 @@ tbody tr:hover td { background: color-mix(in srgb, var(--hover) 55%, transparent
 tr.off td:not(.actions) { opacity: .5; }
 td.actions { text-align: right; white-space: nowrap; width: 1%; }
 .sub { display: block; color: var(--muted); font-size: 12px; margin-top: 1px; }
+/* Списки в ячейке — целиком, по строке на элемент (сертификаты и получатели подписки). */
+.names, .lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+/* break-word, а не anywhere: тот сжимал колонку таблицы, и адрес рвался посреди слова. */
+.names li, .lines li { overflow-wrap: break-word; }
+.names .until { margin-left: 8px; color: var(--muted); font-size: 12px; font-weight: 400; white-space: nowrap; }
+/* Описание подписки над её сертификатами; ширина ограничена, чтобы длинный текст не раздувал колонку. */
+.desc { display: block; max-width: 340px; margin-bottom: 6px; color: var(--muted); font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .card.flush > table:first-child tr:first-child > :first-child { border-top-left-radius: calc(var(--radius) - 1px); }
 .card.flush > table:first-child tr:first-child > :last-child { border-top-right-radius: calc(var(--radius) - 1px); }
 .card.flush > table:last-child tr:last-child > :first-child { border-bottom-left-radius: calc(var(--radius) - 1px); }

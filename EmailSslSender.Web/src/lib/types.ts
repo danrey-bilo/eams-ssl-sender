@@ -43,6 +43,8 @@ export type Delivery = 'none' | 'queued' | 'sent' | 'failed';
 
 export interface Subscription {
   id: string;
+  /** Заметка администраторов; в письма не уходит. */
+  description: string | null;
   common_names: string[];
   recipients: string[];
   formats: string[];

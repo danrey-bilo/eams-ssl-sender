@@ -88,6 +88,21 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
             && з.ActorType == AuditActorType.System && з.Reason == "initial");
     }
 
+    /// <summary>Описание подписки — заметка администраторов: в письмо оно не попадает ни строкой, ни таблицей.</summary>
+    [Fact]
+    public async Task Описание_подписки_в_письмо_не_уходит()
+    {
+        База("site.example.com", "aa01", Год);
+        await Подписка("site.example.com", ["a@example.com"], description: "Заметка: стенд CRM для отдела продаж");
+
+        (await Опросить()).Sent.ShouldBe(1);
+
+        var письмо = база.Почта.Письма.ShouldHaveSingleItem();
+        письмо.Values.Values.ShouldNotContain(значение => значение.Contains("Заметка", StringComparison.Ordinal));
+        письмо.Tables.Values.SelectMany(таблица => таблица.Rows).SelectMany(строка => строка)
+            .ShouldNotContain(ячейка => ячейка.Contains("Заметка", StringComparison.Ordinal));
+    }
+
     [Fact]
     public async Task Без_изменений_следующий_опрос_молчит()
     {
@@ -950,7 +965,8 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         bool enabled = true,
         bool includePassphrase = false,
         string[]? formats = null,
-        string[]? also = null)
+        string[]? also = null,
+        string? description = null)
     {
         await using var scope = база.Scope();
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -958,6 +974,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         var подписка = new CertificateSubscription
         {
             Id = Guid.CreateVersion7(),
+            Description = description,
             CommonNames = [commonName, .. also ?? []],
             Recipients = recipients,
             Formats = formats ?? [.. CertificateFormats.Default],

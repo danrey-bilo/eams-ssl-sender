@@ -76,11 +76,15 @@ internal sealed class KeyManagerTables : IEntityConfigurationProvider
                 таблица.HasCheckConstraint(
                     $"ck_{SubscriptionsTable}_common_names",
                     $"cardinality(common_names) BETWEEN 1 AND {CertificateSubscription.MaxCertificates}");
+                таблица.HasCheckConstraint(
+                    $"ck_{SubscriptionsTable}_description",
+                    $"description IS NULL OR char_length(description) BETWEEN 1 AND {CertificateSubscription.MaxDescription}");
             });
 
             строка.HasKey(п => п.Id).HasName($"pk_{SubscriptionsTable}");
             строка.Property(п => п.Id).HasColumnName("id").ValueGeneratedNever();
 
+            строка.Property(п => п.Description).HasColumnName("description").HasColumnType("text");
             строка.Property(п => п.CommonNames).HasColumnName("common_names").HasColumnType("text[]").IsRequired();
             строка.Property(п => п.Recipients).HasColumnName("recipients").HasColumnType("text[]").IsRequired();
             строка.Property(п => п.Formats).HasColumnName("formats").HasColumnType("text[]").IsRequired();

@@ -47,6 +47,10 @@ namespace EmailSslSender.Modules.KeyManager.Schema.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("created_by");
 
+                    b.Property<string>("Description")
+                        .HasColumnType("text")
+                        .HasColumnName("description");
+
                     b.Property<bool>("Enabled")
                         .HasColumnType("boolean")
                         .HasColumnName("enabled");
@@ -133,6 +137,8 @@ namespace EmailSslSender.Modules.KeyManager.Schema.Migrations
                     b.ToTable("certificate_subscriptions", null, t =>
                         {
                             t.HasCheckConstraint("ck_certificate_subscriptions_common_names", "cardinality(common_names) BETWEEN 1 AND 50");
+
+                            t.HasCheckConstraint("ck_certificate_subscriptions_description", "description IS NULL OR char_length(description) BETWEEN 1 AND 500");
 
                             t.HasCheckConstraint("ck_certificate_subscriptions_formats", "cardinality(formats) >= 1");
 

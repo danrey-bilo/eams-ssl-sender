@@ -624,6 +624,7 @@ curl -s -X PATCH $API/api/settings/system -H "Authorization: Bearer $TOKEN" -H '
 | `include_passphrase` | `false` | Приложить пароль закрытого ключа из Key Manager Plus файлом `passphrase.txt` |
 | `locale` | `ru` | Язык письма: `ru`, `uk`, `en` |
 | `enabled` | `true` | Отключённую подписку опрос не шлёт; вручную её отправить можно |
+| `description` | нет | Описание для администраторов, до 500 знаков: для кого и зачем рассылка. Видно только в панели и API, в письма не уходит; в журнал пишется только его длина. Пустая строка в `PATCH` снимает описание |
 
 ```bash
 curl -s -X POST $API/api/certificate-subscriptions -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' -d '{"common_names":["*.example.com","vpn.example.com"],"recipients":["admin1@example.com","admin2@example.com"],"formats":["PEM","KEY"],"interval_days":30}'
@@ -759,7 +760,7 @@ curl -s "$API/api/users?limit=50" -H "Authorization: Bearer $TOKEN"
 | POST | `/api/keymanager/certificates/download` | Ф | Файл сертификата: `common_name`, `serial_number`, `format` (`PEM`, `CRT`, `CER`, `DER`, `P7B`, `PKCS`, `JKS`, `KEY`); имя — в `Content-Disposition` |
 | POST | `/api/keymanager/certificates/private-key` | Ф | Закрытый ключ PEM и пароль: `common_name`, `serial_number` → `{"private_key", "passphrase"}` |
 | GET | `/api/certificate-subscriptions`, `/{id}` | | Подписки на сертификаты |
-| POST | `/api/certificate-subscriptions` | Ф | Завести: `common_names` (или `common_name`), `recipients`, `formats`, `on_change`, `interval_days`, `include_passphrase`, `locale`, `enabled` |
+| POST | `/api/certificate-subscriptions` | Ф | Завести: `common_names` (или `common_name`), `recipients`, `formats`, `on_change`, `interval_days`, `include_passphrase`, `locale`, `enabled`, `description` |
 | PATCH | `/api/certificate-subscriptions/{id}` | Ф | Изменить те же поля |
 | DELETE | `/api/certificate-subscriptions/{id}` | Ф | Удалить |
 | POST | `/api/certificate-subscriptions/{id}/send` | Ф | Отправить текущий сертификат сейчас |
