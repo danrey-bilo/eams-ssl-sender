@@ -22,15 +22,7 @@ using Testcontainers.PostgreSql;
 
 namespace EmailSslSender.Modules.KeyManager.Tests;
 
-/// <summary>
-/// Настоящий PostgreSQL на прогон, схема модуля над ним и подставные соседи.
-/// </summary>
-/// <remarks>
-/// ⚠ <b>Соседи подставные, база — настоящая.</b> Почта и Key Manager Plus здесь — записные
-/// подделки: доставку проверяют выбор сертификата, сроки и атомарность, а им не нужны ни SMTP, ни
-/// HTTPS. Блокировку строки подписки и <c>ON CONFLICT</c> снимка подделать нельзя — для них и
-/// поднят контейнер.
-/// </remarks>
+/// <summary>Настоящий PostgreSQL (блокировки и <c>ON CONFLICT</c> не подделать); почта и KMP — подставные.</summary>
 public sealed class KeyManagerDatabase : IAsyncLifetime
 {
     private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:16")
@@ -44,7 +36,7 @@ public sealed class KeyManagerDatabase : IAsyncLifetime
     public IServiceProvider Services => _services
         ?? throw new InvalidOperationException("Обвязка не поднята");
 
-    /// <summary>Строка подключения — тестам, которым нужно второе соединение мимо контекста.</summary>
+    /// <summary>Для второго соединения мимо контекста.</summary>
     public string Connection => _postgres.GetConnectionString();
 
     public ПодвижныеЧасы Часы { get; } = new(new DateTimeOffset(2026, 1, 1, 12, 0, 0, TimeSpan.Zero));
@@ -91,7 +83,7 @@ public sealed class KeyManagerDatabase : IAsyncLifetime
 
         _services = services.BuildServiceProvider();
 
-        // ⚠ Таблицы — базовой миграцией набора модуля, а не EnsureCreated: так проверяется и она.
+        // Базовой миграцией, а не EnsureCreated: так проверяется и она.
         await KeyManagerSchema.Declaration.MigrateAsync(_postgres.GetConnectionString());
     }
 
@@ -107,7 +99,6 @@ public sealed class KeyManagerDatabase : IAsyncLifetime
 
     public AsyncServiceScope Scope() => Services.CreateAsyncScope();
 
-    /// <summary>Вернуть подделки к исходному — между тестами.</summary>
     public void Сброс()
     {
         Настройки.Значения.Clear();
@@ -125,7 +116,6 @@ public sealed class KeyManagerDatabaseCollection : ICollectionFixture<KeyManager
     public const string Name = "keymanager-database";
 }
 
-/// <summary>Часы, которые двигает тест.</summary>
 public sealed class ПодвижныеЧасы(DateTimeOffset start) : TimeProvider
 {
     private DateTimeOffset _теперь = start;
@@ -135,7 +125,6 @@ public sealed class ПодвижныеЧасы(DateTimeOffset start) : TimeProvi
     public void Вперёд(TimeSpan сколько) => _теперь = _теперь.Add(сколько);
 }
 
-/// <summary>Кто пришёл — задаёт тест.</summary>
 public sealed class ПодставнаяЛичность : ICurrentUser
 {
     public Guid? Id { get; set; } = Guid.CreateVersion7();
@@ -147,7 +136,7 @@ public sealed class ПодставнаяЛичность : ICurrentUser
     public Guid? SessionId { get; set; }
 }
 
-/// <summary>Настройки, которые задаёт тест; чего не задал — умолчание ключа.</summary>
+/// <summary>Чего тест не задал — умолчание ключа.</summary>
 public sealed class ФиктивныеНастройки : ISettingsReader
 {
     public Dictionary<string, object?> Значения { get; } = new(StringComparer.Ordinal);
@@ -160,7 +149,6 @@ public sealed class ФиктивныеНастройки : ISettingsReader
     }
 }
 
-/// <summary>Журнал, запоминающий строки.</summary>
 public sealed class ЗаписнойЖурнал : ILoggerProvider
 {
     public List<string> Строки { get; } = [];
@@ -192,7 +180,6 @@ public sealed class ЗаписнойЖурнал : ILoggerProvider
     }
 }
 
-/// <summary>Журнал действий, запоминающий записи.</summary>
 public sealed class ЗаписнойАудит : IAuditWriter
 {
     public List<AuditEntry> Записи { get; } = [];
@@ -206,29 +193,20 @@ public sealed class ЗаписнойАудит : IAuditWriter
     }
 }
 
-/// <summary>Одно письмо, принятое подставной очередью.</summary>
 public sealed record ПринятоеПисьмо(
     string To, string Kind, string Locale, IReadOnlyDictionary<string, string> Values,
     IReadOnlyDictionary<string, MailTable> Tables, IReadOnlyList<MailAttachment> Attachments);
 
-/// <summary>
-/// Очередь писем, запоминающая постановки.
-/// </summary>
-/// <remarks>
-/// ⚠ Запоминает постановку сразу, а не с фиксацией: проверки, где фиксация не состоялась, смотрят
-/// на отметку подписки, а не на число писем здесь.
-/// </remarks>
+/// <summary>⚠ Запоминает постановку сразу, не с фиксацией: откат проверять по отметке подписки.</summary>
 public sealed class ПодставнаяОчередь : IMailQueue
 {
     public List<ПринятоеПисьмо> Письма { get; } = [];
 
-    /// <summary>Номера поставленных писем — в порядке постановки.</summary>
     public List<Guid> Номера { get; } = [];
 
     /// <summary>Судьба писем по номеру; чего нет — «ждёт».</summary>
     public Dictionary<Guid, MailLetterStatus> Судьбы { get; } = [];
 
-    /// <summary>Чем отвечать на постановку.</summary>
     public MailQueueResult Ответ { get; set; } = MailQueueResult.Queued;
 
     public void Сброс()
@@ -289,7 +267,6 @@ public sealed class ПодставнаяОчередь : IMailQueue
         }
     }
 
-    /// <summary>Отменённые номера — в порядке отмены.</summary>
     public List<Guid> Отменённые { get; } = [];
 
     /// <summary>Как настоящая очередь: ждущее письмо умирает с причиной «Отменено: …».</summary>
@@ -318,19 +295,15 @@ public sealed class ПодставнаяОчередь : IMailQueue
     }
 }
 
-/// <summary>
-/// Key Manager Plus в памяти: и соединитель, и клиент.
-/// </summary>
+/// <summary>Key Manager Plus в памяти: и соединитель, и клиент.</summary>
 internal sealed class ПодставнойKmp : IKeyManagerConnector, IKeyManagerClient
 {
     public List<KmpCertificate> Сертификаты { get; } = [];
 
-    /// <summary>Пароли ключей по серийному номеру.</summary>
     public Dictionary<string, string?> Пароли { get; } = new(StringComparer.Ordinal);
 
     public KeyManagerConfiguration Настройки { get; set; } = Готово;
 
-    /// <summary>На каком типе файла отказывать.</summary>
     public string? ПадатьНаФормате { get; set; }
 
     /// <summary>Даты выпуска по серийному номеру: для них PEM — настоящий сертификат.</summary>
@@ -339,19 +312,13 @@ internal sealed class ПодставнойKmp : IKeyManagerConnector, IKeyManage
     /// <summary>Чем падать при открытии клиента (не открылся ключ API, сбой базы).</summary>
     public Exception? ОткрытиеПадает { get; set; }
 
-    /// <summary>Отказывать в выгрузке любого файла этого Common Name.</summary>
     public string? ПадатьНаИмени { get; set; }
 
-    /// <summary>Отказывать ли в списке.</summary>
     public bool СписокПадает { get; set; }
 
-    /// <summary>
-    /// Содержимое файла по типу вместо обычного «ТИП:серийный» — ключ в PEM, DER, мусор.
-    /// </summary>
-    /// <remarks>Отдаётся копией: получатель вправе затереть свой массив, и затирать он будет свой.</remarks>
+    /// <summary>Файл по типу вместо «ТИП:серийный»; отдаётся копией — получатель вправе его затереть.</summary>
     public Dictionary<string, byte[]> Файлы { get; } = new(StringComparer.Ordinal);
 
-    /// <summary>Отказывать ли в пароле ключа.</summary>
     public bool ПарольПадает { get; set; }
 
     public int Выгрузок => _выгрузок;
@@ -361,7 +328,7 @@ internal sealed class ПодставнойKmp : IKeyManagerConnector, IKeyManage
     /// <summary>Задвижка: пока взведена, выгрузка ждёт.</summary>
     public TaskCompletionSource? Задвижка { get; private set; }
 
-    /// <summary>Сигнал «выгрузка началась» — для проверок одновременности.</summary>
+    /// <summary>Для проверок одновременности.</summary>
     public TaskCompletionSource ВыгрузкаНачалась { get; private set; } = Новый();
 
     private int _выгрузок;
@@ -476,7 +443,7 @@ internal sealed class ПодставнойKmp : IKeyManagerConnector, IKeyManage
 
     public void Dispose()
     {
-        // Подделка живёт всю коллекцию: «закрытие» после прохода её не трогает.
+        // Подделка живёт всю коллекцию.
     }
 
     private static TaskCompletionSource Новый() => new(TaskCreationOptions.RunContinuationsAsynchronously);

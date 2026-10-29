@@ -7,13 +7,7 @@ using Microsoft.Extensions.Logging;
 
 namespace EmailSslSender.Modules.KeyManager.Delivery;
 
-/// <summary>
-/// Сигнал «опросить сейчас»: новая подписка или кнопка «опросить» не ждут полный срок.
-/// </summary>
-/// <remarks>
-/// ⚠ Внутрипроцессный: будит опрос только в том процессе, где он поднят. Тот, что поднят в
-/// другом, дождётся своего срока.
-/// </remarks>
+/// <summary>Сигнал «опросить сейчас»; будит опрос только в своём процессе.</summary>
 internal sealed class PollWakeup
 {
     private readonly SemaphoreSlim _сигнал = new(0, 1);
@@ -28,7 +22,7 @@ internal sealed class PollWakeup
             }
             catch (SemaphoreFullException)
             {
-                // Гонка двух одновременных вызовов: сигнал уже взведён, и это всё, что нужно.
+                // Гонка двух вызовов: сигнал уже взведён.
             }
         }
     }
@@ -37,15 +31,8 @@ internal sealed class PollWakeup
         _сигнал.WaitAsync(сколько, cancellationToken);
 }
 
-/// <summary>
-/// Фоновый опрос Key Manager Plus: раз в <c>keymanager.poll_minutes</c> и по сигналу.
-/// </summary>
-/// <remarks>
-/// ⚠ <b>Ошибка прохода НЕ роняет службу</b>: недоступная база или Key Manager Plus — это
-/// пропущенный проход, а не повод остановить рассылку до перезапуска процесса.
-///
-/// ⚠ Срок перечитывается каждый проход: настройка правится без перезапуска.
-/// </remarks>
+/// <summary>Фоновый опрос: раз в <c>keymanager.poll_minutes</c> (перечитывается каждый проход) и по сигналу.</summary>
+/// <remarks>⚠ Ошибка прохода не роняет службу — это лишь пропущенный проход.</remarks>
 internal sealed class CertificatePoller(
     IServiceScopeFactory scopes,
     PollWakeup wakeup,

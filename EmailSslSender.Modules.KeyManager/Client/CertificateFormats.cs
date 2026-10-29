@@ -1,12 +1,6 @@
 namespace EmailSslSender.Modules.KeyManager.Client;
 
-/// <summary>
-/// Типы файлов, которые отдаёт <c>getCertificate</c> Key Manager Plus (параметр <c>fileType</c>).
-/// </summary>
-/// <remarks>
-/// ⚠ Список закрыт и взят из документации REST API дословно. Что именно лежит в <c>PKCS</c> и
-/// <c>KEY</c>, документация не говорит; по смыслу это PKCS#12 и закрытый ключ.
-/// </remarks>
+/// <summary>Типы файлов <c>getCertificate</c> (параметр <c>fileType</c>), дословно из документации KMP.</summary>
 internal static class CertificateFormats
 {
     public const string Cer = "CER";
@@ -18,13 +12,12 @@ internal static class CertificateFormats
     public const string Pem = "PEM";
     public const string Key = "KEY";
 
-    /// <summary>Все допустимые, в порядке документации.</summary>
     public static readonly IReadOnlyList<string> All = [Cer, Crt, Der, P7b, Pkcs, Jks, Pem, Key];
 
-    /// <summary>Что кладём в подписку, если администратор не выбрал: сертификат и ключ.</summary>
+    /// <summary>Форматы подписки по умолчанию.</summary>
     public static readonly IReadOnlyList<string> Default = [Pem, Key];
 
-    /// <summary>Привести к виду из справочника или <c>null</c>, если такого типа нет.</summary>
+    /// <summary>Тип из справочника или <c>null</c>.</summary>
     public static string? Normalize(string? format)
     {
         var тип = format?.Trim().ToUpperInvariant();
@@ -32,13 +25,7 @@ internal static class CertificateFormats
         return тип is not null && All.Contains(тип, StringComparer.Ordinal) ? тип : null;
     }
 
-    /// <summary>
-    /// Основа имени файла из Common Name: <c>*.example.com</c> → <c>wildcard.example.com</c>.
-    /// </summary>
-    /// <remarks>
-    /// Звёздочка и всё, что не годится в имя файла на любой системе, заменяются: имя уезжает и во
-    /// вложение письма, и в <c>Content-Disposition</c> выгрузки.
-    /// </remarks>
+    /// <summary>Безопасное имя файла из Common Name: <c>*.example.com</c> → <c>wildcard.example.com</c>.</summary>
     public static string FileBase(string commonName)
     {
         ArgumentNullException.ThrowIfNull(commonName);
@@ -49,7 +36,6 @@ internal static class CertificateFormats
         return чистое.Length == 0 ? "certificate" : чистое;
     }
 
-    /// <summary>Расширение файла для типа.</summary>
     public static string Extension(string format) => format switch
     {
         Cer => "cer",
@@ -63,14 +49,7 @@ internal static class CertificateFormats
         _ => "bin",
     };
 
-    /// <summary>
-    /// Тип содержимого вложения.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Свой, а не из ответа Key Manager Plus: сервер может назвать что угодно
-    /// <c>application/octet-stream</c> или <c>text/plain</c>, а почтовому клиенту получателя тип
-    /// подсказывает, чем файл открыть.
-    /// </remarks>
+    /// <summary>Тип содержимого вложения — свой: ответ KMP бывает <c>application/octet-stream</c> на всё.</summary>
     public static string ContentType(string format) => format switch
     {
         Cer or Crt or Der => "application/pkix-cert",

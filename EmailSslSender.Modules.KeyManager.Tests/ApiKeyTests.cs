@@ -10,10 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace EmailSslSender.Modules.KeyManager.Tests;
 
-/// <summary>
-/// Ключ API Key Manager Plus: лежит запечатанным вместе с адресом, открывается только для него,
-/// снимается, перекладывается при ротации.
-/// </summary>
+/// <summary>Ключ API: запечатан с адресом, открывается только для него, перекладывается при ротации.</summary>
 [Collection(KeyManagerDatabaseCollection.Name)]
 public sealed class ApiKeyTests(KeyManagerDatabase база) : IAsyncLifetime
 {
@@ -71,8 +68,7 @@ public sealed class ApiKeyTests(KeyManagerDatabase база) : IAsyncLifetime
     [Fact]
     public async Task Ключ_не_открывается_для_другого_адреса()
     {
-        // ⚠ Ровно сценарий перехваченной сессии: адрес переставлен на свой сервер, и проверка связи
-        // понесла бы ключ туда.
+        // ⚠ Перехваченная сессия: адрес переставлен на чужой сервер.
         await Задать(Ключ);
 
         await using var scope = база.Scope();
@@ -108,9 +104,7 @@ public sealed class ApiKeyTests(KeyManagerDatabase база) : IAsyncLifetime
     [Fact]
     public async Task Ключ_введённый_при_закреплённом_отпечатке_вводится_заново()
     {
-        // ⚠ До 2.5 к адресу привязки дописывался отпечаток. Такой ключ после обновления не открывается
-        // для голого адреса — отказ «введите заново», а не ключ на сервер, сертификат которого раньше
-        // принимался только по отпечатку. Ключ без отпечатка (у рабочей установки) открывается как был.
+        // Привязка до 2.5 (с отпечатком) — «введите заново»; без отпечатка открывается как был.
         await using var scope = база.Scope();
         var хранилище = scope.ServiceProvider.GetRequiredService<ApiKeyStore>();
 
@@ -124,9 +118,7 @@ public sealed class ApiKeyTests(KeyManagerDatabase база) : IAsyncLifetime
     [Fact]
     public async Task Старый_ключ_без_привязки_открывается_только_после_привязки_командой_migrate()
     {
-        // ⚠ Ключ, запечатанный до привязки, — голая строка. Во время работы он не открывается
-        // вовсе (ревью безопасности 2026-10-20: «доверие с первого раза» отдавало его тому, кто
-        // первым подменил адрес), а migrate привязывает его к адресу из настроек.
+        // ⚠ Ключ без привязки во время работы не открывается; привязывает его migrate.
         await using (var scope = база.Scope())
         {
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
@@ -147,7 +139,7 @@ public sealed class ApiKeyTests(KeyManagerDatabase база) : IAsyncLifetime
 
             (await Should.ThrowAsync<KeyManagerException>(() => хранилище.GetForAsync(Цель, Ct)))
                 .Message.ShouldContain("migrate");
-            // Привязывает команда migrate хоста — через точку входа модуля, по адресу из настроек.
+            // Привязывает migrate хоста, по адресу из настроек.
             база.Настройки.Значения[KeyManagerSettings.BaseUrl.Name] = Адрес;
 
             try
@@ -193,7 +185,7 @@ public sealed class ApiKeyTests(KeyManagerDatabase база) : IAsyncLifetime
         var соединитель = new KeyManagerConnector(
             база.Настройки, scope.ServiceProvider.GetRequiredService<ApiKeyStore>(), new KeyManagerModuleOptions());
 
-        // Свой адрес — клиент открывается (сети при этом нет: запросов не было).
+        // Свой адрес — клиент открывается (запросов не было).
         using (await соединитель.OpenAsync(Ct))
         {
         }

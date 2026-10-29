@@ -3,13 +3,8 @@ using Npgsql;
 
 namespace EmailSslSender.IntegrationTests;
 
-/// <summary>
-/// Роль сервиса: строки читает и пишет, схему не меняет и команд в контейнере базы не выполняет.
-/// </summary>
-/// <remarks>
-/// ⚠ Владелец здесь — суперпользователь тестового контейнера, как и в боевом образе
-/// <c>postgres</c>. Схема уже накатана обвязкой <see cref="SenderHost"/>.
-/// </remarks>
+/// <summary>Роль сервиса: пишет строки, но не меняет схему и не выполняет команд в контейнере базы.</summary>
+/// <remarks>Владелец — суперпользователь контейнера, как в боевом <c>postgres</c>.</remarks>
 [Collection(SenderHost.Collection)]
 public sealed class RuntimeRoleTests(SenderHost host)
 {
@@ -23,17 +18,15 @@ public sealed class RuntimeRoleTests(SenderHost host)
 
         await using var сервис = await ПодключитьсяAsync(роль, пароль);
 
-        // Чтение и запись строк — работа сервиса.
         (await ЗначениеAsync<long>(сервис, "SELECT count(*) FROM users")).ShouldBeGreaterThanOrEqualTo(0);
         await ВыполнитьAsync(сервис, "UPDATE system_settings SET key = key WHERE false");
 
-        // ⚠ Схема — только владельцу.
         (await Should.ThrowAsync<PostgresException>(() => ВыполнитьAsync(сервис, "CREATE TABLE взлом (id int)")))
             .SqlState.ShouldBe(PostgresErrorCodes.InsufficientPrivilege);
         (await Should.ThrowAsync<PostgresException>(() => ВыполнитьAsync(сервис, "DROP TABLE users")))
             .SqlState.ShouldBe(PostgresErrorCodes.InsufficientPrivilege);
 
-        // ⚠ ⚠ Ради этого роль и заведена: у суперпользователя это выполнение команд в контейнере базы.
+        // ⚠ Ради этого роль и заведена: у суперпользователя это команда в контейнере.
         (await Should.ThrowAsync<PostgresException>(() => ВыполнитьAsync(сервис, "COPY (SELECT 1) TO PROGRAM 'true'")))
             .SqlState.ShouldBe(PostgresErrorCodes.InsufficientPrivilege);
 
@@ -60,10 +53,7 @@ public sealed class RuntimeRoleTests(SenderHost host)
             .SqlState.ShouldBe(PostgresErrorCodes.InsufficientPrivilege);
     }
 
-    /// <summary>
-    /// Журнал действий роли сервиса — только дописывать и заводить партиции наперёд: ни правки, ни удаления
-    /// партиций (срок хранения выключен, журнал хранится всегда). Отметки сброса доступа ей закрыты.
-    /// </summary>
+    /// <summary>Журнал — только дописывать и заводить партиции; отметки сброса доступа закрыты.</summary>
     [Fact]
     public async Task Роль_сервиса_не_правит_и_не_стирает_журнал()
     {
@@ -82,7 +72,7 @@ public sealed class RuntimeRoleTests(SenderHost host)
         (await Should.ThrowAsync<PostgresException>(() => ВыполнитьAsync(сервис, "SELECT count(*) FROM sender_reset_access_marks")))
             .SqlState.ShouldBe(PostgresErrorCodes.InsufficientPrivilege);
 
-        // Партиции наперёд — работа обслуживания журнала, которое идёт ролью сервиса.
+        // Партиции наперёд заводит обслуживание журнала ролью сервиса.
         (await ЗначениеAsync<string>(сервис, "SELECT audit_ensure_partition((now() + interval '2 months')::date)"))
             .ShouldStartWith("audit_log_");
     }
@@ -93,7 +83,7 @@ public sealed class RuntimeRoleTests(SenderHost host)
         var (роль, пароль) = Новая();
         await ЗавестиAsync(роль, пароль);
 
-        // Таблицу создаёт владелец — так её создаст следующая миграция.
+        // Как следующая миграция — владельцем.
         var таблица = "будущая_" + Guid.CreateVersion7().ToString("N")[..8];
         await using (var владелец = await ВладелецAsync())
         {
@@ -145,8 +135,6 @@ public sealed class RuntimeRoleTests(SenderHost host)
 
         ошибка.Message.ShouldContain("совпадает с владельцем");
     }
-
-    // --- обвязка ---------------------------------------------------------------------------
 
     private static (string Роль, string Пароль) Новая() =>
         ("sender_app_" + Guid.CreateVersion7().ToString("N")[..12], "п@р'оль;" + Guid.NewGuid().ToString("N"));

@@ -6,52 +6,20 @@ using Modules.Core.Contracts.Authz;
 
 namespace EmailSslSender.Api.Infrastructure;
 
-/// <summary>
-/// Журнал событий — строкой структурного лога, рядом с журналом в базе.
-/// </summary>
-/// <remarks>
-/// ⚠ ⚠ <b>Журнал — у модуля audit</b> (таблица <c>audit_log</c>: только дописывается, цепочка хешей). Этот
-/// класс оставляет каждой его строке и строку лога «audit …»: по ней ищут в <c>docker compose logs</c>, и
-/// она уходит туда, куда настроен сбор логов. Подключается обёртками над писателями модуля
-/// (<see cref="LoggedAuditWriter"/>, <see cref="LoggedSecurityEventWriter"/>,
-/// <see cref="LoggedAuthorizationAuditor"/>): событие действия, событие безопасности и решение о праве; номер
-/// запроса подставляет область логирования, адрес — контекст запроса модуля.
-///
-/// ⚠ ⚠ <b>Значения изменений пишутся только у событий из списка</b> (<see cref="СоЗначениями"/>):
-/// настройки и Key Manager Plus. Без них строка «настройки изменены» не говорила бы, какая и с чего
-/// на что, — а это главный вопрос к журналу после подмены адреса SMTP или Key Manager Plus. У
-/// остальных — только имена полей: у модуля учётных записей в изменениях лежат адреса почты и имена,
-/// а лог приложения общий и уезжает в тикеты целиком. Секреты в настройках не живут по устройству
-/// (они в <c>system_secrets</c> и <c>keymanager_state</c>), подписки пишут поля и число адресов, а не
-/// адреса.
-///
-/// ⚠ Строка пишется в момент вызова, а не после фиксации: откатившееся действие оставит в логе
-/// свою строку и рядом — свою ошибку.
-/// </remarks>
+/// <summary>Каждое событие журнала — ещё и строкой «audit …» в лог.</summary>
+/// <remarks>⚠ Значения изменений — только у <see cref="СоЗначениями"/>, у прочих лишь имена полей: лог уезжает в тикеты.</remarks>
 internal sealed class LogAuditWriter(
     ICurrentUser current,
     IAuditContextAccessor context,
     ILogger<LogAuditWriter> log) : IAuditWriter, ISecurityEventWriter, IAuthorizationAuditor
 {
-    /// <summary>
-    /// Потолок строки изменений.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Самое длинное значение настройки — адрес в два килобайта; строка длиннее — уже не
-    /// разбор, а способ залить лог одной правкой.
-    /// </remarks>
+    /// <summary>Потолок строки изменений — чтобы одной правкой не залить лог.</summary>
     internal const int ПотолокИзменений = 4096;
 
     /// <summary>События, изменения которых пишутся со значениями, — по приставке имени.</summary>
     internal static readonly IReadOnlyList<string> СоЗначениями = ["settings.", "keymanager."];
 
-    /// <summary>
-    /// JSON с кириллицей как есть: строку журнала читает человек.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Управляющие знаки и кавычки по-прежнему экранируются — перевод строки в значении не
-    /// разорвёт строку лога и не подделает соседнюю.
-    /// </remarks>
+    // Кириллица как есть; управляющие знаки и кавычки экранируются — строку лога не подделать.
     private static readonly JsonSerializerOptions Формат = new()
     {
         Encoder = JavaScriptEncoder.Create(UnicodeRanges.All),
@@ -61,8 +29,7 @@ internal sealed class LogAuditWriter(
     {
         ArgumentNullException.ThrowIfNull(entry);
 
-        // Актор по умолчанию — тот, кто пришёл с запросом: службы модулей не обязаны его
-        // передавать, и строка без него отвечала бы «кто-то» на главный вопрос журнала.
+        // Службы модулей не обязаны передавать актора — по умолчанию тот, кто пришёл с запросом.
         var кто = entry.ActorId ?? current.Id;
         var вид = entry.ActorType ?? (кто is null ? AuditActorType.System : current.ActorType);
 
@@ -106,9 +73,7 @@ internal sealed class LogAuditWriter(
     {
         ArgumentNullException.ThrowIfNull(decision);
 
-        // ⚠ Пишутся только отказы. Ролей в проекте нет — каждая учётная запись суперпользователь, и
-        // разрешение с обходом стояло бы строкой на каждом открытии экрана: журнал утонул бы в «можно»,
-        // а каждое изменяющее действие и так пишет своё событие.
+        // Только отказы: разрешения стояли бы строкой на каждом открытии экрана.
         if (decision.Allow)
         {
             return Task.CompletedTask;
@@ -160,10 +125,7 @@ internal sealed class LogAuditWriter(
             действие, исход, кто, вид, типРесурса, ресурс, причина, адрес, изменения);
     }
 
-    /// <summary>
-    /// Изменения строкой JSON или <c>null</c>, если писать нечего: со значениями — у событий из
-    /// <see cref="СоЗначениями"/>, у прочих — только имена полей.
-    /// </summary>
+    /// <summary>Изменения строкой JSON или <c>null</c>, если писать нечего.</summary>
     internal static string? Изменения(AuditAction action, IReadOnlyDictionary<string, object?>? changes)
     {
         if (changes is not { Count: > 0 })

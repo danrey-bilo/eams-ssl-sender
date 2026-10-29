@@ -7,15 +7,8 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace EmailSslSender.Modules.KeyManager.Storage;
 
-/// <summary>
-/// Три таблицы модуля в общей модели.
-/// </summary>
-/// <remarks>
-/// ⚠ <b>Внешних ключей на чужие таблицы нет</b> (<c>created_by</c>, <c>updated_by</c> →
-/// <c>users</c>): прецедент тот же, что у <c>system_secrets.updated_by</c> (правило 1).
-///
-/// ⚠ <b><c>default now()</c> задаётся ЯВНО</b> — EF Core серверных умолчаний сам не пишет.
-/// </remarks>
+/// <summary>Таблицы модуля в общей модели; внешних ключей на чужие таблицы (<c>users</c>) нет.</summary>
+/// <remarks>⚠ <c>default now()</c> — явно: EF Core серверных умолчаний сам не пишет.</remarks>
 internal sealed class KeyManagerTables : IEntityConfigurationProvider
 {
     internal const string StateTable = "keymanager_state";
@@ -83,7 +76,7 @@ internal sealed class KeyManagerTables : IEntityConfigurationProvider
                     $"ck_{SubscriptionsTable}_period",
                     "active_from IS NULL OR active_until IS NULL OR active_until >= active_from");
 
-                // ⚠ Даты и время без часового пояса не значат ничего: «9:00» — чьих?
+                // Даты и время без пояса не значат ничего.
                 таблица.HasCheckConstraint(
                     $"ck_{SubscriptionsTable}_time_zone",
                     "(active_from IS NULL AND active_until IS NULL AND send_time IS NULL AND time_zone IS NULL)"
@@ -131,7 +124,7 @@ internal sealed class KeyManagerTables : IEntityConfigurationProvider
         });
     }
 
-    /// <summary>Словарь «Common Name → строка» — объектом JSON, ключи без учёта регистра.</summary>
+    /// <summary>«Common Name → строка» объектом JSON, ключи без учёта регистра.</summary>
     private static void Словарь(PropertyBuilder<Dictionary<string, string>> свойство, string колонка) =>
         свойство
             .HasColumnName(колонка).HasColumnType("jsonb").IsRequired()
@@ -143,10 +136,8 @@ internal sealed class KeyManagerTables : IEntityConfigurationProvider
                     словарь => ХэшСерийных(словарь),
                     словарь => new Dictionary<string, string>(словарь, StringComparer.OrdinalIgnoreCase)));
 
-    /// <summary>Серийные номера отправленного — в JSON-объект «Common Name → серийный».</summary>
     internal static string СерийныеВJson(Dictionary<string, string> serials) => JsonSerializer.Serialize(serials);
 
-    /// <summary>Серийные номера отправленного из JSON; ключи — без учёта регистра, как Common Name.</summary>
     internal static Dictionary<string, string> СерийныеИзJson(string json) =>
         new(JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? [], StringComparer.OrdinalIgnoreCase);
 

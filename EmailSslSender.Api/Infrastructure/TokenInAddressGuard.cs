@@ -3,16 +3,7 @@ using Modules.Core.Errors;
 
 namespace EmailSslSender.Api.Infrastructure;
 
-/// <summary>
-/// Ссылка приглашения не принимается в адресе запроса.
-/// </summary>
-/// <remarks>
-/// ⚠ ⚠ Модуль учётных записей держит <c>GET /api/activation?token=…</c> ради совместимости с
-/// клиентами EAMS. Адрес запроса оседает в журналах туннеля, прокси и в истории браузера, и
-/// действующая ссылка — пропуск к заданию пароля — лежала бы там открытым текстом весь свой срок.
-/// Панель проекта с первой версии шлёт токен телом (<c>POST /api/activation/info</c>), поэтому старый
-/// путь закрыт здесь, до маршрутизации: так было и до перехода на модули.
-/// </remarks>
+/// <summary>Токен приглашения не принимается в адресе: адрес оседает в логах прокси и истории браузера.</summary>
 internal sealed class TokenInAddressGuard(RequestDelegate next)
 {
     public Task InvokeAsync(HttpContext context)

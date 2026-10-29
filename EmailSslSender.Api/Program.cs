@@ -26,8 +26,7 @@ using Modules.Tokens;
 using Npgsql;
 using Serilog;
 
-// ⚠ Проба здоровья контейнера — ДО построения приложения: ей не нужны ни секреты, ни база, и
-// падать по их причинам она не должна. Разбор у Bootstrap.ProbeAsync.
+// ⚠ Проба здоровья — до построения приложения: ей не нужны ни секреты, ни база.
 if (args is [Bootstrap.Health, ..])
 {
     return await Bootstrap.ProbeAsync();
@@ -37,9 +36,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 var rateLimits = new RateLimitGroups(builder.Configuration);
 
-// Структурные логи в stdout одной строкой JSON на событие. ⚠ Исключения чужих логгеров (EF
-// Core, Npgsql, ASP.NET) проходят через SafeExceptionSink: текст исключения Npgsql несёт строку
-// подключения целиком, в лог уходит цепочка типов и стек.
+// ⚠ Исключения — через SafeExceptionSink: текст исключения Npgsql несёт строку подключения.
 builder.Host.UseSerilog((context, config) => config
     .MinimumLevel.Override("Microsoft.EntityFrameworkCore", Serilog.Events.LogEventLevel.Warning)
     .ReadFrom.Configuration(context.Configuration)
@@ -50,44 +47,35 @@ builder.Host.UseSerilog((context, config) => config
         .WriteTo.Console(new Serilog.Formatting.Compact.RenderedCompactJsonFormatter())
         .CreateLogger())));
 
-// ⚠ Движок прав — ДО модуля токенов, и порядок несущий: токены оборачивают последнюю регистрацию
-// IPermissionChecker, сужая права ключа до прав хозяина. Ролей в проекте нет (AdministratorPermissions).
+// ⚠ Движок прав — ДО модуля токенов: токены оборачивают последнюю регистрацию IPermissionChecker.
 builder.Services.AddScoped<IPermissionChecker, AdministratorPermissions>();
 
-// Модули EAMS — по строке на модуль; что в них выключено и почему — у каждого звена. Хост знает,
-// какие модули подключены, но не знает, что внутри.
 builder.Services
     .AddControllers(mvc =>
     {
-        // ⚠ DEFAULT DENY: каждое действие объявляет доступ — вход, право или открытость с причиной;
-        // без объявления закрыто (PermissionFilter модуля хостинга).
+        // ⚠ Закрыто по умолчанию: действие без объявления доступа — 403.
         mvc.Filters.Add<PermissionFilter>();
     })
     .AddJsonOptions(json => json.JsonSerializerOptions.Encoder = JavaScriptEncoder.Create(UnicodeRanges.All))
     .AddIdentityModule(options =>
     {
-        // ⚠ Предел на пару «адрес + почта» держит модуль: почту знает он.
         options.SignInAttemptsPerMinute = rateLimits.LoginPerMinute;
 
-        // ⚠ Имя куки — прежнее: сменённое выводит всех на вход. Издатель — имя сервиса в аутентификаторе.
+        // ⚠ Имя куки прежнее: сменённое выводит всех на вход.
         options.TotpIssuer = Product.Name;
         options.RefreshCookieName = "__Host-sender-refresh";
 
-        // Политика входа проекта (решение владельца, решение EAMS 0120): приложение-аутентификатор
-        // обязательно всем, код письмом его не заменяет и лишь пускает в настройку, по одной расписке —
-        // не больше пяти кодов.
+        // Аутентификатор обязателен всем; код письмом лишь пускает в его настройку.
         options.RequireAuthenticatorForEveryone = true;
         options.AuthenticatorExcludesEmailCode = true;
         options.ChallengeCodeAttempts = 5;
         options.RefreshCookieStaysCookie = true;
         options.LastSuperuserCountsOnlySignInCapable = true;
 
-        // ⚠ Argon2 берёт 64 МиБ на хеш: четыре разом — потолок памяти под пароли в контейнере.
+        // ⚠ Argon2 берёт 64 МиБ на хеш.
         options.PasswordHashConcurrency = 4;
         options.PasswordHashQueueLimit = 32;
 
-        // Нет расширения браузера, настольного клиента и справочника сотрудников; переподтверждение —
-        // только аутентификатором.
         options.Features.TrustedClients = false;
         options.Features.ExtensionSignIn = false;
         options.Features.Directory = false;
@@ -95,7 +83,7 @@ builder.Services
     })
     .AddTokensModule(options =>
     {
-        // Ключей интеграции, токенов машин и билетов скачивания проекту не нужно: только вход в панель.
+        // Только вход в панель.
         options.Features.ApiKeys = false;
         options.Features.DeviceTokens = false;
         options.Features.DownloadTickets = false;
@@ -105,33 +93,28 @@ builder.Services
     {
         options.RunMaintenance = true;
 
-        // Письмо — «Hi», содержание, «Thank You,» и имя сервиса (решение владельца 2026-10-26).
+        // Рамка письма с именем сервиса.
         options.ProductName = Product.Name;
         options.Frame = true;
 
-        // Письма уходят текстом и HTML: перечень сертификатов — таблицей, как в уведомлении Key Manager Plus
-        // (решение владельца 2026-10-27). Текстовая часть остаётся — таблица в ней строкой на сертификат.
+        // Текст + HTML: перечень сертификатов — таблицей.
         options.Html = true;
 
-        // ⚠ Пароль SMTP уходит только тому серверу, порту, защите и логину, для которых его ввели.
+        // ⚠ Пароль SMTP — только тому серверу, порту, защите и логину, для которых его ввели.
         options.BindSmtpPassword = true;
     })
     .AddKeyManagerModule(options => options.RunPoller = true)
-    // ⚠ ⚠ Журнал действий — таблицей в базе (модуль audit, ревью безопасности 2026-10-27): только дописывается
-    // (UPDATE, DELETE и TRUNCATE отвергает сама база), сцеплен хешами, отказы прав пишет своим подключением.
-    // Прежде журнал жил только в ротируемом логе контейнера, и поток неверных входов вытеснял строки о
-    // выгрузке ключей за несколько часов. Звено ПОСЛЕДНИМ: его писатели перекрывают прежние регистрации.
+    // ⚠ Журнал — ПОСЛЕДНИМ: его писатели перекрывают прежние регистрации.
     .AddAuditModule(options =>
     {
         options.RunMaintenance = true;
         options.StrictActionCatalog = builder.Environment.IsDevelopment();
 
-        // ⚠ Журнал хранится всегда: удаление по сроку — единственный код, стирающий журнал, и роль сервиса
-        // права на него не получает (RuntimeRole). Граница — на случай, если срок однажды включат.
+        // ⚠ Журнал хранится всегда; граница — на случай, если срок однажды включат.
         options.Features.Retention = false;
         options.MinimumRetentionMonths = 12;
 
-        // Без Redis детектор массового показа молчал бы; показ ключа и так пишется строкой журнала.
+        // Без Redis детектор молчал бы; показ ключа и так пишется в журнал.
         options.Features.MassRevealDetection = false;
     })
     .UseErrorEnvelope();
@@ -139,8 +122,7 @@ builder.Services
 // ⚠ Набор миграций проекта — ПОСЛЕДНИМ: он правит значения поверх таблиц модулей.
 builder.Services.AddModuleSchema(SenderSchema.Declaration);
 
-// Мастер-ключ: без него нет старта (разбор у MasterKeyFile). Им обёрнуты ключи данных пароля
-// SMTP, секретов TOTP, ключа API Key Manager Plus и тел писем в очереди.
+// Без мастер-ключа нет старта.
 var masterKeys = MasterKeyFile.Load(builder.Configuration);
 builder.Services.AddSingleton(masterKeys.Ring);
 builder.Services.AddSingleton<ISecretEnvelope, SecretEnvelope>();
@@ -153,8 +135,7 @@ builder.Services.AddScoped<ICurrentUser>(sp => sp.GetRequiredService<RequestCurr
 builder.Services.AddScoped<CurrentUserMiddleware>();
 builder.Services.AddSingleton(TimeProvider.System);
 
-// Журнал пишет модуль audit (таблица audit_log); каждая строка журнала остаётся и строкой лога «audit …»
-// (LogAuditWriter) — по ней по-прежнему ищут в docker compose logs. Обёртки — поверх писателей модуля.
+// Каждая строка журнала — ещё и строка «audit …» в лог.
 builder.Services.AddScoped<LogAuditWriter>();
 builder.Services.Decorate<IAuditWriter>((журнал, sp) => new LoggedAuditWriter(журнал, sp.GetRequiredService<LogAuditWriter>()));
 builder.Services.Decorate<ISecurityEventWriter>(
@@ -162,12 +143,10 @@ builder.Services.Decorate<ISecurityEventWriter>(
 builder.Services.Decorate<IAuthorizationAuditor>(
     (журнал, sp) => new LoggedAuthorizationAuditor(журнал, sp.GetRequiredService<LogAuditWriter>()));
 
-// Предел частоты по адресу — потолок против потока; перебор одной учётной записи держат предел на
-// пару «адрес + почта» и блокировка после неудач. Пути объявляют модули, числа — проект.
+// Пути объявляют модули, числа — проект.
 builder.Services.AddModuleRateLimits(rateLimits.Policies);
 rateLimits.ChainProjectLimits(builder.Services);
 
-// Пространство замков проекта: проход миграций берёт замок в нём.
 builder.Services.AddSingleton(new AdvisoryLockSpace(0x53454E44));
 
 builder.Services.AddSingleton(new EndpointDocsOptions
@@ -182,15 +161,12 @@ builder.Services.AddOpenApi(options =>
 {
     options.AddDocumentTransformer<ErrorEnvelopeDocument>();
 
-    // ⚠ Описания операций модулей: штатный генератор берёт XML-комментарии только у публичных
-    // членов, а контроллеры модулей internal.
+    // Контроллеры модулей internal — штатный генератор их XML-комментарии не берёт.
     options.AddOperationTransformer<EndpointDocsDocument>();
     options.AddDocumentTransformer<EndpointDocsDocument>();
 });
 
-// ⚠ Тело запроса — не больше 256 КБ (по умолчанию Kestrel ждёт до 30 МБ). Самые большие тела
-// здесь — настройки и подписка на двадцать адресов; файлов API не принимает, а анонимные
-// вход и сброс пароля не должны держать память сервера чужими мегабайтами.
+// Файлов API не принимает: 256 КБ вместо 30 МБ Kestrel.
 builder.WebHost.ConfigureKestrel(kestrel => kestrel.Limits.MaxRequestBodySize = 256 * 1024);
 
 builder.Services.AddSenderDatabase(ConnectionSecrets.Postgres(builder.Configuration));
@@ -198,12 +174,7 @@ builder.Services.AddSenderDatabase(ConnectionSecrets.Postgres(builder.Configurat
 builder.Services.AddHealthChecks()
     .AddCheck<DatabaseReadiness>("database", tags: ["ready"]);
 
-// ⚠ За обратным прокси адрес клиента приходит заголовком, а заголовок подделывается. Доверяем
-// ему только от названных прокси: иначе предел попыток входа обходился бы подстановкой
-// X-Forwarded-For.
-//
-// ⚠ X-Forwarded-Host НЕ принимается: Cloudflare пропускает его от клиента как есть, а имя
-// хоста приложению не нужно — ссылки в письмах строятся только из настройки server.public_url.
+// ⚠ X-Forwarded-* — только от названных прокси; -Host не принимается: Cloudflare пропускает его от клиента.
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
@@ -232,7 +203,7 @@ app.UseMiddleware<SecurityHeadersMiddleware>();
 app.UseMiddleware<RequestIdMiddleware>();
 app.UseMiddleware<ErrorHandlingMiddleware>();
 
-// После номера обращения и разбора заголовков прокси: журналу нужны оба.
+// После номера запроса и заголовков прокси: журналу нужны оба.
 app.UseMiddleware<AuditContextMiddleware>();
 app.UseMiddleware<TokenInAddressGuard>();
 app.UseRouting();
@@ -255,7 +226,6 @@ app.MapHealthChecks("/api/ready", new HealthCheckOptions { ResponseWriter = Writ
     .WithMetadata(new PublicEndpointAttribute(
         "готовность опрашивает оркестратор до того, как появится хоть один пользователь"));
 
-// Веб-панель и страницы ссылок из писем — React-приложение из wwwroot (разбор у PanelFiles).
 app.MapPanel();
 
 if (Bootstrap.IsCommand(args))
@@ -265,18 +235,17 @@ if (Bootstrap.IsCommand(args))
 
 app.MapControllers();
 
-// ⚠ Схема накатывается командой `migrate`, а не стартом: иначе `docker compose up` и есть
-// миграция, и копию базы до неё снять негде. Отставшая схема — отказ стартовать.
+// ⚠ Схему накатывает `migrate`, не старт: отставшая схема — отказ стартовать.
 await app.RequireCurrentSchemaAsync();
 
-// Версия в журнале: по ней видно, что обновление стека действительно подняло новый образ.
+// По версии видно, что обновление подняло новый образ.
 app.Logger.LogInformation("sender_starting {Version}", Bootstrap.InstallationVersion(typeof(Program).Assembly));
 
 await app.RunAsync();
 
 return 0;
 
-// Проверить цепочку журнала: подмена строки задним числом видна разрывом. 0 — сошлось, 2 — разрыв.
+// 0 — цепочка журнала сошлась, 2 — разрыв.
 static async Task<int> VerifyAuditChainAsync(WebApplication app)
 {
     var итог = await AuditModule.CheckChainAsync(app.Services);
@@ -339,8 +308,7 @@ static async Task<int> RunCommandAsync(WebApplication app, string[] args)
             Bootstrap.Argument(args, "--password-file"),
             args[0] == Bootstrap.ResetAccess ? "Новый пароль: " : "Пароль администратора: ");
 
-        // ⚠ Пароль, фактор, блокировка и сессии — одной транзакцией (разбор у модуля учётных записей).
-        // Отключённую учётную запись команда не включает и говорит об этом в итоге.
+        // Пароль, фактор, блокировка и сессии — одной транзакцией модуля.
         if (args[0] == Bootstrap.ResetAccess)
         {
             var итог = await IdentityModule.ResetAccessAsync(app.Services, email, password);
@@ -373,16 +341,8 @@ static async Task<int> RunCommandAsync(WebApplication app, string[] args)
     }
 }
 
-// Учётные записи из переменных окружения — для установки через Portainer, где нет консоли.
-//
-// ⚠ ⚠ В образе нет оболочки, и Portainer не может ни спросить пароль, ни выполнить
-// create-superadmin / reset-access. Служба migrate выполняется при каждом развёртывании стека:
-// - SENDER_INIT_ADMIN_EMAIL + SENDER_INIT_ADMIN_PASSWORD — первый администратор, ТОЛЬКО если
-//   учётных записей ещё нет вовсе; иначе пропуск;
-// - SENDER_RESET_ACCESS_EMAIL + SENDER_RESET_ACCESS_PASSWORD — то же, что reset-access, ОДИН РАЗ на пару
-//   «адрес + пароль» (ревью безопасности 2026-10-27): прежде сброс повторялся при каждом обновлении стека,
-//   пока переменные забыты, — и знающий пароль из стека входил первым и подключал свой аутентификатор.
-//   Применённая пара запоминается HMAC-отметкой (Bootstrap.ResetAccessMark); сбросить снова — другой пароль.
+// Учётные записи из окружения (Portainer без консоли): первый администратор — только на пустой установке,
+// ⚠ сброс доступа — один раз на пару «адрес + пароль», иначе повторялся бы при каждом обновлении стека.
 static async Task StartupAccountsAsync(WebApplication app)
 {
     var config = app.Configuration;
@@ -441,8 +401,7 @@ static async Task StartupAccountsAsync(WebApplication app)
     }
 }
 
-// Есть ли хоть одна учётная запись, включая удалённые: первый администратор заводится только на пустой
-// установке, и удалённая учётная запись — тоже след того, что установка не пуста.
+// Включая удалённые: они тоже след того, что установка не пуста.
 static async Task<bool> AnyUserAsync(WebApplication app)
 {
     await using var db = new NpgsqlConnection(app.Services.GetRequiredService<DatabaseStartup.SchemaConnection>().Value);
@@ -457,10 +416,6 @@ static async Task<int> MigrateCommandAsync(WebApplication app)
 {
     try
     {
-        // ⚠ Наборы модулей и проекта (решение EAMS 0114): существующая установка дотягивается прежними
-        // миграциями хоста до моста к модулям, базовые модулей отмечаются, остальное применяется по
-        // порядку. Отмеченное печатается отдельно: оператор обязан отличить «выполнено» от «отмечено,
-        // схема уже была».
         var done = await app.MigrateAsync();
 
         if (done.Count == 0)
@@ -477,8 +432,7 @@ static async Task<int> MigrateCommandAsync(WebApplication app)
             }
         }
 
-        // ⚠ Секреты прежнего конверта «sender:» перекладываются в конверт модулей — до роли сервиса и
-        // до учётных записей из окружения: им может понадобиться второй фактор (разбор у LegacySecrets).
+        // ⚠ До учётных записей из окружения: им может понадобиться второй фактор.
         var прежние = new LegacySecrets(
             app.Services.GetRequiredService<ISecretEnvelope>(),
             LegacySecrets.Keys(MasterKeyFile.Content(app.Configuration).Content));
@@ -495,15 +449,13 @@ static async Task<int> MigrateCommandAsync(WebApplication app)
             }
         }
 
-        // Ключ API Key Manager Plus, заданный в 1.x до привязки к адресу, привязывается к текущему адресу —
-        // без этого опрос отказывал бы до повторного ввода ключа (так было в 1.x, шаг потерялся в 2.0).
+        // Ключ API из 1.x без привязки — к текущему адресу, иначе опрос отказывал бы.
         if (await KeyManagerModule.BindLegacyApiKeyAsync(app.Services))
         {
             Console.WriteLine($"{Bootstrap.Migrate}: ключ API Key Manager Plus привязан к текущему адресу");
         }
 
-        // ⚠ Роль сервиса приводится в порядок и без новых миграций: сменили файл пароля или
-        // ставите поверх старой установки — `migrate` и есть способ это применить.
+        // Роль сервиса — каждым migrate, и без новых миграций (смена пароля).
         if (RuntimeRole.FromConfiguration(app.Configuration) is var (role, password))
         {
             await using var connection = new NpgsqlConnection(
@@ -527,8 +479,7 @@ static async Task<int> MigrateCommandAsync(WebApplication app)
     }
     catch (PostgresException error) when (error.SqlState == PostgresErrorCodes.InsufficientPrivilege)
     {
-        // ⚠ Служба api ходит ролью без права менять схему — и это задумано. Сказать, где её
-        // меняют, полезнее, чем «permission denied for schema public».
+        // Служба api ходит ролью без DDL — подсказать, где меняют схему.
         await Console.Error.WriteLineAsync(
             $"Ошибка: у этой роли нет права менять схему. Схему накатывает служба migrate: "
             + "docker compose run --rm migrate");
@@ -580,8 +531,7 @@ static async Task<int> RewrapAsync(WebApplication app, string[] args)
 
     if (нечитаемыхВсего > 0)
     {
-        // ⚠ Не открывшееся прежней версией ключа не переложено: выбросить её из файла значит потерять
-        // эти значения навсегда.
+        // ⚠ Выбросить прежнюю версию ключа — потерять неоткрывшееся навсегда.
         Console.WriteLine(
             $"{Bootstrap.RewrapKeys}: ⚠ не открылось {нечитаемыхВсего} — прежние версии ключа из файла НЕ убирать, "
             + "пока не разобрались.");
@@ -625,8 +575,7 @@ static async Task WriteReadinessAsync(HttpContext context, HealthReport report)
         return;
     }
 
-    // ⚠ Наружу — имя проверки и «недоступно», без текста исключения: строка подключения в нём
-    // целиком.
+    // ⚠ Без текста исключения: в нём строка подключения.
     var failed = report.Entries
         .Where(entry => entry.Value.Status != HealthStatus.Healthy)
         .ToDictionary(entry => entry.Key, entry => (object?)"недоступно");

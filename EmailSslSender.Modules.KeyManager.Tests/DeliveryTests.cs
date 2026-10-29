@@ -14,14 +14,7 @@ using Npgsql;
 
 namespace EmailSslSender.Modules.KeyManager.Tests;
 
-/// <summary>
-/// Опрос и отправка: когда сертификат уходит, кому, в каких файлах — и когда не уходит.
-/// </summary>
-/// <remarks>
-/// ⚠ ⚠ <b>Главный факт файла — новый серийный номер уходит ровно один раз.</b> Продление в Key
-/// Manager Plus видно только так, и ошибка здесь бывает двух видов: сертификат не ушёл вовсе или
-/// уходит на каждом опросе. Оба проверяются.
-/// </remarks>
+/// <summary>⚠ Опрос и отправка: новый серийный номер уходит ровно один раз — не ноль и не на каждом опросе.</summary>
 [Collection(KeyManagerDatabaseCollection.Name)]
 public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
 {
@@ -63,13 +56,13 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         письмо.Values["names"].ShouldBe("site.example.com");
         письмо.Values["archive"].ShouldBe("site.example.com.zip");
 
-        // ⚠ Сертификаты — таблицей, как в уведомлении Key Manager Plus, без серийного номера и отпечатка.
+        // Таблица как в уведомлении KMP: без серийного номера и отпечатка.
         var таблица = письмо.Tables.ShouldHaveSingleItem();
         таблица.Key.ShouldBe(CertificateMail.TableName);
         таблица.Value.Columns.ShouldBe(["Сертификат", "Форматы", "Действует до", "Осталось дней"]);
         таблица.Value.Rows.ShouldHaveSingleItem().ShouldBe(["site.example.com", "PEM, KEY", "01.01.2027", Дней(Год)]);
 
-        // ⚠ Одно вложение — архив: Outlook блокирует .crt, .cer и .der отдельными файлами.
+        // ⚠ Одно вложение — архив: Outlook блокирует .crt, .cer и .der.
         var архив = письмо.Attachments.ShouldHaveSingleItem();
         архив.FileName.ShouldBe("site.example.com.zip");
         архив.ContentType.ShouldBe("application/zip");
@@ -88,7 +81,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
             && з.ActorType == AuditActorType.System && з.Reason == "initial");
     }
 
-    /// <summary>Описание подписки — заметка администраторов: в письмо оно не попадает ни строкой, ни таблицей.</summary>
+    /// <summary>Описание подписки в письмо не попадает.</summary>
     [Fact]
     public async Task Описание_подписки_в_письмо_не_уходит()
     {
@@ -156,8 +149,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
     [Fact]
     public async Task Перевыпуск_с_тем_же_сроком_уходит_как_обновление()
     {
-        // ⚠ ⚠ Перевыпуск у удостоверяющего центра сохраняет срок, а старый сертификат ещё лежит в
-        // Key Manager Plus. «Самый долгий» здесь не различает их — текущий тот, что замечен позже.
+        // ⚠ Перевыпуск сохраняет срок: текущий — замеченный позже, а не самый долгий.
         База("site.example.com", "aa01", Год);
         await Подписка("site.example.com", ["a@example.com"]);
         await Опросить();
@@ -173,7 +165,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
     [Fact]
     public async Task Новый_сертификат_с_меньшим_сроком_тоже_текущий()
     {
-        // Новые сертификаты живут короче старых: срок не должен перевешивать «замечен позже».
+        // Новые сертификаты короче: срок не перевешивает «замечен позже».
         База("site.example.com", "aa01", Год.AddYears(1));
         await Подписка("site.example.com", ["a@example.com"]);
         await Опросить();
@@ -189,8 +181,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
     [Fact]
     public async Task Снимок_старше_последней_отправки_не_шлёт_прежний_сертификат()
     {
-        // Проход взял список с aa01; пока он шёл, ручная отправка разослала уже bb02. Прийти к
-        // подписке со старым списком и разослать aa01 «как обновление» — ровно то, чего быть не должно.
+        // Проход со списком aa01 после ручной отправки bb02 не должен слать aa01.
         База("site.example.com", "aa01", Год);
         var id = await Подписка("site.example.com", ["a@example.com"]);
         var устаревший = CertificateSnapshot.Of([.. база.Kmp.Сертификаты], база.Часы.GetUtcNow());
@@ -272,8 +263,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
     [Fact]
     public async Task Отказ_выгрузки_не_ставит_ни_одного_письма_и_не_отмечает_отправку()
     {
-        // ⚠ PEM выгрузился, KEY — нет: письмо без ключа было бы письмом, которое не установить, а
-        // отметка «отправлено» закрыла бы повтор навсегда.
+        // ⚠ KEY не выгрузился — не слать и не отмечать «отправлено», иначе повтора не будет.
         База("site.example.com", "aa01", Год);
         var id = await Подписка("site.example.com", ["a@example.com"]);
         база.Kmp.ПадатьНаФормате = CertificateFormats.Key;
@@ -291,10 +281,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         (await Прочитать(id)).LastError.ShouldBeNull();
     }
 
-    /// <summary>
-    /// Один сертификат подписки не выгружается (в Key Manager Plus нет его ключа) — остальные уходят, а
-    /// его «при обновлении» пробует снова (ревью надёжности 2026-10-27).
-    /// </summary>
+    /// <summary>Один сертификат не выгружается — остальные уходят, его пробуют снова.</summary>
     [Fact]
     public async Task Невыгружаемый_сертификат_не_останавливает_остальные()
     {
@@ -361,7 +348,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
     [Fact]
     public async Task Умершее_письмо_становится_ошибкой_подписки_и_не_шлётся_само()
     {
-        // ⚠ Повтор сам по себе слал бы второму получателю дубли раз в час, если первый ящик не существует.
+        // ⚠ Автоповтор слал бы второму получателю дубли.
         База("site.example.com", "aa01", Год);
         var id = await Подписка("site.example.com", ["a@example.com", "b@example.com"]);
         await Опросить();
@@ -423,8 +410,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
     [Fact]
     public async Task Список_только_из_последнего_опроса_а_пропавшие_за_месяц_забываются()
     {
-        // Владелец: панель показывает только то, что есть в Key Manager Plus сейчас, — без
-        // примерных и пропавших сертификатов.
+        // Только то, что есть в KMP сейчас (решение владельца).
         База("site.example.com", "aa01", Год);
         База("old.example.com", "0b0c", Год);
         await Опросить();
@@ -459,8 +445,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
     [Fact]
     public async Task Новая_отправка_отменяет_прежние_неотправленные_письма()
     {
-        // Ревью безопасности 2026-10-20: прежде номера первой порции затирались, и потом её уже
-        // не отменяли ни удаление подписки, ни смена получателей.
+        // Номера первой порции не затираются — иначе её не отменить.
         База("site.example.com", "aa01", Год);
         var id = await Подписка("site.example.com", ["a@example.com"]);
 
@@ -486,7 +471,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
 
         await Опросить();
 
-        // ⚠ Пароль — вложением: тело письма живёт в очереди до уборки, вложения стираются сразу.
+        // ⚠ Пароль — вложением: вложения стираются сразу, тело — нет.
         var a = база.Почта.Письма.Single(п => п.To == "a@example.com");
         a.Kind.ShouldBe(CertificateMail.Kind);
         a.Values.Values.ShouldNotContain(з => з.Contains("пароль-a", StringComparison.Ordinal));
@@ -509,10 +494,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         CertificateMail.ExpiresOn(null, язык).ShouldBe("—");
     }
 
-    /// <summary>
-    /// Таблица — строкой-заполнителем во всех трёх языках: модуль почты вырезает переводы строк из
-    /// значений, а таблицу без заполнителя в шаблоне отвергает при постановке.
-    /// </summary>
+    /// <summary>Заполнитель таблицы — во всех трёх языках, иначе почта отвергает постановку.</summary>
     [Fact]
     public void Шаблоны_одного_и_нескольких_сертификатов_на_каждом_языке_с_таблицей()
     {
@@ -668,8 +650,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
     [Fact]
     public async Task Занятая_подписка_пропускается_а_не_ждёт()
     {
-        // ⚠ ⚠ Ради этого строка берётся FOR UPDATE SKIP LOCKED: второй процесс (или ручная
-        // отправка), пришедший к занятой подписке, проходит мимо, а не шлёт её второй раз.
+        // ⚠ FOR UPDATE SKIP LOCKED: второй проход минует занятую подписку.
         База("site.example.com", "aa01", Год);
         var id = await Подписка("site.example.com", ["a@example.com"]);
 
@@ -695,7 +676,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         База("site.example.com", "aa01", Год);
         await Подписка("site.example.com", ["a@example.com"]);
 
-        // Первый проход застревает на выгрузке, держа строку подписки; второй приходит в это время.
+        // Первый проход держит строку на выгрузке; второй приходит в это время.
         база.Kmp.Задержать();
         var первый = Опросить();
         await база.Kmp.ВыгрузкаНачалась.Task.WaitAsync(TimeSpan.FromSeconds(30), Ct);
@@ -762,10 +743,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         (await Прочитать(id)).LastError.ShouldBeNull("подписка не виновата, что сервер лёг");
     }
 
-    /// <summary>
-    /// Не только отказ Key Manager Plus: любая ошибка открытия клиента видна в состоянии, а не только в
-    /// логе (ревью надёжности 2026-10-27).
-    /// </summary>
+    /// <summary>Любая ошибка открытия клиента видна в состоянии, а не только в логе.</summary>
     [Fact]
     public async Task Ошибка_открытия_клиента_записывается_в_состояние()
     {
@@ -779,10 +757,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
             .ShouldNotBeNull().ShouldStartWith("Опрос не удался");
     }
 
-    /// <summary>
-    /// Перерыв в опросе дольше месяца (интеграция выключена, сервис стоял) не стирает «впервые
-    /// увиден» у пар, которые в Key Manager Plus есть, — по нему выбирается текущий сертификат.
-    /// </summary>
+    /// <summary>Перерыв в опросе дольше месяца не стирает «впервые увиден» у живых пар.</summary>
     [Fact]
     public async Task Перерыв_в_опросе_дольше_месяца_не_забывает_когда_пару_увидели_впервые()
     {
@@ -796,10 +771,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         (await Впервые("site.example.com", "aa01")).ShouldBe(впервые, "пара была в Key Manager Plus весь перерыв");
     }
 
-    /// <summary>
-    /// Key Manager Plus снова внёс старый сертификат (сканирование нашло его на необновлённом сервере): он
-    /// замечен позже всех, но выпущен раньше отправленного — сам не уходит (ревью надёжности 2026-10-27).
-    /// </summary>
+    /// <summary>Старый выпуск, замеченный позже отправленного, сам не уходит (защита от отката).</summary>
     [Fact]
     public async Task Старый_выпуск_замеченный_позже_не_уходит_обновлением()
     {
@@ -810,7 +782,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         (await Прочитать(id)).SentIssued.ShouldContainKey("site.example.com");
         база.Почта.Сброс();
 
-        // Старый выпуск появился — отправленный ещё в Key Manager Plus: текущим остаётся он.
+        // Отправленный ещё в KMP — текущим остаётся он.
         база.Часы.Вперёд(TimeSpan.FromHours(1));
         База("site.example.com", "aa01", Год.AddYears(1));
         база.Kmp.Выпуски["aa01"] = new DateTimeOffset(2025, 6, 1, 0, 0, 0, TimeSpan.Zero);
@@ -819,7 +791,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         база.Почта.Письма.ShouldBeEmpty();
         (await Прочитать(id)).SentSerials["site.example.com"].ShouldBe("aa02");
 
-        // Отправленного в Key Manager Plus больше нет — опрос не шлёт и говорит почему, ручная отправка шлёт.
+        // Отправленного в KMP нет — опрос не шлёт, ручная отправка шлёт.
         база.Kmp.Сертификаты.RemoveAll(с => с.SerialNumber == "aa02");
         база.Часы.Вперёд(TimeSpan.FromHours(1));
 
@@ -830,10 +802,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         база.Почта.Письма.ShouldHaveSingleItem().Values["serial_numbers"].ShouldBe("aa01");
     }
 
-    /// <summary>
-    /// Продлённый досрочно под новые предельные сроки истекает РАНЬШЕ прежнего, но выпущен позже — это
-    /// обновление, и оно уходит.
-    /// </summary>
+    /// <summary>Досрочное продление истекает раньше, но выпущено позже — уходит.</summary>
     [Fact]
     public async Task Новый_выпуск_с_более_коротким_сроком_уходит_обновлением()
     {
@@ -852,10 +821,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         (await Прочитать(id)).SentSerials["site.example.com"].ShouldBe("bb02");
     }
 
-    /// <summary>
-    /// Не дошло ни одно письмо отправки (почта лежала дольше всех попыток) — отправка повторяется сама, но не
-    /// больше трёх раз подряд (ревью надёжности 2026-10-27).
-    /// </summary>
+    /// <summary>Не дошло ни одно письмо — отправка повторяется сама, не больше трёх раз подряд.</summary>
     [Fact]
     public async Task Если_не_дошло_ни_одно_письмо_отправка_повторяется_сама_трижды()
     {
@@ -872,7 +838,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
             (await Опросить()).Sent.ShouldBe(1, $"повтор {повтор}");
             (база.Почта.Письма.Count - было).ShouldBe(2, "заново — обоим");
 
-            // Повтор лёг в очередь этим же проходом — ошибки нет, а счётчик помнит, сколько раз повторяли.
+            // Повтор лёг в очередь этим же проходом — ошибки нет.
             (await Прочитать(id)).AutoRetries.ShouldBe(повтор);
         }
 
@@ -902,10 +868,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         подписка.LastError.ShouldNotBeNull().ShouldContain("b@example.com — ящика нет");
     }
 
-    /// <summary>
-    /// Закрытый ключ и его пароль не уходят по почте без шифрования (ревью безопасности 2026-10-27); сертификат
-    /// без ключа — уходит.
-    /// </summary>
+    /// <summary>Ключ и пароль не уходят по почте без шифрования; сертификат — уходит.</summary>
     [Fact]
     public async Task Ключ_не_уходит_по_почте_без_шифрования()
     {
@@ -929,7 +892,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         }
     }
 
-    // --- период «с — по» и время отправки (решение владельца 2026-10-28) ------------------
+    // Период «с — по» и время отправки
 
     [Fact]
     public async Task До_первого_дня_периода_опрос_не_шлёт()
@@ -1051,7 +1014,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
         (await Опросить()).Sent.ShouldBe(1, "письма той же отправки уходят сразу, а не завтра в 09:00");
     }
 
-    // --- обвязка ---------------------------------------------------------------------------
+    // Обвязка
 
     /// <summary>Часы — вперёд до заданного мгновения.</summary>
     private void На(DateTimeOffset когда) => база.Часы.Вперёд(когда - база.Часы.GetUtcNow());
@@ -1081,7 +1044,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
             .SingleAsync(Ct);
     }
 
-    /// <summary>Сколько дней до даты по часам обвязки: часы общие для коллекции и двигаются тестами.</summary>
+    /// <summary>Дней до даты по часам обвязки (часы общие для коллекции).</summary>
     private string Дней(DateOnly дата) =>
         (дата.DayNumber - DateOnly.FromDateTime(база.Часы.GetUtcNow().UtcDateTime).DayNumber).ToString(CultureInfo.InvariantCulture);
 
@@ -1125,7 +1088,7 @@ public sealed class DeliveryTests(KeyManagerDatabase база) : IAsyncLifetime
             SendTime = sendTime,
             TimeZone = timeZone,
 
-            // Как у API: новое расписание начинается с ближайшего времени отправки.
+            // Как у API: расписание — с ближайшего времени отправки.
             LastSlotAt = activeFrom is null && activeUntil is null && sendTime is null ? null : база.Часы.GetUtcNow(),
         };
 

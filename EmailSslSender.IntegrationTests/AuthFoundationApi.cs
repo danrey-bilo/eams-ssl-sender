@@ -8,7 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace EmailSslSender.IntegrationTests;
 
-/// <summary>Сквозные границы нового пути: приглашение, обязательный код, атомарная выдача и замена ролей.</summary>
+/// <summary>Второй фактор: обязательное подключение и свежий код для опасных действий.</summary>
 [Collection(SenderHost.Collection)]
 public sealed class AuthFoundationApi(SenderHost host) : IDisposable
 {
@@ -44,19 +44,12 @@ public sealed class AuthFoundationApi(SenderHost host) : IDisposable
         await host.CompleteInitialFactorAsync(host.CreateClient(), access, Ct);
         var verified = await Request(HttpMethod.Get, "/api/me", access);
         (await verified.Content.ReadFromJsonAsync<JsonObject>(Ct))!["must_enroll_two_factor"]!.GetValue<bool>().ShouldBeFalse();
-        // Прав в установке нет: подключивший фактор администратор видит людей сразу.
+        // Ролей нет: с подключённым фактором список людей открыт сразу.
         var afterEnrollment = await Request(HttpMethod.Get, "/api/users", access);
         afterEnrollment.StatusCode.ShouldBe(HttpStatusCode.OK);
     }
 
-    /// <summary>
-    /// Управление доступом требует кода, подтверждённого на этой сессии за последние десять минут.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ ⚠ Решение владельца 2026-10-20, заменившее «второй фактор — только при входе»: отказ
-    /// называет окно (<c>details.window_minutes</c>), чтобы экран мог сказать, сколько живёт код.
-    /// Отметки нет вовсе — тот же отказ, а не пропуск.
-    /// </remarks>
+    /// <summary>Нет отметки или она старше окна — отказ с окном в <c>details.window_minutes</c>.</summary>
     [Theory]
     [InlineData(null)]
     [InlineData(11)]
@@ -84,14 +77,7 @@ public sealed class AuthFoundationApi(SenderHost host) : IDisposable
             .StatusCode.ShouldBe(HttpStatusCode.Created);
     }
 
-    /// <summary>
-    /// Давний код на настоящей сессии: отказ, код из приложения, и то же действие проходит.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ ⚠ Сквозь весь путь, без подмены личности: отметка — на ТОКЕНЕ, и доехать до фильтра она
-    /// может только через распознаватель. Вторая сессия того же человека остаётся с давним кодом:
-    /// код, введённый в одной вкладке, не открывает опасное в остальных.
-    /// </remarks>
+    /// <summary>Без подмены личности: отметка на токене, вторая сессия остаётся с давним кодом.</summary>
     [Fact]
     public async Task Давний_код_просит_подтверждения_и_код_из_приложения_открывает_то_же_действие()
     {
@@ -123,8 +109,7 @@ public sealed class AuthFoundationApi(SenderHost host) : IDisposable
         envelope["code"]!.GetValue<string>().ShouldBe("SECOND_FACTOR_REQUIRED");
         envelope["details"]!["window_minutes"]!.GetValue<int>().ShouldBe(10);
 
-        // Код из приложения — тот же, что вводит человек; принятый шаг сброшен, чтобы код текущего
-        // окна не упёрся в защиту от повтора после входа в те же тридцать секунд.
+        // Сброс принятого шага: иначе код того же окна отвергнет защита от повтора.
         await using (var scope = host.Services.CreateAsyncScope())
         {
             await scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.ExecuteSqlInterpolatedAsync(
@@ -138,7 +123,7 @@ public sealed class AuthFoundationApi(SenderHost host) : IDisposable
         var confirmedAt = confirmed["confirmed_at"]!.GetValue<DateTimeOffset>();
         confirmed["step_up_until"]!.GetValue<DateTimeOffset>().ShouldBe(confirmedAt.AddMinutes(10), TimeSpan.FromMilliseconds(1));
 
-        // Через базу отметка доезжает с точностью до микросекунды — отсюда допуск.
+        // База хранит микросекунды — отсюда допуск.
         (await (await Request(HttpMethod.Get, "/api/me", access)).Content.ReadFromJsonAsync<JsonObject>(Ct))!["step_up_until"]!
             .GetValue<DateTimeOffset>().ShouldBe(confirmedAt.AddMinutes(10), TimeSpan.FromMilliseconds(1));
 
@@ -149,7 +134,7 @@ public sealed class AuthFoundationApi(SenderHost host) : IDisposable
         (await other.Content.ReadFromJsonAsync<JsonObject>(Ct))!["code"]!.GetValue<string>().ShouldBe("SECOND_FACTOR_REQUIRED");
     }
 
-    /// <summary>Отметка фактора на сессиях — полчаса назад: окно в десять минут давно прошло.</summary>
+    /// <summary>Отметка фактора на сессиях — полчаса назад.</summary>
     private async Task Состарить(params Guid[] sessions)
     {
         await using var scope = host.Services.CreateAsyncScope();
@@ -176,13 +161,6 @@ public sealed class AuthFoundationApi(SenderHost host) : IDisposable
         return await host.CreateClient().SendAsync(request, Ct);
     }
 
-    /// <summary>
-    /// Смена своего пароля свежего кода не спрашивает: её подтверждает текущий пароль.
-    /// </summary>
-    /// <remarks>
-    /// Свежий второй фактор нужен действиям над ключами, подписками, почтой, людьми и настройками
-    /// защиты (<c>[RequireRecentSecondFactor]</c>); своё — пароль и имя — в этот список не входит.
-    /// </remarks>
     [Fact]
     public async Task Смена_обязательного_пароля_требует_кода_этой_сессии()
     {
@@ -205,8 +183,7 @@ public sealed class AuthFoundationApi(SenderHost host) : IDisposable
             await db.Database.ExecuteSqlInterpolatedAsync($"UPDATE auth_tokens SET step_up_at = {proofAt} WHERE id = {sessionId}", Ct);
         }
 
-        // ⚠ Модуль учётных записей требует к текущему паролю и свежий код: вход с кодом его ставит, так что
-        // обязательная смена сразу после входа проходит, а давняя сессия переподтверждается.
+        // ⚠ Кроме текущего пароля нужен свежий код: давняя сессия переподтверждается.
         var давний = await ChangePasswordAsync(access, Password + "-new");
         давний.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
         (await давний.Content.ReadFromJsonAsync<JsonObject>(Ct))!["code"]!.GetValue<string>().ShouldBe("SECOND_FACTOR_REQUIRED");

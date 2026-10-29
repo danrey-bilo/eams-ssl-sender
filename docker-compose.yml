@@ -1,21 +1,14 @@
-# Боевой стек: API (с панелью), PostgreSQL и, по желанию, Cloudflare Tunnel.
-#
-# Порядок первого запуска (подробно — README.md):
+# API с панелью, PostgreSQL и, по желанию, Cloudflare Tunnel. Первый запуск (подробно — README.md):
 #   ./scripts/gen-secrets.sh
-#   ./scripts/set-tunnel-token.sh # токен Cloudflare Tunnel — в файл секрета, не в .env
+#   ./scripts/set-tunnel-token.sh # токен туннеля — в файл секрета, не в .env
 #   cp .env.example .env
 #   docker load -i email-ssl-sender-image-vX.Y.Z.tar   # образ из архива релиза
 #   docker compose run --rm migrate
 #   docker compose run --rm api create-superadmin --email admin@example.com
 #   docker compose up -d
 #
-# ⚠ На сервере публикуется ТОЛЬКО 127.0.0.1:8001. Наружу сервис выходит через Cloudflare Tunnel
-# (служба cloudflared ниже: исходящее соединение, открытых портов не нужно) или через свой обратный
-# прокси с TLS. Кука обновления помечена Secure и по голому HTTP браузер её не сохранит;
-# публиковать 8001 на все адреса без TLS — значит слать пароли открытым текстом.
-#
-# ⚠ У секретов НЕТ умолчаний: нет файла — нет старта. Файл, по которому поднимают систему, —
-# это инструкция, и она исполняется буквально; пароль-умолчание здесь стал бы паролем установки.
+# ⚠ Публиковать только 127.0.0.1:8001; наружу — туннелем или своим прокси с TLS, не голым HTTP.
+# ⚠ У секретов нет умолчаний: нет файла — нет старта.
 name: email-ssl-sender
 
 x-logging: &logging
@@ -26,8 +19,7 @@ x-logging: &logging
 
 services:
   api:
-    # Готовый образ из архива релиза (`docker load`); `build` — сборка из исходников (только у
-    # правообладателя). Версию закрепляет SENDER_IMAGE в .env.
+    # Образ из архива релиза (`docker load`); версия — SENDER_IMAGE в .env.
     image: ${SENDER_IMAGE:-ghcr.io/danrey-bilo/eams-ssl-sender:latest}
     build:
       context: .
@@ -36,18 +28,11 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: Production
       ASPNETCORE_HTTP_PORTS: "8001"
-      # ⚠ `GSS Encryption Mode=Disable`: Npgsql иначе пробует Kerberos, а в обрезанном образе
-      # библиотеки libgssapi нет — каждое подключение печатало бы ошибку загрузки.
-      # ⚠ ⚠ Сервис ходит ролью sender_app: только чтение и запись строк. Пароля владельца схемы
-      # (суперпользователя базы) у этой службы нет вовсе — он есть только у службы migrate.
+      # ⚠ Роль sender_app без права менять схему; GSS выключен — в образе нет libgssapi.
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=sender;Username=sender_app;Maximum Pool Size=40;GSS Encryption Mode=Disable"
       SENDER_POSTGRES_PASSWORD_FILE: /run/secrets/sender_app_password
       SENDER_MASTER_KEK_FILE: /run/secrets/sender_master_kek
-      # Кому верим заголовки X-Forwarded-For / -Proto: только адресу cloudflared в сети туннеля и, если
-      # задан, своему обратному прокси. Не верь мы туннелю — все клиенты выглядели бы одним адресом
-      # cloudflared, и предел попыток входа делили бы на всех.
-      # ⚠ Адресу, а не всей подсети (ревью безопасности 2026-10-27): в подсеть входит и шлюз моста — то
-      # есть сам сервер, и любой процесс на нём подделывал бы адрес клиента в пределах входа и журнале.
+      # ⚠ X-Forwarded-* — только от адреса cloudflared (не всей подсети) и своего прокси, если задан.
       ForwardedHeaders__KnownProxies: ${SENDER_TUNNEL_PROXY_IP:-172.31.250.2}
       ForwardedHeaders__KnownNetworks: ${SENDER_TRUSTED_PROXY_NETWORKS:-}
     security_opt:
@@ -68,8 +53,7 @@ services:
       db:
       edge:
         ipv4_address: ${SENDER_TUNNEL_API_IP:-172.31.250.3}
-    # ⚠ Два ядра и гигабайт: пароли считает argon2 (64 МиБ на хеш, не больше четырёх разом), и
-    # поток анонимных входов не должен отнимать у сервера всё.
+    # Пределы: argon2 берёт 64 МиБ на хеш.
     cpus: 2
     mem_limit: 1g
     pids_limit: 512
@@ -84,12 +68,7 @@ services:
       postgres:
         condition: service_healthy
 
-  # Схема базы и роль сервиса. Одноразовая служба: docker compose run --rm migrate
-  #
-  # ⚠ Ходит владельцем схемы (sender — суперпользователь в образе postgres) и единственная знает
-  # его пароль. Накатывает миграции и заводит или обновляет роль sender_app с паролем из
-  # secrets/sender_app_password: SELECT/INSERT/UPDATE/DELETE, без права менять схему.
-  # Профиль tools — чтобы `docker compose up -d` её не запускал.
+  # Схема и роль sender_app, разово: docker compose run --rm migrate. Единственная знает пароль владельца.
   migrate:
     image: ${SENDER_IMAGE:-ghcr.io/danrey-bilo/eams-ssl-sender:latest}
     profiles: ["tools"]
@@ -119,22 +98,10 @@ services:
       postgres:
         condition: service_healthy
 
-  # Cloudflare Tunnel: публикует панель и API наружу исходящим соединением, без открытых портов.
-  #
-  # ⚠ ⚠ Токен — файлом секрета secrets/cloudflare_tunnel_token (scripts/set-tunnel-token.sh), а не
-  # переменной окружения: переменная видна в `docker inspect`, в /proc/1/environ и в
-  # `cloudflared --help`, а с токеном любой поднимет второй коннектор того же туннеля и получит
-  # часть трафика панели — пароли и коды входа. Служба в профиле `tunnel`; .env.example включает
-  # его строкой COMPOSE_PROFILES=tunnel, и тогда обычный `docker compose up -d` поднимает туннель.
-  #
-  # ⚠ Метрики (и pprof) cloudflared — только на 127.0.0.1 внутри контейнера: по умолчанию они
-  # слушают все адреса, и до них дотянулся бы API из общей сети.
-  #
-  # ⚠ В Cloudflare (Zero Trust → Networks → Tunnels → Public Hostname) сервис указывается как
-  # HTTP `api:8001` — имя службы в сети `edge`, а не адрес сервера.
-  #
-  # Образ — `latest` (решение владельца): обновление — `docker compose pull cloudflared` и
-  # `docker compose up -d`. Самообновление внутри контейнера выключено (`--no-autoupdate`).
+  # Cloudflare Tunnel (профиль `tunnel`, включается COMPOSE_PROFILES=tunnel в .env).
+  # ⚠ Токен — только файлом secrets/cloudflare_tunnel_token (scripts/set-tunnel-token.sh), не переменной.
+  # ⚠ В Cloudflare сервис туннеля — HTTP `api:8001`. Метрики — только на 127.0.0.1.
+  # Обновление: docker compose pull cloudflared && docker compose up -d.
   cloudflared:
     image: cloudflare/cloudflared:latest
     profiles: ["tunnel"]
@@ -170,8 +137,7 @@ services:
       - sender_postgres_password
     volumes:
       - pgdata:/var/lib/postgresql/data
-    # ⚠ Только внутренняя сеть db: базе не нужен ни интернет, ни туннель. Возможности — ровно те,
-    # что нужны образу postgres, чтобы раздать права каталогу данных и сойти на своего пользователя.
+    # Только внутренняя сеть db; возможности — минимум для образа postgres.
     networks:
       - db
     security_opt:
@@ -208,12 +174,10 @@ volumes:
 
 networks:
   default:
-  # База и API. internal: из этой сети нет выхода наружу.
+  # База и API, без выхода наружу.
   db:
     internal: true
-  # Сеть туннеля: только cloudflared и API — до базы туннелю дороги нет. Подсеть и адреса закреплены,
-  # чтобы API верил заголовкам только от cloudflared; подсеть занята на сервере — задайте
-  # SENDER_TUNNEL_SUBNET и адреса внутри неё: SENDER_TUNNEL_PROXY_IP (cloudflared) и SENDER_TUNNEL_API_IP.
+  # Туннель: cloudflared и API. Подсеть занята — задайте SENDER_TUNNEL_SUBNET, SENDER_TUNNEL_PROXY_IP и SENDER_TUNNEL_API_IP.
   edge:
     ipam:
       config:

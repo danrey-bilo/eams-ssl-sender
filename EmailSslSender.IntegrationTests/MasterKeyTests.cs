@@ -5,24 +5,16 @@ using Microsoft.Extensions.Logging;
 
 namespace EmailSslSender.IntegrationTests;
 
-/// <summary>
-/// Откуда установка берёт мастер-ключ и о чём при этом молчит.
-/// </summary>
-/// <remarks>
-/// Без базы и без хоста: проверяется чтение настроек хоста, а поднимать ради него postgres
-/// значило бы платить контейнером за разбор строки.
-/// </remarks>
+/// <summary>Откуда берётся мастер-ключ и что о нём попадает в лог; без базы и хоста.</summary>
 public sealed class MasterKeyTests
 {
     [Fact]
     public void Без_ключа_приложение_не_стартует()
     {
-        // ⚠ Отказ при старте, а не при первом секрете. Поднявшаяся без ключа система
-        // работает ровно до того момента, когда кому-то понадобится показать пароль, — а к
-        // тому времени она уже в бою и с людьми.
+        // ⚠ Отказ при старте, а не при первом секрете.
         var error = Should.Throw<InvalidOperationException>(() => MasterKeyFile.Load(Config()));
 
-        // Отказ обязан говорить, что делать: оба способа задать ключ и чем создать файл.
+        // Отказ говорит, что делать.
         error.Message.ShouldContain(MasterKeyFile.FileKey);
         error.Message.ShouldContain(MasterKeyFile.InlineKey);
         error.Message.ShouldContain("gen-secrets.sh");
@@ -31,9 +23,7 @@ public sealed class MasterKeyTests
     [Fact]
     public void Файл_идёт_вперёд_переменной()
     {
-        // Так выглядит рабочая машина, где в окружении остался дев-ключ, а в контейнере уже
-        // приехал docker-секрет. Побеждать должен файл, иначе установка тихо работает не на
-        // том ключе — и обнаруживается это на первом же секрете, записанном не тем.
+        // В окружении остался дев-ключ, а docker-секрет уже приехал: побеждает файл.
         var file = TempKey(out var fromFile);
 
         try
@@ -45,8 +35,6 @@ public sealed class MasterKeyTests
             source.FromEnvironment.ShouldBeFalse();
             source.Origin.ShouldBe(file);
 
-            // Тот ли это ключ, проверяем делом: конверт на ринге из файла должен открывать
-            // то, что запечатал конверт на ринге, собранном из того же ключа руками.
             Same(source, fromFile).ShouldBeTrue();
         }
         finally
@@ -65,8 +53,7 @@ public sealed class MasterKeyTests
         var log = new Recording();
         source.Announce(log);
 
-        // ⚠ Предупреждением, а не информацией. Установка, поднятая «на попробовать» и
-        // оставшаяся жить, иначе так и останется с ключом, видным в `docker inspect`.
+        // ⚠ Предупреждением: ключ в окружении виден в `docker inspect`.
         log.Lines.ShouldHaveSingleItem().ShouldStartWith("Warning");
         log.Lines[0].ShouldContain("master_key_from_environment");
     }
@@ -79,11 +66,9 @@ public sealed class MasterKeyTests
         var error = Should.Throw<InvalidOperationException>(
             () => MasterKeyFile.Load(Config((MasterKeyFile.FileKey, missing))));
 
-        // Путь не секрет и без него не разобраться.
         error.Message.ShouldContain(missing);
 
-        // ⚠ А вот текст исключения — не наше дело: правило 14, и здесь оно особенно к
-        // месту, ведь речь о файле с мастер-ключом. Достаточно типа.
+        // ⚠ Текст исключения не выводится — только тип.
         error.Message.ShouldContain("FileNotFoundException");
         error.InnerException.ShouldBeNull();
     }
@@ -91,8 +76,6 @@ public sealed class MasterKeyTests
     [Fact]
     public void Объявление_не_печатает_ключ()
     {
-        // Условие завершения этапа: секрет не появляется в логах. Строка запуска —
-        // самое вероятное место, где он там оказался бы.
         var file = TempKey(out var key);
 
         try
@@ -106,7 +89,6 @@ public sealed class MasterKeyTests
             printed.ShouldNotContain(Convert.ToBase64String(key));
             printed.ShouldNotContain(Convert.ToHexString(key));
 
-            // И при этом остаётся полезной: путь и число версий — не секрет.
             printed.ShouldContain("master_key_loaded");
         }
         finally
@@ -115,11 +97,9 @@ public sealed class MasterKeyTests
         }
     }
 
-    // --- обвязка -----------------------------------------------------------------------------
-
     private static byte[] NewKey() => RandomNumberGenerator.GetBytes(32);
 
-    /// <summary>Временный файл секрета. Возвращает путь, ключ отдаёт наружу.</summary>
+    /// <summary>Временный файл ключа; возвращает путь.</summary>
     private static string TempKey(out byte[] key)
     {
         key = NewKey();
@@ -157,7 +137,7 @@ public sealed class MasterKeyTests
         }
     }
 
-    /// <summary>Логгер, который всё запоминает — включая структурные поля.</summary>
+    /// <summary>Логгер, запоминающий текст и состояние.</summary>
     private sealed class Recording : ILogger
     {
         public List<string> Lines { get; } = [];
@@ -172,8 +152,7 @@ public sealed class MasterKeyTests
             TState state,
             Exception? exception,
             Func<TState, Exception?, string> formatter) =>
-            // И отформатированное сообщение, и само состояние: секрет мог бы уехать
-            // структурным полем, которого в тексте не видно.
+            // Состояние тоже: секрет мог бы уехать структурным полем.
             Lines.Add($"{logLevel} {formatter(state, exception)} {state}");
     }
 }

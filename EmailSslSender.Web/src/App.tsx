@@ -34,11 +34,11 @@ const NAV: Array<[key: string, title: string, icon: IconName]> = [
 
 const TITLES: Record<string, string> = Object.fromEntries([...NAV.map(([k, t]) => [k, t]), ['profile', 'Профиль']]);
 
-/** Старые адреса разделов, которые теперь живут в «Настройках». */
+/** Старые адреса разделов настроек. */
 const MOVED: Record<string, string> = { mail: '#/settings/mail', keymanager: '#/settings/keymanager' };
 
 export function App() {
-  // Страницы ссылок из писем живут без сессии и без каркаса панели.
+  // Ссылки из писем — без сессии и каркаса панели.
   if (location.pathname === '/activate') return <OverlayProvider><LinkPage kind="activate" /></OverlayProvider>;
   if (location.pathname === '/password-reset') return <OverlayProvider><LinkPage kind="reset" /></OverlayProvider>;
 
@@ -49,7 +49,7 @@ function Panel() {
   const [screen, setScreen] = useState<Screen>({ kind: 'loading' });
   const { show } = useOverlay();
 
-  /** Куда пускать вошедшего: настройка фактора и смена пароля — раньше всего остального. */
+  /** Настройка фактора и смена пароля — раньше всего. */
   const enter = useCallback(async () => {
     try {
       const me = await api.get<Me>('/api/me');

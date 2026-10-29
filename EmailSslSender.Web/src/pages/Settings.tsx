@@ -22,7 +22,7 @@ export function SettingsPage({ section, myEmail }: { section?: string; myEmail: 
   );
 }
 
-// --- почта ----------------------------------------------------------------------------------
+// Почта
 
 const SECURITY: Array<[string, string]> = [['tls', 'SSL/TLS'], ['starttls', 'STARTTLS'], ['none', 'Без шифрования']];
 
@@ -90,7 +90,7 @@ function SmtpForm({ mail, settings, onSaved, onDropPassword }: {
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setError('');
-    // Пароль привязан к серверу, порту, защите и логину: сменили что-то из них — нужен заново.
+    // Пароль привязан к серверу, порту, защите и логину.
     const moved = hostName(host).toLowerCase() !== hostName(text(settings, 'mail.smtp_host')).toLowerCase()
       || port.trim() !== text(settings, 'mail.smtp_port').trim()
       || security !== (text(settings, 'mail.smtp_security') || 'starttls')
@@ -170,7 +170,7 @@ function TestDialog({ to: initial, onClose }: { to: string; onClose: (done: bool
   );
 }
 
-// --- Key Manager --------------------------------------------------------------------------
+// Key Manager
 
 function KeyManagerSettings() {
   const { data, error, reload } = useLoad(() => Promise.all([api.get<KeyManagerStatus>('/api/keymanager'), loadSettings()]));
@@ -241,7 +241,7 @@ function ConnectionForm({ km, settings, onSaved, onDropKey }: {
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setError('');
-    // Ключ привязан к адресу: сервер не отдаст его на новый адрес без повторного ввода.
+    // Ключ привязан к адресу.
     const moved = url.trim() !== text(settings, 'keymanager.base_url').trim();
     if (km.api_key_set && moved && !apiKey.trim()) {
       setError('Адрес изменился — введите ключ API заново.');
@@ -257,7 +257,7 @@ function ConnectionForm({ km, settings, onSaved, onDropKey }: {
       if (apiKey.trim()) await api.put('/api/keymanager/api-key', { api_key: apiKey.trim() });
       setApiKey('');
       toast('Сохранено');
-      // Новые настройки проверяются сразу, а не через срок опроса.
+      // Проверить сразу, не дожидаясь опроса.
       if (enabled) {
         await api.post('/api/keymanager/poll').catch(() => null);
         setTimeout(onSaved, 3000);

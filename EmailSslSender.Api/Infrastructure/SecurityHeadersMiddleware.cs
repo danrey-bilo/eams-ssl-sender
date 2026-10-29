@@ -1,33 +1,17 @@
 namespace EmailSslSender.Api.Infrastructure;
 
-/// <summary>
-/// Заголовки защиты на каждый ответ: API, панель, проверки здоровья.
-/// </summary>
-/// <remarks>
-/// ⚠ <b>HSTS — только на ответ по HTTPS.</b> Схему за туннелем даёт <c>X-Forwarded-Proto</c>
-/// (ему верим только от сети туннеля), а проверка здоровья внутри контейнера и локальный
-/// <c>127.0.0.1:8001</c> идут по HTTP — им заголовок не нужен и браузер его там не примет.
-///
-/// ⚠ <b><c>no-store</c> на всё под <c>/api/</c>:</b> ответы несут сессии, настройки и списки
-/// получателей; общий кэш прокси или браузера не должен их хранить. Панель ставит свой
-/// <c>Cache-Control</c> сама (<see cref="PanelFiles"/>).
-/// </remarks>
+/// <summary>Заголовки защиты на каждый ответ; HSTS — только по HTTPS, <c>no-store</c> — под <c>/api/</c>.</summary>
 public sealed class SecurityHeadersMiddleware(RequestDelegate next)
 {
-    /// <summary>Год в секундах — срок HSTS.</summary>
     private const string Hsts = "max-age=31536000; includeSubDomains";
 
-    /// <summary>Панели не нужны ни камера, ни геопозиция, ни платежи — запрещено всё.</summary>
     private const string Permissions =
         "accelerometer=(), camera=(), geolocation=(), gyroscope=(), magnetometer=(), microphone=(), "
         + "payment=(), usb=(), interest-cohort=()";
 
     public Task InvokeAsync(HttpContext context)
     {
-        // ⚠ ⚠ В момент отправки, а не на входе (ревью безопасности 2026-10-20): обработчик
-        // ошибок зовёт Response.Clear() и стирал заголовки, поставленные заранее, — ответы с
-        // отказом (в том числе 401 с распиской второго шага) уходили без no-store и HSTS.
-        // Колбэк OnStarting переживает Clear().
+        // ⚠ В момент отправки: обработчик ошибок зовёт Response.Clear(), а OnStarting его переживает.
         context.Response.OnStarting(() =>
         {
             Apply(context);

@@ -5,19 +5,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace EmailSslSender.Modules.KeyManager.Delivery;
 
-/// <summary>
-/// Список сертификатов Key Manager Plus на момент запроса — и когда каждый замечен впервые.
-/// </summary>
-/// <remarks>
-/// ⚠ ⚠ <b>Текущий сертификат Common Name — замеченный ПОЗЖЕ ВСЕХ, а не самый долгий.</b>
-/// Перевыпуск у удостоверяющего центра часто сохраняет срок прежнего сертификата, а новые
-/// сертификаты живут короче старых (с 2026 года — не дольше 200 дней). «Самый долгий» в таких
-/// случаях — старый, и замена не ушла бы никогда и молча. Срок решает только среди замеченных в
-/// одном опросе — например, в самом первом.
-///
-/// ⚠ <b>Время запроса — часть снимка.</b> Отправка, состоявшаяся позже него, значит, что снимок
-/// устарел: другой процесс или ручная отправка уже разослали то, чего этот список не знает.
-/// </remarks>
+/// <summary>Список сертификатов Key Manager Plus на момент запроса и когда каждый замечен впервые.</summary>
+/// <remarks>⚠ Текущий сертификат — замеченный позже всех, а не самый долгий: новые выпуски бывают короче старых.</remarks>
 internal sealed class CertificateSnapshot(
     IReadOnlyList<KmpCertificate> certificates,
     IReadOnlyDictionary<(string CommonName, string Serial), DateTimeOffset> firstSeen,
@@ -25,7 +14,7 @@ internal sealed class CertificateSnapshot(
 {
     public IReadOnlyList<KmpCertificate> Certificates { get; } = certificates;
 
-    /// <summary>Когда список запрошен у Key Manager Plus.</summary>
+    /// <summary>Когда список запрошен; отправка позже значит, что снимок устарел.</summary>
     public DateTimeOffset FetchedAt { get; } = fetchedAt;
 
     /// <summary>Снимок без истории — для проверок, где «впервые» не важно.</summary>
@@ -42,30 +31,13 @@ internal sealed class CertificateSnapshot(
             .FirstOrDefault();
 }
 
-/// <summary>
-/// Запросить список у Key Manager Plus, запомнить его и вернуть снимок.
-/// </summary>
+/// <summary>Запросить список у Key Manager Plus, запомнить его и вернуть снимок.</summary>
 internal sealed class CertificateSnapshots(AppDbContext db, TimeProvider clock)
 {
-    /// <summary>
-    /// Сколько хранить пару, которой больше нет в Key Manager Plus.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Не ноль: снимок помнит, когда пару увидели впервые, и по этому выбирается текущий
-    /// сертификат. Пропавшая на один опрос пара (сбой списка у Key Manager Plus) вернулась бы
-    /// «новой». Месяц без появления — пары в Key Manager Plus действительно нет.
-    /// </remarks>
+    /// <summary>Сколько помнить пропавшую пару: не ноль, иначе сбой списка сделал бы её «новой».</summary>
     internal static readonly TimeSpan Хранить = TimeSpan.FromDays(30);
 
-    /// <summary>
-    /// Только пары из последнего удачного опроса — то, что есть в Key Manager Plus сейчас.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Опрос пишет всем увиденным парам одно и то же время одной транзакцией, поэтому
-    /// «последний опрос» — это наибольшее <c>last_seen_at</c>. Пары, которых в нём не было, —
-    /// удалённые из Key Manager Plus или чужие (заглушка, старая установка): их не показывают и
-    /// не выгружают.
-    /// </remarks>
+    /// <summary>Пары из последнего удачного опроса (наибольшее <c>last_seen_at</c>).</summary>
     public static IQueryable<KnownCertificate> Current(AppDbContext db) =>
         db.Set<KnownCertificate>().Where(с =>
             с.LastSeenAt >= db.Set<KnownCertificate>().Max(в => в.LastSeenAt));
@@ -75,7 +47,7 @@ internal sealed class CertificateSnapshots(AppDbContext db, TimeProvider clock)
     {
         ArgumentNullException.ThrowIfNull(client);
 
-        // ⚠ Время — ДО запроса: всё, что отправлено после этой точки, снимок мог не увидеть.
+        // ⚠ Время — до запроса: отправленное позже снимок мог не увидеть.
         var когда = clock.GetUtcNow();
         var список = await client.ListAsync(cancellationToken);
 
@@ -95,17 +67,8 @@ internal sealed class CertificateSnapshots(AppDbContext db, TimeProvider clock)
             когда);
     }
 
-    /// <summary>
-    /// Обновить снимок: новые пары «Common Name + серийный» добавить, виденные — отметить.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ <c>ON CONFLICT</c>, а не «прочитать и добавить недостающие»: два процесса, опросившие
-    /// одновременно, иначе споткнулись бы о первичный ключ друг друга.
-    ///
-    /// ⚠ <c>GREATEST</c>, а не присваивание: опрос и ручная отправка, зафиксировавшие снимки в обратном
-    /// порядке, иначе вернули бы <c>last_seen_at</c> назад, и <see cref="Current"/> (по наибольшему
-    /// <c>last_seen_at</c>) временно потерял бы пары, бывшие в обоих списках (ревью надёжности 2026-10-27).
-    /// </remarks>
+    /// <summary>Новые пары добавить, виденные — отметить.</summary>
+    /// <remarks>⚠ <c>ON CONFLICT</c> — для параллельных опросов; <c>GREATEST</c> — чтобы <c>last_seen_at</c> не шёл назад.</remarks>
     private Task ЗапомнитьAsync(IReadOnlyList<KmpCertificate> список, DateTimeOffset когда, CancellationToken cancellationToken) =>
         db.InTransactionAsync(
             async token =>
@@ -124,11 +87,7 @@ internal sealed class CertificateSnapshots(AppDbContext db, TimeProvider clock)
                         token);
                 }
 
-                // Пары, которых в Key Manager Plus нет уже месяц, забываются (разбор у Хранить).
-                // ⚠ ⚠ ПОСЛЕ отметки увиденных, а не до: после перерыва в опросе дольше месяца (интеграция
-                // выключена, ключ API отвергается, сервис стоял) удаление первым стёрло бы и пары, которые в
-                // Key Manager Plus есть, — они вернулись бы с «впервые» = сейчас, и текущим Common Name
-                // мог стать старый сертификат (ревью надёжности 2026-10-27).
+                // ⚠ Забывать — после отметки увиденных: иначе долгий перерыв в опросе стёр бы и живые пары.
                 var давно = когда - Хранить;
                 await db.Set<KnownCertificate>()
                     .Where(с => с.LastSeenAt < давно)

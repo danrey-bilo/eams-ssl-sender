@@ -1,10 +1,8 @@
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
-// Панель собирается в wwwroot хоста: его отдаёт API (Program.cs, MapPanel). В образе Docker сборка
-// идёт в свою стадию — каталог задаёт PANEL_OUT_DIR.
-//
-// ⚠ Ни одного встроенного скрипта и внешнего источника: страницы закрыты CSP `script-src 'self'`.
+// Сборка в wwwroot хоста; в Docker каталог задаёт PANEL_OUT_DIR.
+// ⚠ CSP `script-src 'self'`: ни встроенных скриптов, ни внешних источников.
 export default defineConfig({
   plugins: [react()],
   build: {
@@ -16,7 +14,6 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    // Разработка: `npm run dev` рядом с `dotnet run` — запросы к API уходят на хост.
     proxy: { '/api': 'http://localhost:8001' },
   },
 });

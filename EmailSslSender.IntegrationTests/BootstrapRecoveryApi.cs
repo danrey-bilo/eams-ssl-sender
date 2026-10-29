@@ -6,7 +6,7 @@ using Modules.Identity;
 
 namespace EmailSslSender.IntegrationTests;
 
-/// <summary>Точка входа консольного восстановления с настоящим аудитом и проверкой отзыва через HTTP.</summary>
+/// <summary>Консольное восстановление доступа, проверенное через HTTP.</summary>
 [Collection(SenderHost.Collection)]
 public sealed class BootstrapRecoveryApi(SenderHost host)
 {
@@ -35,10 +35,6 @@ public sealed class BootstrapRecoveryApi(SenderHost host)
         (await MeAsync(newAccess)).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
     }
 
-    /// <summary>
-    /// <c>reset-access</c> в настоящем приложении: прежняя сессия мертва, прежний пароль не входит,
-    /// новый — входит в сессию подключения аутентификатора.
-    /// </summary>
     [Fact]
     public async Task Восстановление_доступа_закрывает_вход_и_возвращает_к_подключению_фактора()
     {
@@ -48,7 +44,7 @@ public sealed class BootstrapRecoveryApi(SenderHost host)
         var email = $"reset-access-api-{Guid.NewGuid():N}@example.com";
         var id = await IdentityModule.BootstrapSuperuserAsync(host.Services, email, "CLI admin", oldPassword, Ct);
 
-        // Первый вход подключает аутентификатор — дальше у учётной записи настоящий второй фактор.
+        // Первый вход подключает аутентификатор.
         var first = await host.LoginFixtureAsync(host.CreateClient(), email, oldPassword, false, Ct);
         first.StatusCode.ShouldBe(HttpStatusCode.OK);
         var oldAccess = (await first.Content.ReadFromJsonAsync<JsonObject>(Ct))!["access_token"]!.GetValue<string>();

@@ -46,24 +46,18 @@ internal enum DeliveryOutcome
 /// <summary>Итог попытки и причина отправки, если она состоялась.</summary>
 /// <param name="Outcome">Чем кончилось.</param>
 /// <param name="Reason">Почему отправлено.</param>
-/// <param name="Error">Почему не отправлено — или что отправлено не всё (каких сертификатов нет в Key Manager Plus).</param>
+/// <param name="Error">Почему не отправлено или что отправлено не всё.</param>
 internal sealed record DeliveryResult(DeliveryOutcome Outcome, DeliveryReason? Reason = null, string? Error = null);
 
 /// <summary>Сертификат подписки, найденный в снимке.</summary>
-/// <param name="Name">Common Name, как он записан в подписке: ключ отметок отправленного.</param>
+/// <param name="Name">Common Name из подписки — ключ отметок отправленного.</param>
 /// <param name="Certificate">Текущий сертификат из Key Manager Plus.</param>
 internal sealed record Сертификат(string Name, KmpCertificate Certificate);
 
 /// <summary>Сертификат и его выгруженные файлы — одна папка архива и одна строка письма.</summary>
 internal sealed record CertificateFiles(KmpCertificate Certificate, IReadOnlyList<MailAttachment> Files);
 
-/// <summary>
-/// Файлы и пароли, уже выгруженные в этом проходе.
-/// </summary>
-/// <remarks>
-/// Два получателя одного сертификата на двух подписках — один запрос к Key Manager Plus, а не
-/// два. Живёт один проход опроса и умирает с ним: ключ в памяти дольше прохода не нужен.
-/// </remarks>
+/// <summary>Выгруженное за один проход: один запрос к Key Manager Plus на файл, ключ в памяти не дольше прохода.</summary>
 internal sealed class DownloadCache
 {
     public Dictionary<(string CommonName, string Serial, string Format), KmpFile> Files { get; } = [];
@@ -74,23 +68,10 @@ internal sealed class DownloadCache
     public Dictionary<(string CommonName, string Serial), DateTimeOffset?> Issued { get; } = [];
 }
 
-/// <summary>
-/// Отправка по одной подписке: найти текущие сертификаты, решить, пора ли и какие, выгрузить, поставить письма.
-/// </summary>
+/// <summary>Отправка одной подписки: решить, пора ли и что, выгрузить, поставить письма.</summary>
 /// <remarks>
-/// ⚠ ⚠ ⚠ <b>Одна подписка — одна транзакция, и всё в ней или ничего.</b> Строка подписки берётся
-/// <c>FOR UPDATE SKIP LOCKED</c>, срок проверяется уже под блокировкой, письма кладутся в очередь
-/// той же единицей работы, что и отметка «отправлено». Два процесса (или опрос и ручная отправка)
-/// не пошлют один сертификат дважды: второй увидит строку занятой и пройдёт мимо. Упавшая
-/// выгрузка или ненастроенная почта откатывают всё — ни одного письма без отметки и ни одной
-/// отметки без писем.
-///
-/// ⚠ <b>Выгрузка идёт внутри транзакции</b>, то есть строка подписки заблокирована на время
-/// запросов к Key Manager Plus. Это секунды, и заблокирована ровно одна строка; зато нет окна,
-/// в котором второй процесс решил бы, что пора, по ещё не отмеченной отправке.
-///
-/// ⚠ <b>Ошибка пишется отдельной записью ПОСЛЕ отката</b> — иначе она откатилась бы вместе со
-/// всем остальным, и администратор не узнал бы, почему сертификат не приходит.
+/// ⚠ Одна подписка — одна транзакция под <c>FOR UPDATE SKIP LOCKED</c>: письма и отметка «отправлено» — вместе
+/// или ничего. Ошибка пишется отдельно после отката, иначе откатилась бы и она.
 /// </remarks>
 internal sealed class CertificateDelivery(
     AppDbContext db,
@@ -104,31 +85,11 @@ internal sealed class CertificateDelivery(
     internal static readonly IReadOnlySet<string> СКлючом =
         new HashSet<string>([CertificateFormats.Key, CertificateFormats.Pkcs, CertificateFormats.Jks], StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>
-    /// Режим защиты SMTP — настройка модуля почты, прочитанная по имени.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ ⚠ Ключ объявляет модуль почты (EAMS), а не этот модуль: здесь только чтение по тому же имени и с тем
-    /// же умолчанием. Переименование в модуле почты ловит интеграционный тест справочника настроек
-    /// (<c>KeyManagerApi</c>), иначе проверка молча читала бы умолчание.
-    /// </remarks>
+    /// <summary>⚠ Настройка модуля почты, читается по имени; переименование ловит интеграционный тест.</summary>
     internal static readonly SettingKey<string> SmtpSecurity = new("mail.smtp_security", "starttls", "SMTP security", "", "mail");
 
-    /// <summary>
-    /// Пора ли слать, почему и что. <c>null</c> — не пора.
-    /// </summary>
-    /// <param name="subscription">Подписка.</param>
-    /// <param name="current">Текущие сертификаты подписки, найденные в снимке: имя из подписки и сертификат.</param>
-    /// <param name="now">Сейчас.</param>
-    /// <param name="slot">Разбираемое время отправки (<see cref="SendSchedule.Check"/>); <c>null</c> — его нет.</param>
-    /// <remarks>
-    /// ⚠ ⚠ Решение владельца 2026-10-27: <b>по расписанию — все</b> сертификаты подписки, <b>при
-    /// обновлении — только обновлённые</b>. Расписание проверяется первым: подошёл его срок — уходят все,
-    /// обновлённые в том числе.
-    ///
-    /// ⚠ Серийные номера сравниваются без учёта регистра: это hex, и Key Manager Plus не обещает
-    /// писать его одинаково в разных версиях.
-    /// </remarks>
+    /// <summary>Пора ли слать, почему и что; <c>null</c> — не пора.</summary>
+    /// <remarks>⚠ По расписанию — все сертификаты, при обновлении — только обновлённые; расписание первым.</remarks>
     internal static (DeliveryReason Reason, IReadOnlyList<Сертификат> Send)? Due(
         CertificateSubscription subscription, IReadOnlyList<Сертификат> current, DateTimeOffset now, DateTimeOffset? slot = null)
     {
@@ -156,15 +117,7 @@ internal sealed class CertificateDelivery(
             : (первая ? DeliveryReason.Initial : DeliveryReason.Changed, обновлённые);
     }
 
-    /// <summary>
-    /// Отправить подписку, если пора (или в любом случае, если <paramref name="manual"/>).
-    /// </summary>
-    /// <param name="id">Подписка.</param>
-    /// <param name="client">Открытый клиент Key Manager Plus.</param>
-    /// <param name="snapshot">Снимок сертификатов этого прохода.</param>
-    /// <param name="manual">Ручная отправка: все сертификаты, без проверки срока и признака «включена».</param>
-    /// <param name="cache">Выгруженное в этом проходе.</param>
-    /// <param name="cancellationToken">Отмена.</param>
+    /// <summary>Отправить подписку, если пора; ручная — все сертификаты, без проверки срока и «включена».</summary>
     public async Task<DeliveryResult> DeliverAsync(
         Guid id,
         IKeyManagerClient client,
@@ -184,8 +137,7 @@ internal sealed class CertificateDelivery(
         }
         catch (Exception ошибка)
         {
-            // Набранное в откатившейся транзакции — письма, правки строки — не должно уехать
-            // ни с какой следующей фиксацией этого контекста.
+            // Набранное в откатившейся транзакции не должно уехать со следующей фиксацией.
             db.ChangeTracker.Clear();
 
             var (итог, текст) = ошибка switch
@@ -235,9 +187,7 @@ internal sealed class CertificateDelivery(
             return new DeliveryResult(DeliveryOutcome.Disabled);
         }
 
-        // ⚠ ⚠ Снимок старше последней отправки — устарел: её сделал другой процесс или ручная
-        // отправка по более свежему списку. Слать по старому значило бы разослать прежний
-        // сертификат под видом обновления и откатить отметку на него.
+        // ⚠ Снимок старше последней отправки устарел: разослал бы прежний сертификат как обновление.
         if (!manual && подписка.LastSentAt > snapshot.FetchedAt)
         {
             return new DeliveryResult(DeliveryOutcome.NotDue);
@@ -246,8 +196,7 @@ internal sealed class CertificateDelivery(
         var сейчас = clock.GetUtcNow();
         DateTimeOffset? слот = null;
 
-        // ⚠ ⚠ Период «с — по» и время отправки держат только опрос (решение владельца 2026-10-28); вне них —
-        // ни выгрузки, ни записи ошибки «сертификата нет».
+        // Период и время отправки держат только опрос.
         if (!manual)
         {
             var (можно, разбираемый) = SendSchedule.Check(подписка, сейчас);
@@ -282,7 +231,7 @@ internal sealed class CertificateDelivery(
             return new DeliveryResult(DeliveryOutcome.CertificateMissing, Error: текст);
         }
 
-        // ⚠ ⚠ Защита от отката (ревью надёжности 2026-10-27): выпуск старее отправленного сам не уходит.
+        // ⚠ Защита от отката: выпуск старее отправленного сам не уходит.
         var откаты = new List<string>();
         var проверены = new List<Сертификат>(текущие.Count);
 
@@ -318,7 +267,7 @@ internal sealed class CertificateDelivery(
 
         if (срок is not { } пора)
         {
-            // Слать в это время отправки нечего — оно разобрано: замеченное позже ждёт следующего.
+            // Время отправки разобрано, даже если слать нечего.
             if (слот is not null)
             {
                 подписка.LastSlotAt = слот;
@@ -330,16 +279,13 @@ internal sealed class CertificateDelivery(
 
         var (причина, отправить) = пора;
 
-        // ⚠ Почта проверяется ДО выгрузки: иначе при ненастроенной почте каждый опрос выгружал бы
-        // закрытые ключи из Key Manager Plus только затем, чтобы выбросить их.
+        // ⚠ Почта — до выгрузки: иначе каждый опрос выгружал бы закрытые ключи впустую.
         if (!await mail.CanSendAsync(token))
         {
             throw new ОтказПочты(MailQueueResult.NotConfigured);
         }
 
-        // ⚠ ⚠ Закрытый ключ и его пароль — только по шифрованному соединению с сервером почты (ревью
-        // безопасности 2026-10-27): при `none` их прочёл бы любой на пути до сервера. Сертификат без ключа
-        // — открытые данные, ему можно.
+        // ⚠ Закрытый ключ и его пароль — только по шифрованному SMTP.
         if ((подписка.IncludePassphrase || подписка.Formats.Any(СКлючом.Contains))
             && string.Equals(await settings.GetAsync(SmtpSecurity, token), "none", StringComparison.OrdinalIgnoreCase))
         {
@@ -354,16 +300,12 @@ internal sealed class CertificateDelivery(
         {
             List<MailAttachment> файлы;
 
-            // ⚠ ⚠ Отказ выгрузки одного сертификата — как его отсутствие в Key Manager Plus: остальные уходят,
-            // его серийный не отмечается, и «при обновлении» попробует его снова (ревью надёжности
-            // 2026-10-27). Прежде один сертификат без закрытого ключа в Key Manager Plus навсегда
-            // останавливал всю подписку, а каждый опрос заново выгружал ключи остальных.
+            // ⚠ Отказ выгрузки одного — как его отсутствие: остальные уходят, его серийный не отмечается.
             try
             {
                 файлы = await ВыгрузитьAsync(client, сертификат.Certificate, подписка.Formats, cache, token);
 
-                // ⚠ Пароль ключа — файлом в архиве, а не строкой в теле: тело письма живёт в очереди
-                // до уборки, а вложения стираются, как только письмо ушло.
+                // ⚠ Пароль — вложением, не в теле: вложения стираются сразу после отправки, тело — нет.
                 if (подписка.IncludePassphrase
                     && await ПарольAsync(client, сертификат.Certificate, cache, token) is { } пароль)
                 {
@@ -381,14 +323,13 @@ internal sealed class CertificateDelivery(
             ушедшие.Add(сертификат);
         }
 
-        // Не выгрузился ни один — скорее всего, Key Manager Plus недоступен: отказ целиком, как прежде.
+        // Не выгрузился ни один — вероятно, Key Manager Plus недоступен: отказ целиком.
         if (комплекты.Count == 0)
         {
             throw new KeyManagerException(невыгружены[0].Error.Message, невыгружены[0].Error);
         }
 
-        // ⚠ ⚠ Одним архивом ZIP на письмо (решение владельца): Outlook блокирует вложения .crt, .cer и .der;
-        // несколько сертификатов — папка на каждый (разбор у CertificateArchive).
+        // Один ZIP на письмо: Outlook блокирует вложения .crt, .cer и .der.
         var архив = CertificateArchive.Pack(комплекты, сейчас);
         var письмо = CertificateMail.Letter(комплекты, подписка.Formats, архив.FileName, подписка.Locale, сейчас);
 
@@ -407,9 +348,7 @@ internal sealed class CertificateDelivery(
             номера.Add(номер);
         }
 
-        // ⚠ ⚠ Прежние неотправленные письма подписки отменяются (ревью безопасности 2026-10-20):
-        // новая отправка затирала их номера, и потом их уже не могла отменить ни смена
-        // получателей, ни удаление подписки — закрытый ключ уходил тому, у кого право уже отняли.
+        // ⚠ Прежние письма в очереди отменяются: с затёртыми номерами их не отменило бы сужение права.
         if (подписка.PendingMailIds is { Length: > 0 } прежние)
         {
             await mail.CancelAsync(прежние, "заменено новой отправкой", token);
@@ -422,7 +361,7 @@ internal sealed class CertificateDelivery(
         {
             ушли[сертификат.Name] = сертификат.Certificate.SerialNumber;
 
-            // Дата выпуска ушедшего — для защиты от отката. Не разобрать — защиты по нему нет, а не отказ.
+            // Дата выпуска — для защиты от отката; не разобрать — защиты нет, но и не отказ.
             if (await ВыпущенAsync(client, сертификат.Certificate, cache, token) is { } когда)
             {
                 выпущены[сертификат.Name] = CertificateIssue.Format(когда);
@@ -444,8 +383,7 @@ internal sealed class CertificateDelivery(
             выпущены.Remove(лишнее);
         }
 
-        // Полная — все найденные пробовали отправить; не выгрузившиеся считаются как отсутствующие, иначе
-        // расписание пересылало бы всю подписку каждый опрос.
+        // Не выгрузившиеся — как отсутствующие, иначе расписание пересылало бы всё каждый опрос.
         var полная = отправить.Count == текущие.Count;
 
         подписка.SentSerials = ушли;
@@ -457,13 +395,12 @@ internal sealed class CertificateDelivery(
         подписка.PendingMailIds = [.. номера];
         подписка.LastSlotAt = слот ?? подписка.LastSlotAt;
 
-        // Что несут эти письма — чтобы снять отметки, если не дойдёт ни одно (автоповтор у опроса).
+        // Для автоповтора: какие отметки снять, если не дойдёт ни одно письмо.
         подписка.PendingSerials = new Dictionary<string, string>(
             ушедшие.ToDictionary(с => с.Name, с => с.Certificate.SerialNumber), StringComparer.OrdinalIgnoreCase);
         подписка.PendingFull = полная;
 
-        // ⚠ В журнал — подписка, причина и какие сертификаты, без адресов и без содержимого: адрес
-        // получателя — сведение о человеке, а строка уходит в общий лог (правило 14).
+        // ⚠ В журнал — без адресов и содержимого: строка уходит в общий лог.
         audit.Write(new AuditEntry(
             KeyManagerActions.CertificateSent,
             ActorType: manual ? null : AuditActorType.System,
@@ -504,18 +441,8 @@ internal sealed class CertificateDelivery(
             : string.Join("; ", беды) + (остальныеУшли ? " — отправлены остальные." : ".");
     }
 
-    /// <summary>
-    /// Текущий сертификат после защиты от отката; <c>null</c> — сам не отправляется.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ ⚠ «Текущий — замеченный позже всех» верно, пока Key Manager Plus не вносит старые сертификаты, а он
-    /// вносит: сканирование находит прежний сертификат на ещё не обновлённом сервере, повторный импорт.
-    /// Такой выпуск отличается серийным номером от отправленного и ушёл бы «обновлением» (ревью надёжности
-    /// 2026-10-27). Сравниваются даты выпуска (<see cref="CertificateIssue"/>): выпущенный раньше
-    /// отправленного — откат. Отправленный ещё есть в Key Manager Plus — текущим остаётся он; нет —
-    /// опрос не шлёт ничего и пишет причину, ручная отправка шлёт (это решение администратора).
-    /// Даты отправленного нет (подписка до 2.2) или выпуск не разобрать — защиты нет, как прежде.
-    /// </remarks>
+    /// <summary>Текущий сертификат после защиты от отката; <c>null</c> — сам не отправляется.</summary>
+    /// <remarks>⚠ Key Manager Plus вносит и старые выпуски (сканирование, импорт): сравниваются даты выпуска.</remarks>
     private async Task<Сертификат?> ПротивОткатаAsync(
         CertificateSubscription подписка,
         Сертификат кандидат,

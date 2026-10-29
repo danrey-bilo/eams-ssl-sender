@@ -22,18 +22,15 @@ public static class KeyManagerActions
     public static readonly AuditAction CertificateSent =
         new("keymanager.certificate_sent", "Сертификат поставлен в очередь писем");
 
-    /// <summary>Вид ресурса сертификата в строке журнала: пара «Common Name + серийный номер».</summary>
+    /// <summary>Вид ресурса сертификата: пара «Common Name + серийный номер».</summary>
     public const string CertificateResource = "certificate";
 
-    /// <summary>Администратор выгрузил файл сертификата себе (не письмом).</summary>
     public static readonly AuditAction CertificateDownloaded =
         new("keymanager.certificate_downloaded", "Файл сертификата выгружен администратору");
 
-    /// <summary>Администратору показан закрытый ключ сертификата.</summary>
     public static readonly AuditAction PrivateKeyViewed =
         new("keymanager.private_key_viewed", "Показан закрытый ключ сертификата");
 
-    /// <summary>Все события модуля — для справочника журнала.</summary>
     public static IReadOnlyList<AuditAction> All { get; } =
     [
         ApiKeySet,
@@ -46,7 +43,6 @@ public static class KeyManagerActions
     ];
 }
 
-/// <summary>События журнала модуля — объявлением, а не строками по коду (решение EAMS 0117).</summary>
 internal sealed class KeyManagerAuditActions : IAuditActionProvider
 {
     /// <inheritdoc />

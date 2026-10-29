@@ -7,32 +7,14 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace EmailSslSender.IntegrationTests;
 
-/// <summary>
-/// Настройки установки: кто видит, кто правит и что попадает в журнал.
-/// </summary>
-/// <remarks>
-/// ⚠ ⚠ <b>Каждый тест работает с НАСТОЯЩИМИ настройками и убирает за собой фикстурой.</b>
-/// Подмена читателя — умолчание этого сьюта именно потому, что `system_settings` одна на всю
-/// установку: строка, оставленная здесь, досталась бы всем следующим тестам коллекции. На
-/// Python-версии пять таких строк уронили 151 тест в модулях, которые про настройки не знают.
-///
-/// ⚠ <b>Главная проверка файла — «отказ ЦЕЛИКОМ».</b> Половина новой политики паролей вместе с
-/// половиной старой хуже, чем отклонённое изменение: администратор увидит «сохранено с ошибкой»
-/// и не узнает, какая половина применилась.
-/// </remarks>
+/// <summary>Настройки установки: кто видит, кто правит и что попадает в журнал.</summary>
+/// <remarks>⚠ <c>system_settings</c> одна на установку: каждый тест убирает за собой фикстурой. Отказ — всегда целиком.</remarks>
 [Collection(SenderHost.Collection)]
 public sealed class SettingsApi(SenderHost host)
 {
     private const string Адрес = "/api/settings/system";
 
-    /// <summary>
-    /// Обычный ключ: правится правом `settings.manage`.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Выбран не наугад. Первая редакция взяла `vaults.version_history_depth` — и получила
-    /// 403 на всём: он объявлен `IsSecurity: true`, потому что версия записи содержит прежний
-    /// секрет. Ключ для проверки «обычного» пути обязан быть проверенно обычным.
-    /// </remarks>
+    /// <summary>Обычный ключ (не <c>IsSecurity</c>): правится правом <c>settings.manage</c>.</summary>
     private const string Обычный = "identity.link_retention_days";
 
     /// <summary>Умолчание обычного ключа — им проверяется `from` в журнале.</summary>
@@ -46,8 +28,7 @@ public sealed class SettingsApi(SenderHost host)
     [Fact]
     public async Task Справочник_отдаётся_ВЕСЬ_а_не_только_заданное()
     {
-        // ⚠ Иначе «настройки по умолчанию» существуют только в коде: администратор увидел бы
-        // пустой список и решил, что настроек нет.
+        // Иначе администратор увидел бы пустой список и решил, что настроек нет.
         await using var _ = await SystemSettingsFixture.НачатьAsync(host);
         Войти("settings.read");
 
@@ -104,14 +85,7 @@ public sealed class SettingsApi(SenderHost host)
         (await Строк()).ShouldBe(2);
     }
 
-    /// <summary>
-    /// Ключ защиты без свежего кода — отказ целиком: ни ключа защиты, ни соседнего обычного.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ ⚠ Решение владельца 2026-10-20: адрес SMTP или Key Manager Plus, сменённый с угнанной
-    /// вкладки, увёл бы коды входа или ключ API. Половина правки, применённая до отказа, — та же
-    /// беда, что и в «отказе целиком» выше.
-    /// </remarks>
+    /// <summary>Ни ключа защиты, ни соседнего обычного: адрес SMTP или KMP с угнанной вкладки увёл бы секреты.</summary>
     [Fact]
     public async Task Ключ_защиты_без_свежего_фактора_отвергается_целиком()
     {
@@ -141,10 +115,7 @@ public sealed class SettingsApi(SenderHost host)
         }
     }
 
-    /// <summary>
-    /// Модуль настроек закрывает кодом любую правку, не только ключи защиты: панель сама спрашивает код и
-    /// повторяет запрос.
-    /// </summary>
+    /// <summary>Модуль настроек закрывает кодом любую правку, не только ключи защиты.</summary>
     [Fact]
     public async Task Обычный_ключ_с_давним_кодом_просит_подтверждения()
     {
@@ -166,16 +137,13 @@ public sealed class SettingsApi(SenderHost host)
         }
     }
 
-    /// <summary>
-    /// Окно свежести — настройка защиты: её правка сама требует свежего кода и действует сразу.
-    /// </summary>
     [Fact]
     public async Task Окно_свежести_задаётся_настройкой_и_действует_сразу()
     {
         await using var _ = await SystemSettingsFixture.НачатьAsync(host);
         Войти("settings.read", "settings.manage", "settings.security.manage");
 
-        // Умолчание модуля — пять минут; десять задаёт набор миграций проекта значением установки.
+        // Умолчание модуля — 5 минут; 10 задаёт набор миграций `sender`.
         var окно = (await Прочитать()).First(строка => Ключ(строка) == "auth.step_up_minutes");
         окно["is_security"]!.GetValue<bool>().ShouldBeTrue();
         окно["value"]!.GetValue<int>().ShouldBe(10);
@@ -241,8 +209,7 @@ public sealed class SettingsApi(SenderHost host)
     [Fact]
     public async Task Заданный_null_у_обнуляемого_это_значение_а_не_сброс()
     {
-        // ⚠ Ради этого `values` и `reset` — два поля, а не одно. «Сервер не задан» —
-        // заданный `null`; означай он сброс, выставить его стало бы нечем.
+        // Поэтому `values` и `reset` — два поля: «сервер не задан» — заданный `null`.
         await using var _ = await SystemSettingsFixture.НачатьAsync(host);
         Войти("settings.read", "settings.manage", "settings.security.manage");
 
@@ -256,16 +223,11 @@ public sealed class SettingsApi(SenderHost host)
         var строка = Разобрать(await ответ.Content.ReadAsStringAsync(Ct))
             .First(с => Ключ(с) == "mail.smtp_host");
 
-        // ⚠ Строка пишется, ХОТЯ значение совпало с умолчанием: администратор выбрал
-        // «не задано», а не «пусть будет как в коде». Не записав её, мы отдали бы
-        // `source: default`, и следующая выкатка, сменившая умолчание, молча сменила бы
-        // и его настройку.
+        // ⚠ Строка пишется, хотя значение равно умолчанию: иначе смена умолчания молча сменила бы выбор.
         строка["source"]!.GetValue<string>().ShouldBe("system");
         строка["value"].ShouldBeNull();
         (await Строк()).ShouldBe(1);
     }
-
-    // --- обвязка ---------------------------------------------------------------------------
 
     private Guid Войти(params string[] права)
     {
@@ -296,16 +258,7 @@ public sealed class SettingsApi(SenderHost host)
     private async Task<int> Строк() =>
         await host.СтрокНастроекAsync(Ct);
 
-    /// <summary>
-    /// Строки журнала по нашему событию, старые сверху.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ <b>Без фильтра по актору — намеренно.</b> Строку журнала собирает
-    /// <c>IAuditContextAccessor</c> из контекста запроса, а не <c>ICurrentUser</c>: подменённая
-    /// личность в <c>actor_id</c> не попадает, и фильтр по ней дал бы ноль строк, выглядящий как
-    /// «журнал не пишется». Поэтому тест считает <b>прирост</b> — он верен и на чистой базе, и
-    /// на рабочей.
-    /// </remarks>
+    /// <summary>Строки журнала по событию, старые сверху; без фильтра по актору — подменённая личность в него не попадает.</summary>
     private async Task<List<string>> Записи()
     {
         await using var scope = host.Services.CreateAsyncScope();

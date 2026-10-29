@@ -25,7 +25,7 @@ export function useOverlay(): Overlay {
 
 interface Toast { id: number; text: string; kind?: 'err' }
 
-/** Окна и уведомления поверх любой страницы — вызываются из кода: `await confirm(...)`. */
+/** Окна и уведомления из кода: `await confirm(...)`. */
 export function OverlayProvider({ children }: { children: ReactNode }) {
   const [windows, setWindows] = useState<Array<{ id: number; node: ReactNode }>>([]);
   const [toasts, setToasts] = useState<Toast[]>([]);

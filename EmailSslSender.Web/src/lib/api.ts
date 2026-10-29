@@ -1,13 +1,5 @@
-// Обращения к API: токен доступа в памяти, обновление пары кукой, повтор после кода.
-//
-// ⚠ Токен доступа живёт только в памяти страницы; токен обновления — в куке HttpOnly
-// `__Host-sender-refresh`, до которой сценарий не дотягивается. Перезагрузка страницы
-// восстанавливает сессию обменом куки на новую пару.
-//
-// ⚠ Опасные действия (выгрузка сертификата и ключа, безопасность, люди, подписки, почта)
-// сервер пускает только со свежим кодом второго фактора: отказ `SECOND_FACTOR_REQUIRED`
-// открывает окно кода, и то же действие повторяется само. Код действует несколько минут
-// (по умолчанию 10), и следующие опасные действия за это время его не спрашивают.
+// ⚠ Токен доступа — только в памяти; обновления — кука HttpOnly `__Host-sender-refresh`.
+// Отказ `SECOND_FACTOR_REQUIRED` открывает окно кода и повторяет действие.
 
 import type { Tokens } from './types';
 
@@ -24,7 +16,7 @@ export class ApiError extends Error {
   }
 }
 
-/** Действие отменил человек (закрыл окно кода) или сессия кончилась — показывать нечего. */
+/** Окно кода закрыто или сессия кончилась — показывать нечего. */
 export class Cancelled extends Error {}
 
 interface Envelope {
@@ -41,7 +33,7 @@ let stepping: Promise<boolean> | null = null;
 let onSignedOut: (message?: string) => void = () => {};
 let confirmIdentity: (minutes?: number) => Promise<boolean> = async () => false;
 
-/** Кто показывает вход, когда сессия кончилась, и кто спрашивает код перед опасным действием. */
+/** Вход по концу сессии и окно кода перед опасным действием. */
 export function connect(handlers: {
   signedOut: (message?: string) => void;
   confirmIdentity: (minutes?: number) => Promise<boolean>;
@@ -62,7 +54,7 @@ export function forget() {
   clearTimeout(timer);
 }
 
-/** Обменять куку обновления на новую пару. Один обмен на всех: кука одноразовая. */
+/** Один обмен на всех: кука одноразовая. */
 export function refresh(): Promise<boolean> {
   refreshing ??= (async () => {
     try {
@@ -84,7 +76,7 @@ export function refresh(): Promise<boolean> {
   return refreshing;
 }
 
-/** Запрос без сессии: вход, второй шаг, ссылки из писем. Ответ — тело или конверт ошибки. */
+/** Запрос без сессии: вход, второй шаг, ссылки из писем. */
 export async function publicPost<T>(path: string, body: unknown): Promise<{ ok: true; data: T } | { ok: false; error: ApiError }> {
   try {
     const r = await fetch(path, {
@@ -100,7 +92,7 @@ export async function publicPost<T>(path: string, body: unknown): Promise<{ ok: 
 
 const SESSION_GONE = ['TOKEN_EXPIRED', 'UNAUTHENTICATED', 'SESSION_REVOKED', 'SESSION_EXPIRED'];
 
-/** Отправить запрос с токеном; удача — ответ как есть, отказ — ApiError или Cancelled. */
+/** Запрос с токеном; отказ — ApiError или Cancelled. */
 async function send(method: string, path: string, body?: unknown, retry = true, stepUp = true): Promise<Response> {
   const headers: Record<string, string> = {};
   if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -130,8 +122,7 @@ async function send(method: string, path: string, body?: unknown, retry = true, 
     throw new Cancelled();
   }
 
-  // ⚠ Опасное действие без свежего кода: спросить код и повторить то же самое. Окно одно на
-  // всех — два запроса, упёршихся одновременно, не откроют два окна.
+  // Окно кода одно на все одновременные запросы.
   if (r.status === 403 && code === 'SECOND_FACTOR_REQUIRED' && stepUp) {
     const minutes = typeof data?.details?.window_minutes === 'number' ? data.details.window_minutes : undefined;
     stepping ??= confirmIdentity(minutes).finally(() => { stepping = null; });
@@ -148,12 +139,7 @@ async function request<T>(method: string, path: string, body?: unknown, stepUp =
   return await r.json().catch(() => null) as T;
 }
 
-/**
- * Отдать браузеру файл на сохранение.
- *
- * ⚠ Тип всегда application/octet-stream: Chrome на телефоне дописывает к имени расширение «своего»
- * типа — .crt превращался в .crt.cer, ключ — в .key.pem. У «просто байтов» своего расширения нет.
- */
+/** ⚠ Всегда octet-stream: иначе Chrome на телефоне дописывает расширение (.crt.cer). */
 export function saveFile(data: Blob, name: string) {
   const url = URL.createObjectURL(new Blob([data], { type: 'application/octet-stream' }));
   const link = document.createElement('a');
@@ -165,7 +151,7 @@ export function saveFile(data: Blob, name: string) {
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
-/** Имя файла из Content-Disposition: сперва filename* (UTF-8), затем filename. */
+/** Имя из Content-Disposition: filename*, затем filename. */
 function fileName(disposition: string | null): string | null {
   if (!disposition) return null;
   const star = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(disposition)?.[1];
@@ -183,18 +169,14 @@ export const api = {
   del: <T = null>(path: string) => request<T>('DELETE', path),
   /** Подтверждение кодом — без повторного окна, если код не подошёл. */
   stepUp: (code: string) => request<null>('POST', '/api/me/step-up', { code }, false),
-  /**
-   * Скачать файл ответом на POST: браузер сохраняет его под именем из Content-Disposition.
-   *
-   * ⚠ Через fetch и blob, а не ссылкой: токен доступа живёт в памяти и в адрес не попадает.
-   */
+  /** ⚠ Через fetch и blob, не ссылкой: токен не должен попасть в адрес. */
   download: async (path: string, body: unknown, fallbackName: string) => {
     const r = await send('POST', path, body);
     saveFile(await r.blob(), fileName(r.headers.get('Content-Disposition')) ?? fallbackName);
   },
 };
 
-/** Текст ошибки; `details.reason` (ответ чужого сервера — SMTP, Key Manager) точнее общего сообщения. */
+/** Текст ошибки; `details.reason` (ответ SMTP, Key Manager) точнее общего. */
 export const errorText = (err: unknown): string => {
   if (!(err instanceof ApiError)) return 'Что-то пошло не так.';
   const reason = err.details?.reason;

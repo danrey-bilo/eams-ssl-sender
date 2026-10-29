@@ -9,15 +9,10 @@ export interface Action {
   danger?: boolean;
 }
 
-/** Пункт меню; false/null/undefined — пункт не показывается (удобно для условий в списке). */
+/** false/null/undefined — пункт не показывается. */
 export type MenuItem = Action | false | null | undefined;
 
-/**
- * Кнопка «⋯» со списком действий.
- *
- * На компьютере — выпадающий список, у нижнего края окна он раскрывается вверх. На телефоне — лист
- * снизу во всю ширину: выпадающий список там упирался в край карточки и прятал пункты.
- */
+/** Кнопка «⋯»: на ПК выпадающий список, на телефоне — лист снизу. */
 export function Menu({ title, items }: { title?: string; items: MenuItem[] }) {
   const { show } = useOverlay();
   const actions = items.filter((item): item is Action => Boolean(item));
@@ -83,7 +78,7 @@ function Dropdown({ actions }: { actions: Action[] }) {
   );
 }
 
-/** Лист действий снизу (телефон): крупные пункты, «Отмена» отдельно, закрывается тапом по фону. */
+/** Лист действий снизу (телефон). */
 function ActionSheet({ title, actions, onClose }: {
   title?: string;
   actions: Action[];
@@ -102,7 +97,7 @@ function ActionSheet({ title, actions, onClose }: {
     a.action();
   };
 
-  // ⚠ Содержимое занимает окно целиком, поэтому щелчок с целью самим <dialog> — это щелчок по фону.
+  // ⚠ Щелчок с целью самим <dialog> — это щелчок по фону.
   return (
     <dialog
       ref={ref}

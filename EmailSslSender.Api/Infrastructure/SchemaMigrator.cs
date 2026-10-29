@@ -8,42 +8,21 @@ using Npgsql;
 
 namespace EmailSslSender.Api.Infrastructure;
 
-/// <summary>
-/// Схема установки — прежний набор хоста, наборы модулей, набор проекта (решение EAMS 0114).
-/// </summary>
-/// <remarks>
-/// ⚠ ⚠ <b>Две дороги, и обе обязаны прийти к одной схеме.</b> Новая установка выполняет базовые
-/// миграции модулей. Существующая собрана прежними миграциями хоста: она сначала дотягивается ими до
-/// последней (<see cref="LegacyLast"/>), а базовые миграции модулей, чьи таблицы она уже несёт,
-/// отмечаются применёнными без выполнения — строкой в таблице истории модуля. Что обе дороги дают одну
-/// схему, держит интеграционный сторож сравнением каталога.
-///
-/// ⚠ ⚠ <b>Отмечается только базовая из закрытого списка</b> <see cref="LegacyBaselines"/>. Модуль,
-/// подключённый к старой установке позже, своих таблиц в ней не имеет: его базовая обязана
-/// выполниться, а отметка оставила бы его без таблиц.
-///
-/// ⚠ <b>Весь проход — под одним замком.</b> EF держит замок на таблицу истории и с версии 10 —
-/// на каждую миграцию отдельно; между наборами и между миграциями без своего замка вклинился бы
-/// второй запуск <c>migrate</c>.
-/// </remarks>
+/// <summary>Схема установки: прежний набор хоста, наборы модулей, набор проекта.</summary>
+/// <remarks>⚠ Новая установка и дотянутая 1.x обязаны прийти к одной схеме; весь проход — под одним замком.</remarks>
 public static class SchemaMigrator
 {
     /// <summary>Таблица истории прежних миграций хоста.</summary>
     public const string LegacyHistory = "__EFMigrationsHistory";
 
-    /// <summary>Последняя прежняя миграция хоста — мост к модулям; после неё прежний набор заморожен.</summary>
+    /// <summary>Последняя прежняя миграция хоста; после неё прежний набор заморожен.</summary>
     public const string LegacyLast = "20261026200000_ModulesBridge";
 
     /// <summary>Номер замка прохода миграций в пространстве проекта.</summary>
     internal const ushort AdvisoryLockNumber = 1;
 
-    /// <summary>
-    /// Базовые миграции, чью схему существующая установка уже несёт: модуль → базовая миграция.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Закрытый список, и меняется только так: новый модуль сюда не попадает никогда — его таблиц в
-    /// прежней схеме нет. Совпадение с первой миграцией каждого набора проверяет сторож.
-    /// </remarks>
+    /// <summary>Базовые миграции, чью схему установка 1.x уже несёт: модуль → базовая.</summary>
+    /// <remarks>⚠ Закрытый список: новый модуль сюда не попадает — его таблиц в прежней схеме нет.</remarks>
     public static readonly IReadOnlyDictionary<string, string> LegacyBaselines = new Dictionary<string, string>(StringComparer.Ordinal)
     {
         ["identity"] = "20261022231421_Baseline",
@@ -53,30 +32,28 @@ public static class SchemaMigrator
         ["keymanager"] = KeyManagerBaseline,
     };
 
-    /// <summary>Базовая миграция набора Key Manager Plus — повторяет его прежние таблицы хоста.</summary>
+    /// <summary>Базовая миграция набора Key Manager Plus.</summary>
     internal const string KeyManagerBaseline = "20261026183147_Baseline";
 
     /// <summary>Что с прежней историей хоста.</summary>
     public enum LegacyState
     {
-        /// <summary>Прежней истории нет: новая установка.</summary>
+        /// <summary>Новая установка.</summary>
         None,
 
-        /// <summary>Прежняя история есть, но отстала от последней миграции хоста.</summary>
+        /// <summary>Отстала от последней миграции хоста.</summary>
         Behind,
 
-        /// <summary>Прежняя история дошла до последней миграции хоста.</summary>
+        /// <summary>Дошла до последней миграции хоста.</summary>
         Complete,
     }
 
-    /// <summary>
-    /// Применить всё: дотянуть прежний набор, отметить базовые, выполнить наборы по порядку.
-    /// </summary>
+    /// <summary>Дотянуть прежний набор, отметить базовые, выполнить наборы по порядку.</summary>
     /// <param name="connection">Строка подключения владельца схемы.</param>
-    /// <param name="schemas">Наборы в порядке применения: модули по порядку подключения, проект последним.</param>
+    /// <param name="schemas">Наборы в порядке применения.</param>
     /// <param name="locks">Пространство замков проекта.</param>
     /// <param name="cancellationToken">Отмена.</param>
-    /// <returns>Что сделано — строками «набор: миграция», отмеченные помечены.</returns>
+    /// <returns>Что сделано — строками «набор: миграция».</returns>
     public static async Task<IReadOnlyList<string>> MigrateAsync(
         string connection,
         IReadOnlyList<ModuleSchema> schemas,
@@ -88,8 +65,7 @@ public static class SchemaMigrator
 
         var сделано = new List<string>();
 
-        // ⚠ Замок сессии на отдельном подключении: держится весь проход, и снимется сам, если процесс
-        // умрёт посреди него.
+        // ⚠ Замок сессии на отдельном подключении: снимется сам, если процесс умрёт.
         await using var замок = new NpgsqlConnection(connection);
         await замок.OpenAsync(cancellationToken);
         await ВыполнитьAsync(замок, $"SELECT pg_advisory_lock({locks.Key(AdvisoryLockNumber)})", cancellationToken);
@@ -129,10 +105,6 @@ public static class SchemaMigrator
     }
 
     /// <summary>Что не применено — строками «набор: миграция»; пусто — схема на месте.</summary>
-    /// <remarks>
-    /// ⚠ Отставшая прежняя история — тоже «не применено»: такую установку дотягивает только
-    /// <c>migrate</c>. Базовая существующей установки, ещё не отмеченная, — тоже: отмечает её он же.
-    /// </remarks>
     public static async Task<IReadOnlyList<string>> PendingAsync(
         string connection, IReadOnlyList<ModuleSchema> schemas, CancellationToken cancellationToken = default)
     {
@@ -177,13 +149,7 @@ public static class SchemaMigrator
         return await последняя.ExecuteScalarAsync(cancellationToken) is true ? LegacyState.Complete : LegacyState.Behind;
     }
 
-    /// <summary>
-    /// Контекст прежнего набора хоста: пустая модель, миграции сборки хоста.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Предупреждение «у модели есть неприменённые изменения» гасится: модель пуста по построению,
-    /// а прежний набор применяется только классами миграций. Модель сверяют наборы модулей.
-    /// </remarks>
+    /// <summary>Контекст прежнего набора хоста: пустая модель, миграции сборки хоста.</summary>
     internal static AppDbContext Legacy(string connection) => new(
         new DbContextOptionsBuilder<AppDbContext>()
             .UseNpgsql(connection, npgsql => npgsql.MigrationsAssembly(typeof(SchemaMigrator).Assembly))
@@ -191,8 +157,7 @@ public static class SchemaMigrator
             .Options,
         []);
 
-    /// <summary>Отметить базовую миграцию набора применённой — если она из списка и история пуста.</summary>
-    /// <returns>Отмеченная миграция или <c>null</c>.</returns>
+    // Отметить базовую применённой, если она из списка и история пуста; вернуть её или null.
     private static async Task<string?> ОтметитьБазовуюAsync(DbContext db, ModuleSchema набор, CancellationToken cancellationToken)
     {
         if (!LegacyBaselines.TryGetValue(набор.Module, out var базовая))

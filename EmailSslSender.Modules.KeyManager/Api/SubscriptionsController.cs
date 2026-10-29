@@ -23,7 +23,7 @@ internal sealed record SubscriptionIn
     [JsonPropertyName("common_names")]
     public IReadOnlyList<string>? CommonNames { get; init; }
 
-    /// <summary>Один сертификат — по-прежнему можно и так; вместе с <c>common_names</c> нельзя.</summary>
+    /// <summary>Один сертификат; вместе с <c>common_names</c> нельзя.</summary>
     [JsonPropertyName("common_name")]
     public string? CommonName { get; init; }
 
@@ -50,16 +50,11 @@ internal sealed record SubscriptionIn
     [JsonPropertyName("enabled")]
     public bool? Enabled { get; init; }
 
-    /// <summary>
-    /// Описание для администраторов, до 500 знаков; пустая строка снимает. Только в системе — в письма не уходит.
-    /// </summary>
+    /// <summary>Описание для администраторов, до 500 знаков; в письма не уходит. Пустая строка снимает.</summary>
     [JsonPropertyName("description")]
     public string? Description { get; init; }
 
-    /// <summary>
-    /// С какого дня (<c>ГГГГ-ММ-ДД</c>, включительно) опрос шлёт подписку сам; пустая строка снимает.
-    /// Ручная отправка шлёт всегда.
-    /// </summary>
+    /// <summary>С какого дня (<c>ГГГГ-ММ-ДД</c>, включительно) опрос шлёт подписку сам; пустая строка снимает.</summary>
     [JsonPropertyName("active_from")]
     public string? ActiveFrom { get; init; }
 
@@ -67,16 +62,11 @@ internal sealed record SubscriptionIn
     [JsonPropertyName("active_until")]
     public string? ActiveUntil { get; init; }
 
-    /// <summary>
-    /// В какое время суток (<c>ЧЧ:ММ</c>) опрос шлёт подписку; пустая строка снимает — тогда сразу, как
-    /// заметит, что пора. Замеченное после этого времени ждёт следующего дня.
-    /// </summary>
+    /// <summary>Время отправки опросом (<c>ЧЧ:ММ</c>); пустая строка снимает — тогда сразу.</summary>
     [JsonPropertyName("send_time")]
     public string? SendTime { get; init; }
 
-    /// <summary>
-    /// Часовой пояс IANA (<c>Europe/Kyiv</c>) дат и времени отправки; нужен, если задано хоть одно из них.
-    /// </summary>
+    /// <summary>Часовой пояс IANA (<c>Europe/Kyiv</c>); нужен при датах или времени отправки.</summary>
     [JsonPropertyName("time_zone")]
     public string? TimeZone { get; init; }
 }
@@ -108,16 +98,9 @@ internal sealed record SubscriptionOut(
     [property: JsonPropertyName("delivery")] string Delivery)
 {
     /// <summary>
-    /// Подписка с состоянием доставки последней отправки.
+    /// <c>delivery</c>: <c>none</c>, <c>queued</c>, <c>sent</c>, <c>failed</c>; <c>period</c>: <c>before</c>,
+    /// <c>active</c>, <c>after</c> или <c>null</c>.
     /// </summary>
-    /// <remarks>
-    /// <c>delivery</c>: <c>none</c> — ещё не отправлялась, <c>queued</c> — письма в очереди,
-    /// <c>sent</c> — ушли, <c>failed</c> — не ушли (причина в <c>last_error</c>). Состояние писем
-    /// берётся из очереди на чтении — опрос сверяет его позже и не чаще своего срока.
-    ///
-    /// <c>period</c>: <c>before</c> — первый день периода ещё не наступил, <c>active</c> — внутри,
-    /// <c>after</c> — последний день прошёл; <c>null</c> — периода нет.
-    /// </remarks>
     public static SubscriptionOut From(
         CertificateSubscription п, DateTimeOffset now, IReadOnlyDictionary<Guid, MailLetterStatus>? letters = null)
     {
@@ -152,26 +135,10 @@ internal sealed record SubscriptionOut(
     }
 }
 
-/// <summary>
-/// Подписки на сертификаты Key Manager Plus: кому, какие файлы и когда.
-/// </summary>
+/// <summary>Подписки на сертификаты Key Manager Plus: кому, какие файлы и когда.</summary>
 /// <remarks>
-/// ⚠ ⚠ <b>Заведение, правка, удаление и ручная отправка требуют свежего второго фактора</b>
-/// (<c>[RequireRecentSecondFactor]</c>, решение владельца 2026-10-20). Подписка рассылает файлы
-/// сертификата <b>вместе с закрытым ключом</b> на адреса, которые в ней записаны: тот, кто дописал
-/// свой адрес, получает ключ следующим опросом. Чтение кода не спрашивает.
-///
-/// ⚠ ⚠ <b>Право получателя кончается вместе с подпиской, а не с отправкой письма.</b> Удаление
-/// подписки, убранный из неё сертификат и убранный из списка адрес отменяют письма, ещё стоящие в очереди
-/// (<see cref="IMailQueue.CancelAsync"/>): иначе закрытый ключ ушёл бы тому, у кого право уже
-/// отняли. Отмена — в той же транзакции, что и правка, под блокировкой строки подписки: опрос,
-/// отправляющий её в эту минуту, дописал бы номера писем мимо отмены.
-///
-/// ⚠ В журнал — какие поля изменились и сколько адресов стало, а не сами адреса: адрес
-/// получателя — сведение о человеке, а строка журнала уходит в общий лог.
-///
-/// ⚠ <b>Хотя бы один способ отправки</b> — при обновлении или раз в N дней (решение владельца
-/// 2026-10-27): подписка без них молча ничего не слала бы, а это почти всегда невнимательность.
+/// ⚠ Сужение права (удаление, убранный сертификат, адрес, формат) отменяет письма в очереди — в той же
+/// транзакции под блокировкой строки. В журнал — число адресов, не сами адреса.
 /// </remarks>
 [ApiController]
 [AuthenticatedEndpoint("ролей в проекте нет: каждая учётная запись — администратор Key Manager Plus")]
@@ -190,7 +157,6 @@ internal sealed class SubscriptionsController(
     /// <summary>Сколько адресов в одной подписке.</summary>
     internal const int ПотолокАдресов = 20;
 
-    /// <summary>Самый длинный Common Name, который примем.</summary>
     private const int ПотолокИмени = 255;
 
     /// <summary>Все подписки — по первому Common Name.</summary>
@@ -217,12 +183,7 @@ internal sealed class SubscriptionsController(
     public async Task<SubscriptionOut> Get(Guid id, CancellationToken cancellationToken) =>
         await ВыдатьAsync(await НайтиAsync(id, tracked: false, cancellationToken), cancellationToken);
 
-    /// <summary>
-    /// Завести подписку.
-    /// </summary>
-    /// <remarks>
-    /// С <c>on_change</c> текущие сертификаты уходят на ближайшем опросе — опрос будится сразу.
-    /// </remarks>
+    /// <summary>Завести подписку; с <c>on_change</c> сертификаты уходят ближайшим опросом.</summary>
     [HttpPost]
     [RequireRecentSecondFactor]
     public async Task<IActionResult> Create([FromBody] SubscriptionIn body, CancellationToken cancellationToken)
@@ -251,7 +212,7 @@ internal sealed class SubscriptionsController(
 
         Способ(подписка);
 
-        // ⚠ Первое письмо подписки со временем отправки — в ближайшее время отправки, а не в прошедшее сегодня.
+        // Прошедшее сегодня время отправки не догоняется.
         if (Расписание(подписка, body))
         {
             подписка.LastSlotAt = сейчас;
@@ -291,15 +252,7 @@ internal sealed class SubscriptionsController(
         return Created($"/api/certificate-subscriptions/{подписка.Id}", SubscriptionOut.From(подписка, сейчас));
     }
 
-    /// <summary>
-    /// Изменить подписку. Не присланное поле не меняется; <c>interval_days: 0</c> снимает расписание.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Добавленный сертификат с <c>on_change</c> уйдёт на ближайшем опросе: для него ещё ничего не
-    /// отправлено. Убранный — отменяет неотправленные письма подписки: они несут и его файлы; тогда
-    /// подписка забывает отправленное, и оставшиеся сертификаты уходят заново ближайшим опросом. Так же
-    /// отменяют письма убранный формат, снятый пароль ключа и отключение подписки.
-    /// </remarks>
+    /// <summary>Изменить подписку: не присланное поле не меняется; <c>interval_days: 0</c> снимает расписание.</summary>
     [HttpPatch("{id:guid}")]
     [RequireRecentSecondFactor]
     public async Task<SubscriptionOut> Update(
@@ -338,8 +291,7 @@ internal sealed class SubscriptionsController(
 
                     if (убраны.Count > 0)
                     {
-                        // ⚠ Письма в очереди несут файлы и убранного сертификата: его получатели на него
-                        // больше не подписаны.
+                        // ⚠ Письма в очереди несут и файлы убранного сертификата.
                         отменено += await ОтменитьВсеAsync(строка, "сертификат убран из подписки", token);
                     }
 
@@ -379,8 +331,7 @@ internal sealed class SubscriptionsController(
                     var форматы = Форматы(body.Formats);
                     Поле("formats", string.Join(",", строка.Formats), string.Join(",", форматы));
 
-                    // ⚠ ⚠ Убранный формат (чаще всего KEY — закрытый ключ) — то же сужение права, что убранный
-                    // сертификат: письма в очереди несут его файлы (ревью безопасности 2026-10-27).
+                    // ⚠ Убранный формат (обычно KEY) сужает право: письма в очереди несут его файлы.
                     if (строка.Formats.Except(форматы, StringComparer.OrdinalIgnoreCase).Any())
                     {
                         отменено += await ОтменитьВсеAsync(строка, "формат убран из подписки", token);
@@ -393,9 +344,7 @@ internal sealed class SubscriptionsController(
                 Поле("on_change", строка.OnChange, body.OnChange ?? строка.OnChange);
                 Поле("enabled", строка.Enabled, body.Enabled ?? строка.Enabled);
 
-                // ⚠ ⚠ Снятый пароль ключа и отключённая подписка тоже отнимают право: письмо, ждущее в очереди
-                // (сервер почты лежит), иначе унесло бы passphrase.txt или ключ уже после того, как
-                // администратор передумал.
+                // ⚠ Снятый пароль ключа и отключение тоже отнимают право: отменяем письма в очереди.
                 if (строка.IncludePassphrase && body.IncludePassphrase == false)
                 {
                     отменено += await ОтменитьВсеAsync(строка, "пароль ключа больше не отправляется", token);
@@ -406,7 +355,7 @@ internal sealed class SubscriptionsController(
                     отменено += await ОтменитьВсеAsync(строка, "подписка отключена", token);
                 }
 
-                // Включённая заново не догоняет время отправки, пропущенное, пока была выключена.
+                // Включённая заново не догоняет пропущенное время отправки.
                 if (!строка.Enabled && body.Enabled == true)
                 {
                     строка.LastSlotAt = clock.GetUtcNow();
@@ -428,7 +377,7 @@ internal sealed class SubscriptionsController(
                 {
                     var было = (С: Дата(строка.ActiveFrom), По: Дата(строка.ActiveUntil), В: Время(строка.SendTime), Пояс: строка.TimeZone);
 
-                    // ⚠ Новое расписание начинается с ближайшего времени отправки: прошедшее сегодня не догоняется.
+                    // Новое расписание не догоняет прошедшее сегодня время.
                     if (Расписание(строка, body))
                     {
                         Поле("active_from", было.С, Дата(строка.ActiveFrom));
@@ -450,7 +399,7 @@ internal sealed class SubscriptionsController(
                 {
                     var описание = Описание(body.Description);
 
-                    // ⚠ В журнал — длина, а не текст: описание пишут свободно, и оно может называть людей.
+                    // ⚠ В журнал — длина, а не текст: описание может называть людей.
                     if (!string.Equals(строка.Description, описание, StringComparison.Ordinal))
                     {
                         изменения["description"] = new Dictionary<string, object?>(StringComparer.Ordinal)
@@ -468,8 +417,7 @@ internal sealed class SubscriptionsController(
                     изменения["cancelled_letters"] = отменено;
                 }
 
-                // ⚠ Способ отправки проверяется, только когда его меняют: подписку 2.0 без способа иначе
-                // нельзя было бы и сузить — убрать получателя или формат (ревью надёжности 2026-10-27).
+                // Только при смене способа: старую подписку без способа иначе нельзя было бы и сузить.
                 if (body.OnChange is not null || body.IntervalDays is not null)
                 {
                     Способ(строка);
@@ -495,11 +443,7 @@ internal sealed class SubscriptionsController(
         return SubscriptionOut.From(подписка, clock.GetUtcNow());
     }
 
-    /// <summary>Удалить подписку.</summary>
-    /// <remarks>
-    /// ⚠ Письма подписки, ещё стоящие в очереди, отменяются вместе с ней: закрытый ключ не уходит
-    /// по подписке, которой больше нет.
-    /// </remarks>
+    /// <summary>Удалить подписку и отменить её письма в очереди.</summary>
     [HttpDelete("{id:guid}")]
     [RequireRecentSecondFactor]
     public async Task<IActionResult> Delete(Guid id, CancellationToken cancellationToken)
@@ -530,14 +474,7 @@ internal sealed class SubscriptionsController(
         return NoContent();
     }
 
-    /// <summary>
-    /// Отменить все неотправленные письма подписки и забыть их номера.
-    /// </summary>
-    /// <remarks>
-    /// Отменённые письма несли и то, что в подписке осталось, — их получатели этого не получат. Поэтому
-    /// подписка забывает отправленное, и ближайший опрос пришлёт оставшееся заново уже по новым правилам
-    /// (отключённая — после включения).
-    /// </remarks>
+    /// <summary>Отменить все письма подписки в очереди; отменённое забывается и уйдёт заново.</summary>
     private async Task<int> ОтменитьВсеAsync(CertificateSubscription строка, string причина, CancellationToken token)
     {
         var отменены = await mail.CancelAsync(строка.PendingMailIds ?? [], причина, token);
@@ -555,13 +492,7 @@ internal sealed class SubscriptionsController(
         return отменены;
     }
 
-    /// <summary>
-    /// Отменить письма подписки, адресованные убранным получателям, и забыть их номера.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Остальным получателям письма уходят как шли: их право не менялось, а отметка «отправлено»
-    /// без писем оставила бы их без сертификата до следующего выпуска.
-    /// </remarks>
+    /// <summary>Отменить письма убранным получателям; остальным письма уходят как шли.</summary>
     private async Task<int> ОтменитьУбранным(
         CertificateSubscription строка, IReadOnlyCollection<string> убраны, CancellationToken token)
     {
@@ -589,18 +520,8 @@ internal sealed class SubscriptionsController(
         return отменено;
     }
 
-    /// <summary>
-    /// Отправить все текущие сертификаты подписки сейчас — без проверки срока, и отключённой тоже.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Синхронно: администратор видит отказ Key Manager Plus или почты в ответе, а не в логе.
-    /// Письма при этом ложатся в очередь, как и при опросе.
-    ///
-    /// ⚠ ⚠ Начатая отправка доводится до конца и без того, кто её начал: выгрузка большой подписки
-    /// (до 50 сертификатов в нескольких форматах) может пережить терпение Cloudflare (100 с), и обрыв
-    /// запроса иначе откатывал бы её каждый раз — такую подписку нельзя было бы отправить вручную
-    /// никогда (ревью надёжности 2026-10-27).
-    /// </remarks>
+    /// <summary>Отправить все текущие сертификаты подписки сейчас — без проверки срока, и отключённой тоже.</summary>
+    /// <remarks>⚠ Без отмены по запросу: большая выгрузка дольше терпения Cloudflare (100 с), обрыв откатывал бы её.</remarks>
     [HttpPost("{id:guid}/send")]
     [RequireRecentSecondFactor]
     public async Task<SubscriptionOut> Send(Guid id, CancellationToken cancellationToken)
@@ -644,15 +565,8 @@ internal sealed class SubscriptionsController(
         SubscriptionOut.From(
             подписка, clock.GetUtcNow(), await mail.StatusAsync(подписка.PendingMailIds ?? [], cancellationToken));
 
-    /// <summary>
-    /// Подписка по номеру; для правки — под блокировкой строки.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ ⚠ Правка ждёт блокировку (<c>FOR UPDATE</c>, без <c>SKIP LOCKED</c>): отправка держит строку
-    /// секунды, пока выгружает файлы, и по выходе пишет новые номера писем. Прочитай правка строку
-    /// мимо блокировки — её отмена писем не увидела бы свежих номеров, а запись затёрла бы их
-    /// прежними.
-    /// </remarks>
+    /// <summary>Подписка по номеру; для правки — под блокировкой строки.</summary>
+    /// <remarks>⚠ Правка ждёт <c>FOR UPDATE</c> без <c>SKIP LOCKED</c>, иначе затёрла бы номера писем идущей отправки.</remarks>
     private async Task<CertificateSubscription> НайтиAsync(Guid id, bool tracked, CancellationToken cancellationToken)
     {
         var набор = tracked
@@ -663,10 +577,7 @@ internal sealed class SubscriptionsController(
             ?? throw AppException.NotFound("Подписка не найдена.");
     }
 
-    /// <summary>
-    /// Common Name сертификатов: от одного до <see cref="CertificateSubscription.MaxCertificates"/>, без
-    /// повторов (без учёта регистра — это имена DNS), в присланном порядке.
-    /// </summary>
+    /// <summary>Common Name без повторов (регистр не важен — это имена DNS), в присланном порядке.</summary>
     private static string[] Имена(SubscriptionIn body)
     {
         if (body.CommonNames is not null && body.CommonName is not null)
@@ -695,10 +606,6 @@ internal sealed class SubscriptionsController(
         return имена;
     }
 
-    /// <summary>
-    /// Описание: без пробелов по краям, переводы строк — <c>\n</c>, без прочих управляющих знаков; пустое —
-    /// <c>null</c>, длиннее <see cref="CertificateSubscription.MaxDescription"/> — отказ.
-    /// </summary>
     private static string? Описание(string? text)
     {
         var описание = new string((text ?? string.Empty)
@@ -715,14 +622,7 @@ internal sealed class SubscriptionsController(
         return описание.Length > 0 ? описание : null;
     }
 
-    /// <summary>
-    /// Период и время отправки из запроса — в подписку: не присланное не меняется, пустая строка снимает.
-    /// </summary>
-    /// <returns>Изменилось ли что-нибудь.</returns>
-    /// <remarks>
-    /// ⚠ Часовой пояс хранится только при датах или времени: без них он ничего не значит, а с ними без
-    /// него «9:00» — неизвестно чьи.
-    /// </remarks>
+    /// <summary>Период и время отправки — в подписку; <c>true</c>, если что-то изменилось.</summary>
     private static bool Расписание(CertificateSubscription подписка, SubscriptionIn body)
     {
         var с = body.ActiveFrom is null ? подписка.ActiveFrom : День(body.ActiveFrom, "active_from");
@@ -756,7 +656,6 @@ internal sealed class SubscriptionsController(
         return изменилось;
     }
 
-    /// <summary>День <c>ГГГГ-ММ-ДД</c>; пустая строка — <c>null</c>.</summary>
     private static DateOnly? День(string text, string поле)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -770,7 +669,7 @@ internal sealed class SubscriptionsController(
                 : throw Неверно(поле, "День — в виде ГГГГ-ММ-ДД.");
     }
 
-    /// <summary>Время суток <c>ЧЧ:ММ</c> (секунды отбрасываются); пустая строка — <c>null</c>.</summary>
+    /// <summary>Время <c>ЧЧ:ММ</c>, секунды отбрасываются.</summary>
     private static TimeOnly? Время(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -784,7 +683,6 @@ internal sealed class SubscriptionsController(
             : throw Неверно("send_time", "Время отправки — в виде ЧЧ:ММ.");
     }
 
-    /// <summary>Часовой пояс IANA, известный базе часовых поясов; пустая строка — <c>null</c>.</summary>
     private static string? Пояс(string text)
     {
         var пояс = text.Trim();
@@ -803,7 +701,7 @@ internal sealed class SubscriptionsController(
 
     private static string? Время(TimeOnly? время) => время?.ToString("HH:mm", CultureInfo.InvariantCulture);
 
-    /// <summary>Хотя бы один способ отправки — при обновлении или по расписанию.</summary>
+    /// <summary>Без способа отправки подписка молча ничего бы не слала.</summary>
     private static void Способ(CertificateSubscription подписка)
     {
         if (!подписка.OnChange && подписка.IntervalDays is null)
@@ -814,13 +712,7 @@ internal sealed class SubscriptionsController(
         }
     }
 
-    /// <summary>
-    /// Адреса получателей: каждый — адрес, без повторов, от одного до двадцати.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Строка без <c>@</c> адресом не становится (вскрытие 43): письмо с ключом, ушедшее «в
-    /// никуда», хуже отказа здесь.
-    /// </remarks>
+    /// <summary>⚠ Только точные адреса: письмо с ключом «в никуда» хуже отказа.</summary>
     private static string[] Адреса(IReadOnlyList<string>? recipients)
     {
         var адреса = (recipients ?? [])

@@ -4,24 +4,14 @@ using Modules.Core.Contracts.Settings;
 
 namespace EmailSslSender.IntegrationTests;
 
-/// <summary>
-/// Кто пришёл — задаёт тест.
-/// </summary>
-/// <remarks>
-/// Подменяет личность запроса, пока <see cref="Overridden"/>: тест проверяет поведение
-/// эндпоинта, а не весь путь входа. Путь входа целиком проверяют тесты, которые входят
-/// по-настоящему (<c>AuthApi</c>, <c>AuthFoundationApi</c>), — там подмена снята.
-/// </remarks>
+/// <summary>Подставная личность запроса, пока <see cref="Overridden"/>.</summary>
 public sealed class TestUser : ICurrentUser
 {
     public Guid? Id { get; set; }
 
-    /// <summary>
-    /// Суперпользователь ли. По умолчанию да: ролей в проекте нет, и каждая учётная запись — суперпользователь.
-    /// </summary>
+    /// <summary>Ролей нет — каждая учётная запись суперпользователь.</summary>
     public bool IsSuperuser { get; set; } = true;
 
-    /// <summary>Чем пришли. По умолчанию человек.</summary>
     public AuditActorType ActorType { get; set; } = AuditActorType.User;
 
     public bool MustChangePassword { get; set; }
@@ -32,16 +22,10 @@ public sealed class TestUser : ICurrentUser
 
     public DateTimeOffset? StepUpAt { get; set; }
 
-    /// <summary>Действует ли подмена. Снятая — личность распознаётся по-настоящему.</summary>
+    /// <summary>Снятая подмена — личность распознаётся по-настоящему.</summary>
     public bool Overridden { get; private set; }
 
-    /// <summary>
-    /// Завести учётную запись в базе под подставную личность.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Движок прав проекта пускает только живую активную учётную запись: личность, которой нет в
-    /// базе, не может ничего — и это правильно. Задаёт обвязка хоста.
-    /// </remarks>
+    /// <summary>⚠ Завести учётную запись в базе: движок прав не знает несуществующих.</summary>
     public Action<Guid>? Завести { get; set; }
 
     /// <summary>Войти администратором со свежим вторым фактором.</summary>
@@ -58,7 +42,7 @@ public sealed class TestUser : ICurrentUser
         return Id.Value;
     }
 
-    /// <summary>Снять подмену: дальше личность распознаёт настоящий конвейер.</summary>
+    /// <summary>Снять подмену.</summary>
     public void SignOut()
     {
         Id = null;
@@ -72,20 +56,13 @@ public sealed class TestUser : ICurrentUser
     }
 }
 
-/// <summary>Настройки, которыми управляет тест.</summary>
-/// <remarks>
-/// Настоящий читатель поверх базы и конфигурации проверяется отдельно и своим тестом: здесь
-/// нужна возможность менять значение между запросами, а конфигурация хоста задаётся один раз
-/// при старте.
-/// </remarks>
+/// <summary>Настройки, которые тест меняет между запросами.</summary>
 public sealed class TestSettings : ISettingsReader
 {
-    /// <summary>Заданные значения. Чего нет — берётся из объявления ключа.</summary>
+    /// <summary>Чего нет — из набора проекта или умолчания ключа.</summary>
     public Dictionary<string, object?> Values { get; } = new(StringComparer.Ordinal);
 
-    /// <summary>
-    /// Значения набора миграций проекта: их несёт каждая установка, и подделка обязана их знать.
-    /// </summary>
+    /// <summary>Значения набора <c>sender</c>, как в каждой установке.</summary>
     public static IReadOnlyDictionary<string, object?> ProjectValues { get; } =
         new Dictionary<string, object?>(StringComparer.Ordinal) { ["auth.step_up_minutes"] = 10 };
 

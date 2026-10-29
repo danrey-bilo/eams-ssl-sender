@@ -10,14 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace EmailSslSender.IntegrationTests;
 
-/// <summary>
-/// Вход по HTTP — настоящим конвейером, без подмены личности.
-/// </summary>
-/// <remarks>
-/// ⚠ Здесь <b>не</b> используется подмена <c>ICurrentUser</c>: человек заводится, входит
-/// паролем, получает токен и предъявляет его заголовком. Проверять вход подделкой личности
-/// значило бы проверять подделку.
-/// </remarks>
+/// <summary>Вход по HTTP — настоящим конвейером, без подмены <c>ICurrentUser</c>.</summary>
 [Collection(SenderHost.Collection)]
 public sealed class AuthApi(SenderHost host)
 {
@@ -33,8 +26,7 @@ public sealed class AuthApi(SenderHost host)
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
         body["access_token"]!.GetValue<string>().ShouldNotBeNullOrWhiteSpace();
 
-        // ⚠ Токена обновления в теле НЕТ: он ушёл кукой HttpOnly, и дублировать его рядом
-        // означало бы отменить всю затею — сценарий на странице получил бы то же значение.
+        // ⚠ Токена обновления в теле нет: он ушёл кукой HttpOnly, недоступной сценарию.
         body["refresh_token"].ShouldBeNull();
 
         var cookie = response.Headers.GetValues("Set-Cookie").Single(value => value.Contains("__Host-"));
@@ -45,25 +37,11 @@ public sealed class AuthApi(SenderHost host)
         cookie.ShouldContain("samesite=strict", Case.Insensitive);
         cookie.ShouldContain("path=/", Case.Insensitive);
 
-        // Префикс __Host- обязывает НЕ задавать домен: иначе браузер молча отбросит куку.
+        // С префиксом __Host- домен не задаётся: иначе браузер отбросит куку.
         cookie.ShouldNotContain("domain=", Case.Insensitive);
     }
 
-    /// <summary>
-    /// Не снятый заголовок от мёртвой сессии не мешает ни войти, ни обновиться.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Клиент чистит заголовок не раньше, чем получит ответ, — а ответа он получить не мог:
-    /// распознаватель личности опрашивался на КАЖДОМ запросе, включая публичные, и негодный
-    /// токен обрывал запрос исключением до контроллера. То есть обновить пару со ещё не снятым
-    /// истёкшим заголовком было нельзя <b>никогда</b>, а вход после выхода отвечал «вы вышли
-    /// из системы». Веб-клиента ещё нет, поэтому никто не наступил. Найдено разбором
-    /// 2026-08-22.
-    ///
-    /// Токен здесь берётся настоящий и намеренно убивается выходом: выдуманная строка нужной
-    /// формы прошла бы и через сломанную редакцию, потому что распознаватель до базы бы дошёл,
-    /// а строки не нашёл — то есть проверка ничего бы не значила.
-    /// </remarks>
+    /// <summary>Ни вход, ни обновление. Токен настоящий и убит выходом: выдуманный ничего бы не проверил.</summary>
     [Fact]
     public async Task Мёртвый_заголовок_не_мешает_войти_заново()
     {
@@ -128,19 +106,7 @@ public sealed class AuthApi(SenderHost host)
         me["session_id"]!.GetValue<Guid>().ShouldBe(tokens["session_id"]!.GetValue<Guid>());
     }
 
-    /// <summary>
-    /// Истёкший токен доступа при живой сессии отвечает <c>401 TOKEN_EXPIRED</c>, и пара обменивается.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ ⚠ ⚠ Сведение ревью 2026-09-15, решение 0080. Это договор с обоими клиентами: веб
-    /// (<c>eams.web/src/shared/api/client.ts</c>) и настольный (<c>Eams.Desktop/Api/ApiClient.cs</c>)
-    /// обменивают пару только на <c>TOKEN_EXPIRED</c>. Сервер отвечал <c>SESSION_EXPIRED</c>, и оба
-    /// клиента уводили человека на вход по истечении каждого токена доступа. Проверка — на уровне
-    /// HTTP, потому что клиенты читают конверт, а не исключение службы.
-    ///
-    /// Красно-зелёная 2026-09-15: с проверкой срока в прежнем виде (одна ветка на оба срока) этот
-    /// факт красный, с починкой — зелёный.
-    /// </remarks>
+    /// <summary>⚠ Договор с клиентами: пару они обменивают только на <c>TOKEN_EXPIRED</c>, не <c>SESSION_EXPIRED</c>.</summary>
     [Fact]
     public async Task Истёкший_токен_доступа_отвечает_TOKEN_EXPIRED_и_пара_обменивается()
     {
@@ -170,7 +136,7 @@ public sealed class AuthApi(SenderHost host)
         response.StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
         body["code"]!.GetValue<string>().ShouldBe(ErrorCodes.TokenExpired);
 
-        // И обмен работает: половина обновления жива, новый доступ открывает свои эндпоинты.
+        // Половина обновления жива, новый доступ работает.
         var fresh = await RefreshAsync(tokens["refresh_token"]!.GetValue<string>());
         var me = await GetAsync<JsonObject>("/api/me", fresh["access_token"]!.GetValue<string>());
 
@@ -201,17 +167,12 @@ public sealed class AuthApi(SenderHost host)
         var first = await Envelope(wrong);
         var second = await Envelope(missing);
 
-        // Совпадать обязаны код, текст и подробности — то есть всё, по чему снаружи можно
-        // отличить один случай от другого. Номер обращения при этом различается и обязан:
-        // он свой у каждого запроса, и первая редакция этого теста сравнивала тела целиком,
-        // то есть краснела на верном коде.
+        // Совпадают код, текст и подробности; номер обращения у каждого запроса свой.
         first.Code.ShouldBe(second.Code);
         first.Message.ShouldBe(second.Message);
         first.Details.ShouldBeNull();
         second.Details.ShouldBeNull();
     }
-
-    // --- ротация ------------------------------------------------------------------------
 
     [Fact]
     public async Task Обновление_кукой_работает_и_выдаёт_новую_куку()
@@ -234,15 +195,7 @@ public sealed class AuthApi(SenderHost host)
         Refresh(refreshed).ShouldNotBe(cookie, "ротация: прежний токен больше не действует");
     }
 
-    /// <summary>
-    /// Половина, взятая из куки, не выносится в тело — даже если просили <c>use_cookie: false</c>.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ ⚠ Ревью безопасности 2026-10-20. Прежде <c>use_cookie: false</c> с пустым полем брало
-    /// половину из куки <c>HttpOnly</c> и возвращало новую телом: сценарий, внедрённый в страницу,
-    /// одним запросом получал на руки то, до чего кука его не допускала, и уносил сессию.
-    /// </remarks>
-    // мутация 2026-10-20: вернул `Respond(…, body.UseCookie)` в Refresh → покраснел этот факт.
+    /// <summary>⚠ Даже при <c>use_cookie: false</c>: иначе сценарий страницы унёс бы сессию из куки <c>HttpOnly</c>.</summary>
     [Fact]
     public async Task Половина_из_куки_не_выносится_в_тело()
     {
@@ -271,9 +224,7 @@ public sealed class AuthApi(SenderHost host)
     [Fact]
     public async Task Повторное_использование_токена_закрывает_сессию()
     {
-        // ⚠ Сквозная проверка главного свойства этапа. RFC 9700: предъявление уже
-        // потраченного токена означает, что он есть у двоих; кто из них вор — определить
-        // нельзя, поэтому закрывается сессия целиком.
+        // ⚠ RFC 9700: потраченный токен есть у двоих, вор неизвестен — закрывается вся сессия.
         var email = await ActiveUserAsync();
         host.Settings.Values["auth.refresh_grace_seconds"] = 0;
 
@@ -293,8 +244,7 @@ public sealed class AuthApi(SenderHost host)
 
             envelope.Code.ShouldBe("SESSION_REVOKED");
 
-            // ⚠ Человеку сказано, ЧТО случилось. Голое «войдите заново» здесь было бы
-            // умолчанием о происшествии.
+            // Человеку сказано, что случилось, а не голое «войдите заново».
             envelope.Message.ShouldContain("повторное использование");
         }
         finally
@@ -320,7 +270,7 @@ public sealed class AuthApi(SenderHost host)
         // Кука снимается теми же признаками, что при выдаче, иначе браузер оставит старую.
         response.Headers.GetValues("Set-Cookie").ShouldContain(value => value.Contains("__Host-sender-refresh="));
 
-        // И токен доступа больше не работает — с внятной причиной.
+        // Токен доступа больше не работает — с внятной причиной.
         using var after = new HttpRequestMessage(HttpMethod.Get, "/api/me");
         after.Headers.Authorization = new AuthenticationHeaderValue("Bearer", access);
 
@@ -343,14 +293,7 @@ public sealed class AuthApi(SenderHost host)
         list.Count(session => session!["current"]!.GetValue<bool>()).ShouldBe(1);
     }
 
-    // --- частота ---------------------------------------------------------------------------
-
-    /// <summary>Поток попыток входа с одного адреса упирается в потолок по адресу.</summary>
-    /// <remarks>
-    /// ⚠ Отказ отвечает 429, а не 503: умолчание платформы — именно 503, и клиент решил бы, что
-    /// сервер лежит, и стал бы повторять. Почты разные: проверяется потолок по адресу, а не предел
-    /// на пару «адрес + почта» (решение 0096).
-    /// </remarks>
+    /// <summary>⚠ 429, а не 503 платформы: на 503 клиент решил бы, что сервер лежит. Почты разные — потолок по адресу.</summary>
     [Fact]
     public async Task Слишком_частые_попытки_входа_отвергаются_нашим_конвертом()
     {
@@ -366,15 +309,7 @@ public sealed class AuthApi(SenderHost host)
         (await Envelope(limited!)).Code.ShouldBe("RATE_LIMITED");
     }
 
-    /// <summary>
-    /// Перебор одной почты режется, а соседи по тому же адресу входят.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ ⚠ Решение владельца 0096: за офисным NAT адрес у всех один, и предел «на адрес» был пределом
-    /// на весь офис. Теперь адрес — потолок против потока, а перебор держит предел на пару
-    /// «адрес + почта» в модуле личностей и блокировка учётной записи.
-    /// </remarks>
-    // мутация 2026-10-19: снял attempts.Require из SignInAsync → покраснел этот факт (вторая попытка той же почты не 429).
+    /// <summary>За офисным NAT адрес общий: перебор держит предел на пару «адрес + почта».</summary>
     [Fact]
     public async Task Попытки_одной_почты_режутся_а_соседи_по_адресу_входят()
     {
@@ -396,12 +331,6 @@ public sealed class AuthApi(SenderHost host)
             .StatusCode.ShouldNotBe(HttpStatusCode.TooManyRequests, "сосед по адресу заперт чужим перебором");
     }
 
-    /// <summary>Второй фактор веб-входа режется частотой вместе со входом.</summary>
-    /// <remarks>
-    /// ⚠ Найдено аудитом надёжности 2026-10-19 (решение 0096): группа держала только второй фактор
-    /// расширения, а веб-путь не резался ничем.
-    /// </remarks>
-    // мутация 2026-10-19: убрал /api/auth/two-factor из группы входа → покраснел этот факт.
     [Fact]
     public async Task Второй_фактор_веб_входа_режется_частотой()
     {
@@ -415,15 +344,7 @@ public sealed class AuthApi(SenderHost host)
         (await Envelope(limited!)).Code.ShouldBe("RATE_LIMITED");
     }
 
-    /// <summary>
-    /// Переподтверждение личности и смена пароля режутся частотой — на человека.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ ⚠ Ревью 2026-09-15 (S2, stepup-1 и password-1): обе двери доказывают личность ВНУТРИ
-    /// открытой сессии и перебирались со скоростью сети. С решения 0096 предел — на человека, а
-    /// по адресу остаётся потолок в несколько раз выше: сосед по офису своей попытки не теряет.
-    /// </remarks>
-    // мутация 2026-10-19: снял UserRateLimitMiddleware из конвейера → покраснели оба случая.
+    /// <summary>Переподтверждение и смена пароля режутся пределом на человека; потолок по адресу выше.</summary>
     [Theory]
     [InlineData("/api/me/step-up")]
     [InlineData("/api/me/password")]
@@ -434,8 +355,7 @@ public sealed class AuthApi(SenderHost host)
 
         host.User.SignIn();
 
-        // Не больше трёх попыток: потолок по адресу здесь — десять, и отказ обязан прийти от
-        // предела на человека, а не от него.
+        // Три попытки: потолок по адресу — десять, отказ обязан прийти от предела на человека.
         var limited = await ДоОтказаAsync(() => client.PostAsJsonAsync(путь, new { code = "000000" }, Ct), раз: 3);
 
         limited.ShouldNotBeNull($"путь {путь} частотой не режется");
@@ -447,11 +367,7 @@ public sealed class AuthApi(SenderHost host)
             .StatusCode.ShouldNotBe(HttpStatusCode.TooManyRequests, "сосед по адресу заперт чужим пределом");
     }
 
-    /// <summary>Поток без токена всё равно упирается в потолок по адресу.</summary>
-    /// <remarks>
-    /// Ограничитель по адресу стоит ДО опознания, поэтому 429 приходит и без валидного токена —
-    /// предел на человека такого потока не видит, ему не за кого считать.
-    /// </remarks>
+    /// <summary>Ограничитель по адресу стоит до опознания: 429 приходит и без токена.</summary>
     [Fact]
     public async Task Поток_переспроса_без_токена_режется_по_адресу()
     {
@@ -465,11 +381,7 @@ public sealed class AuthApi(SenderHost host)
         limited.ShouldNotBeNull("поток без токена частотой не режется");
     }
 
-    /// <summary>Свой сервер с заданными пределами — на той же базе.</summary>
-    /// <remarks>
-    /// Свой, потому что пределы общие на хост, и выжигать их соседним проверкам было бы нечестно:
-    /// они начали бы падать в зависимости от порядка запуска. ⚠ Второй хост на той же базе —
-    /// </remarks>
+    /// <summary>Свой хост с заданными пределами на той же базе: пределы общие на хост, соседей не выжигаем.</summary>
     private Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program> Строгий(params (string Ключ, string Значение)[] пределы) =>
         host.WithWebHostBuilder(web =>
         {
@@ -496,17 +408,14 @@ public sealed class AuthApi(SenderHost host)
         return null;
     }
 
-    // --- временный пароль --------------------------------------------------------------------
-
     [Fact]
     public async Task Пока_пароль_не_сменён_остальное_закрыто()
     {
-        // ⚠ ГЛАВНАЯ проверка блока: человек с временным паролем не должен ходить по API, пока
-        // его не сменит, — иначе пароль, переданный по телефону, работал бы как постоянный.
+        // ⚠ Иначе временный пароль, переданный по телефону, работал бы как постоянный.
         var email = await ProvisionalUserAsync();
         var access = (await LoginAsync(email, cookie: false))["access_token"]!.GetValue<string>();
 
-        // Обычное действие закрыто, и код говорит клиенту, куда вести человека.
+        // Код говорит клиенту, куда вести человека.
         var blocked = await SendAsync(HttpMethod.Get, "/api/users", access);
 
         blocked.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
@@ -515,7 +424,6 @@ public sealed class AuthApi(SenderHost host)
         // А «кто я» открыто: экрану смены пароля надо знать, кто на нём стоит.
         (await SendAsync(HttpMethod.Get, "/api/me", access)).StatusCode.ShouldBe(HttpStatusCode.OK);
 
-        // И сама смена — ради неё ограничение и заведено.
         var changed = await SendAsync(
             HttpMethod.Post, "/api/me/password", access,
             new { current_password = Strong, new_password = Другой });
@@ -523,8 +431,7 @@ public sealed class AuthApi(SenderHost host)
         changed.StatusCode.ShouldBe(HttpStatusCode.NoContent);
         await host.CompleteInitialFactorAsync(Client(), access, Ct);
 
-        // После смены пароля и подключения фактора ограничение снято: прав в установке нет,
-        // и тот же запрос проходит.
+        // После смены пароля и фактора ограничение снято.
         var after = await SendAsync(HttpMethod.Get, "/api/users", access);
 
         after.StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -544,14 +451,10 @@ public sealed class AuthApi(SenderHost host)
         (await Envelope(response)).Code.ShouldBe("INVALID_CREDENTIALS");
     }
 
-    // --- второй фактор -----------------------------------------------------------------------
-
     [Fact]
     public async Task Пока_фактор_не_включён_суперпользователю_остальное_закрыто()
     {
-        // ⚠ Умолчание системы: учётная запись, проходящая любую проверку прав, не должна
-        // держаться на одном пароле. Ограничение устроено так же, как требование сменить
-        // пароль, и проверяется тем же конвейером — но список исключений у него свой.
+        // ⚠ Учётная запись, проходящая любую проверку прав, не держится на одном пароле.
         var email = await SuperuserAsync();
         var access = (await LoginAsync(email, cookie: false, completeFactor: false))["access_token"]!.GetValue<string>();
 
@@ -560,7 +463,7 @@ public sealed class AuthApi(SenderHost host)
         blocked.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
         (await Envelope(blocked)).Code.ShouldBe("TWO_FACTOR_ENROLLMENT_REQUIRED");
 
-        // «Кто я» и включение фактора открыты — ради них ограничение и заведено.
+        // «Кто я» и включение фактора открыты.
         (await SendAsync(HttpMethod.Get, "/api/me", access)).StatusCode.ShouldBe(HttpStatusCode.OK);
 
         var setup = await SendAsync(HttpMethod.Post, "/api/me/two-factor/totp/setup", access);
@@ -569,18 +472,13 @@ public sealed class AuthApi(SenderHost host)
 
         var secret = (await setup.Content.ReadFromJsonAsync<JsonObject>(Ct))!["secret"]!.GetValue<string>();
 
-        // ⚠ ⚠ Пароля здесь БОЛЬШЕ НЕТ, и кодов восстановления в ответе тоже (решение владельца
-        // 0061): включение усиливает защиту, а сессия уже доказала, кто это. Прежняя редакция
-        // требовала десять кодов «иначе фактор — способ потерять доступ»; запасной путь теперь
-        // один и другой — письмо, и проверяется он в модуле личностей.
+        // Ни пароля, ни кодов восстановления: сессия уже доказала, кто это.
         var confirmed = await SendAsync(
             HttpMethod.Post, "/api/me/two-factor/totp/confirm", access, new { code = CurrentCode(secret) });
 
         confirmed.StatusCode.ShouldBe(HttpStatusCode.NoContent);
 
-        // Ограничение снято, и тот же запрос проходит: суперпользователь проходит любую
-        // проверку прав, значит единственным, что его останавливало, было требование
-        // включить фактор — ровно то, что и проверяется.
+        // Суперпользователя держало только требование фактора — теперь запрос проходит.
         (await SendAsync(HttpMethod.Get, "/api/users", access)).StatusCode.ShouldBe(HttpStatusCode.OK);
     }
 
@@ -609,8 +507,7 @@ public sealed class AuthApi(SenderHost host)
 
         var challenge = envelope.Details!["challenge"]!.ToString();
 
-        // Второй шаг: расписка плюс код. Код берём следующий — свой шаг подтверждение уже
-        // потратило, и это правильно: один код, один вход.
+        // Второй шаг: расписка и следующий код — текущий потратило подтверждение.
         var second = await Client().PostAsJsonAsync(
             "/api/auth/two-factor",
             new { challenge, code = CurrentCode(secret, steps: 1), use_cookie = false },
@@ -622,11 +519,7 @@ public sealed class AuthApi(SenderHost host)
 
         пара["access_token"]!.GetValue<string>().ShouldNotBeNullOrWhiteSpace();
 
-        // ⚠ ⚠ ГЛАВНОЕ ЗДЕСЬ. Второй шаг обязан слушать `use_cookie` так же, как первый. Пока он
-        // зашивал `true`, вход с включённым фактором отдавал половину обновления ТОЛЬКО кукой —
-        // а у настольного клиента кук нет. Он получал пару без половины, сохранять ему было
-        // нечего, и на следующем запуске он снова спрашивал логин, пароль и код. Нашлось живой
-        // проверкой владельца 2026-09-04: «при повторном входе снова требует вход с 2ФА».
+        // ⚠ Второй шаг слушает `use_cookie`, как первый: у настольного клиента кук нет.
         пара["refresh_token"]?.GetValue<string>()
             .ShouldNotBeNullOrWhiteSpace("без половины обновления клиент не переживёт перезапуск");
 
@@ -652,8 +545,6 @@ public sealed class AuthApi(SenderHost host)
 
         return расписка;
     }
-
-    // --- обвязка -----------------------------------------------------------------------------
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
@@ -704,13 +595,7 @@ public sealed class AuthApi(SenderHost host)
         return email;
     }
 
-    /// <summary>
-    /// Код, который показало бы приложение.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Своя реализация, а не вызов серверной. Совпадение двух независимых реализаций —
-    /// это проверка; вызов той же самой доказал бы только, что она равна себе.
-    /// </remarks>
+    /// <summary>Код приложения — своей реализацией: серверная доказала бы только, что равна себе.</summary>
     private static string CurrentCode(string base32, int steps = 0)
     {
         const string Alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
@@ -747,10 +632,7 @@ public sealed class AuthApi(SenderHost host)
         return (binary % 1_000_000).ToString("D6", System.Globalization.CultureInfo.InvariantCulture);
     }
 
-    /// <summary>Попробовать сменить пароль настоящим токеном и вернуть тело ответа.</summary>
-    /// <remarks>
-    /// ⚠ Возвращается тело, а не код: проверяется <b>что именно</b> назвал отказ, а не сам факт.
-    /// </remarks>
+    /// <summary>Сменить пароль и вернуть тело: проверяется, что именно назвал отказ.</summary>
     private async Task<string> Сменить(string токен, string текущий, string новый)
     {
         using var запрос = new HttpRequestMessage(HttpMethod.Post, "/api/me/password")
@@ -774,12 +656,10 @@ public sealed class AuthApi(SenderHost host)
 
         var email = $"user-{Guid.CreateVersion7():N}@example.com";
 
-        // ⚠ must_change_password: false задаётся ЯВНО. Умолчание — true, и это правильное
-        // умолчание: пароль, заданный администратором, временный по существу. Но здесь нужен
-        // человек, готовый работать, а не проверка ограничения — она рядом и своя.
+        // must_change_password задаётся явно: умолчание — true.
         (await host.CreateActivatedUserAsync(Client(), new { email, password = Strong, must_change_password = false }, Ct)).StatusCode.ShouldBe(HttpStatusCode.Created);
 
-        // ⚠ Снимаем подмену: дальше всё идёт настоящим конвейером.
+        // Дальше — настоящий конвейер.
         host.User.SignOut();
 
         return email;
@@ -828,27 +708,11 @@ public sealed class AuthApi(SenderHost host)
         (await response.Content.ReadFromJsonAsync<ErrorResponse>(
             new JsonSerializerOptions(JsonSerializerDefaults.Web), Ct))!;
 
-    /// <summary>
-    /// Требования к паролю отдаются вошедшему — и совпадают с тем, чем он отказывает.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ ⚠ ⚠ <b>АДРЕСА НЕ БЫЛО ВОВСЕ (этап 37.1), а веб-экраны обещали чек-лист комментарием в
-    /// разметке.</b> Человек узнавал требования единственным способом — отказом: придумывал
-    /// пароль, получал список и придумывал заново.
-    ///
-    /// ⚠ ⚠ <b>Проверяется СОВПАДЕНИЕ списка с отказом, а не сам список.</b> Два списка про одно и
-    /// то же расходятся молча: экран покажет пять требований, отказ назовёт шестое — и человек
-    /// будет прав, решив, что программа врёт.
-    ///
-    /// Мутация 2026-09-07: <c>CurrentAsync</c> читает <c>RequireSymbol</c> вместо
-    /// <c>RequireDigit</c> → покраснело совпадение.
-    /// </remarks>
+    /// <summary>⚠ Проверяется совпадение политики с отказом, а не сам список: два списка расходятся молча.</summary>
     [Fact]
     public async Task Требования_к_паролю_совпадают_с_отказом()
     {
-        // ⚠ ⚠ Живая учётная запись и настоящий вход: подделка личности хоста не заводит строки
-        // в базе, и смена пароля отвечает «пользователь не найден» — то есть проверять было бы
-        // нечего.
+        // Живая учётная запись: подделка личности не заводит строки в базе.
         var почта = $"policy-{Guid.CreateVersion7():N}@example.com";
         const string Пароль = "Очень-Длинный-Пароль-42";
 
@@ -884,10 +748,7 @@ public sealed class AuthApi(SenderHost host)
 
         предел.ShouldBeGreaterThan(0);
 
-        // ⚠ ⚠ ⚠ ГРАНИЦА ПРОВЕРЯЕТСЯ С ОБЕИХ СТОРОН, и это не педантизм. Число, названное
-        // политикой, — то самое, по которому судит сервер: ошибись оно на единицу, и чек-лист
-        // покажет галочку у пароля, который сервер отвергнет. Мутация «вернуть предел + 1»
-        // покраснеет здесь и нигде больше.
+        // ⚠ Граница с обеих сторон: ошибка на единицу покажет галочку у пароля, который сервер отвергнет.
         var короткий = new string('ы', предел - 1);
         var ровно = new string('ы', предел);
 
@@ -897,10 +758,7 @@ public sealed class AuthApi(SenderHost host)
         (await Сменить(токен, Пароль, ровно)).ShouldNotContain(
             "min_length", Case.Sensitive, "ровно предел — длина больше не нарушение");
 
-        // ⚠ ⚠ Пароль подобран НАРОЧНО: длинный и из одних строчных букв. Он проходит длину и
-        // «строчная буква» и нарушает три остальных — значит отказ обязан назвать ровно три
-        // кода и промолчать про четвёртый. Пустая строка сюда не годится: её отвергает
-        // проверка модели раньше политики, и до неё дело не доходит вовсе.
+        // Одни строчные: проходит длину и «строчную», нарушает три остальных требования.
         var одниСтрочные = new string('ы', 40);
 
         var тело = await Сменить(токен, Пароль, одниСтрочные);
@@ -921,8 +779,7 @@ public sealed class AuthApi(SenderHost host)
             }
         }
 
-        // ⚠ Обратная сторона: список нарушений — не «всё подряд». Строчная буква в пароле есть,
-        // и жаловаться на неё отказ не имеет права.
+        // Строчная буква есть — жаловаться на неё отказ не вправе.
         тело.ShouldNotContain(
             "lowercase",
             Case.Sensitive,

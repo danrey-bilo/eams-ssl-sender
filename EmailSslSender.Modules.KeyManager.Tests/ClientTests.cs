@@ -7,14 +7,7 @@ using EmailSslSender.Modules.KeyManager.Client;
 
 namespace EmailSslSender.Modules.KeyManager.Tests;
 
-/// <summary>
-/// Клиент REST API Key Manager Plus на заглушке HTTP: что уходит и как разбирается ответ.
-/// </summary>
-/// <remarks>
-/// ⚠ Ответы взяты из документации REST API Key Manager Plus — со всей её разнобойностью:
-/// <c>result.status</c> и плоский <c>Status</c>, <c>Success</c> и <c>SUCCESS</c>. Сверка с живым
-/// сервером 7.1.1 — отдельный шаг у владельца установки.
-/// </remarks>
+/// <summary>Клиент KMP на заглушке HTTP; ответы — по документации, с её разнобоем (<c>result.status</c>/<c>Status</c>).</summary>
 public sealed class ClientTests
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -163,10 +156,7 @@ public sealed class ClientTests
         await Should.ThrowAsync<KeyManagerException>(() => Клиент(заглушка).ListAsync(Ct));
     }
 
-    /// <summary>
-    /// Нераспознанный список — отказ, а не «ноль сертификатов»: иначе всем подпискам писалось бы
-    /// «сертификата нет», а через месяц снимок очистился бы (ревью надёжности 2026-10-27).
-    /// </summary>
+    /// <summary>Нераспознанный список — отказ, а не «ноль сертификатов»: иначе снимок очистился бы.</summary>
     [Theory]
     [InlineData("""{"result":{"status":"Success"}}""", "без поля details")]
     [InlineData("""{"result":{"status":"Success"},"details":[{"commonName":"a","serial":"01"}]}""", "commonName, serial")]
@@ -268,8 +258,7 @@ public sealed class ClientTests
     [Fact]
     public async Task JSON_вместо_файла_называет_ключи_но_не_значения()
     {
-        // ⚠ В значениях может лежать сам закрытый ключ: в текст ошибки (а он едет в лог и в
-        // last_error) попадают только имена полей.
+        // ⚠ В значениях может быть ключ: в текст ошибки — только имена полей.
         var заглушка = new Заглушка(_ => Json(
             """{"result":{"status":"Success"},"details":{"key":"-----BEGIN PRIVATE KEY----- секрет"}}"""));
 
@@ -344,7 +333,7 @@ public sealed class ClientTests
         CertificateFormats.Normalize(" key ").ShouldBe("KEY");
     }
 
-    // --- обвязка ---------------------------------------------------------------------------
+    // Обвязка
 
     private static KeyManagerClient Клиент(Заглушка заглушка) =>
         new(new HttpClient(заглушка) { BaseAddress = new Uri("https://kmp.example.test:6565/") }, Ключ);
@@ -371,7 +360,7 @@ public sealed class ClientTests
         HttpUtility.ParseQueryString(запрос.RequestUri!.Query)[имя]
             ?? throw new InvalidOperationException($"В запросе нет параметра {имя}");
 
-    /// <summary>Заглушка HTTP: запоминает запросы и отвечает тем, что дал тест.</summary>
+    /// <summary>Запоминает запросы и отвечает тем, что дал тест.</summary>
     private sealed class Заглушка(Func<HttpRequestMessage, HttpResponseMessage> ответ) : HttpMessageHandler
     {
         public List<HttpRequestMessage> Запросы { get; } = [];

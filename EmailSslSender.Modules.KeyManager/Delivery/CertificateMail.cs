@@ -11,7 +11,7 @@ internal enum DeliveryReason
     /// <summary>Подписку завели — первая отправка.</summary>
     Initial,
 
-    /// <summary>У Common Name появился новый серийный номер: сертификат продлён или перевыпущен.</summary>
+    /// <summary>Новый серийный номер у Common Name: продлён или перевыпущен.</summary>
     Changed,
 
     /// <summary>Подошёл срок повторной отправки.</summary>
@@ -24,7 +24,7 @@ internal enum DeliveryReason
 /// <summary>Письмо подписки: вид, значения подстановок и таблица сертификатов.</summary>
 /// <param name="Kind">Вид письма — <c>mail_outbox.kind</c>.</param>
 /// <param name="Values">Значения подстановок шаблона.</param>
-/// <param name="Table">Строка на сертификат: имя, форматы, срок, сколько дней осталось.</param>
+/// <param name="Table">Строка на сертификат.</param>
 internal sealed record CertificateLetter(string Kind, IReadOnlyDictionary<string, string> Values, MailTable Table)
 {
     /// <summary>Таблицы письма по именам заполнителей — для постановки в очередь.</summary>
@@ -32,27 +32,10 @@ internal sealed record CertificateLetter(string Kind, IReadOnlyDictionary<string
         new Dictionary<string, MailTable>(StringComparer.Ordinal) { [CertificateMail.TableName] = Table };
 }
 
-/// <summary>
-/// Письмо с сертификатами: виды и шаблоны на трёх языках.
-/// </summary>
+/// <summary>Письмо с сертификатами: виды и шаблоны на трёх языках.</summary>
 /// <remarks>
-/// ⚠ ⚠ <b>Виды сняты с предела <c>mail.rate_per_hour</c></b> (<see cref="UnthrottledKinds"/>). Предел
-/// защищает чужой ящик от публичных форм; эту рассылку настраивает администратор со свежим вторым
-/// фактором, и предел пять писем в час на адрес оставил бы сотрудника на шести подписках без
-/// шестого сертификата.
-///
-/// ⚠ <b>Формат — решение владельца:</b> что это, таблица сертификатов (имя, форматы, срок, сколько дней
-/// осталось — как в уведомлении Key Manager Plus, без серийного номера и отпечатка) и что лежит в архиве.
-/// Приветствие и подпись с именем сервиса добавляет рамка модуля почты, причина отправки в письмо не
-/// входит. Файлы — одним архивом ZIP (<see cref="CertificateArchive"/>).
-///
-/// ⚠ ⚠ <b>Таблица — строкой-заполнителем <c>{table:certificates}</c></b> (модуль почты, решение 0121): модуль
-/// вырезает переводы строк из подставляемых значений, и список одним значением слипся бы в строку. Таблицу
-/// модуль рисует сам — в HTML-части таблицей, в текстовой строкой на сертификат. Заполнитель обязан быть
-/// во всех трёх языках: таблица без заполнителя — отказ постановки, а не письмо без таблицы.
-///
-/// Видов два (<see cref="KindFor"/>): письма с одним и с несколькими сертификатами отличаются только
-/// словами — «сертификат» или «сертификаты», папки в архиве.
+/// ⚠ Виды сняты с предела <c>mail.rate_per_hour</c>: рассылку настраивает администратор. Заполнитель
+/// <c>{table:certificates}</c> обязан быть во всех языках, иначе постановка письма отказывает.
 /// </remarks>
 internal sealed class CertificateMail : IMailTemplateProvider
 {
@@ -66,10 +49,6 @@ internal sealed class CertificateMail : IMailTemplateProvider
     public const string TableName = "certificates";
 
     /// <summary>Имя файла с паролем закрытого ключа внутри архива.</summary>
-    /// <remarks>
-    /// ⚠ Пароль — файлом в архиве, не в теле: тело живёт в очереди до уборки, а вложение стирается
-    /// сразу после отправки.
-    /// </remarks>
     public const string PassphraseFile = "passphrase.txt";
 
     /// <summary>Сколько имён перечисляется в теме письма; остальные — «и ещё N».</summary>
@@ -117,11 +96,6 @@ internal sealed class CertificateMail : IMailTemplateProvider
     };
 
     /// <summary>Собрать письмо подписки.</summary>
-    /// <param name="certificates">Отправляемые сертификаты — в порядке подписки.</param>
-    /// <param name="formats">Типы файлов подписки.</param>
-    /// <param name="archive">Имя архива во вложении.</param>
-    /// <param name="locale">Язык письма.</param>
-    /// <param name="now">Сейчас — от него считаются оставшиеся дни.</param>
     public static CertificateLetter Letter(
         IReadOnlyList<CertificateFiles> certificates,
         IReadOnlyList<string> formats,
@@ -151,7 +125,7 @@ internal sealed class CertificateMail : IMailTemplateProvider
             ["names"] = Names(certificates.Select(с => с.Certificate.CommonName).ToList(), locale),
             ["archive"] = archive,
 
-            // ⚠ Серийные номера в шаблон не входят, но едут в значениях: по ним видно, какой выпуск ушёл.
+            // Не в шаблоне, но в значениях письма: видно, какой выпуск ушёл.
             ["serial_numbers"] = string.Join(", ", certificates.Select(с => с.Certificate.SerialNumber)),
         };
 

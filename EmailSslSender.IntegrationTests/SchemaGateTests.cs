@@ -5,20 +5,8 @@ using Testcontainers.PostgreSql;
 
 namespace EmailSslSender.IntegrationTests;
 
-/// <summary>
-/// Приложение не стартует на отставшей схеме (этап 11.5, правило 16).
-/// </summary>
-/// <remarks>
-/// ⚠ <b>Своя пустая база, и по-другому этого не проверить.</b> Общий хост коллекции уже
-/// накатан — на нём «схема отстала» не наступает никогда, и проверка зеленела бы, ничего не
-/// проверяя. Секунды на свой контейнер здесь покупают единственный настоящий вопрос: что
-/// увидит оператор, поднявший новый образ на старой базе.
-///
-/// ⚠ <b>Чего этот тест НЕ утверждает: что так безопаснее.</b> Он утверждает, что отказ
-/// внятен. Смысл разделения — в порядке «копия, потом миграция», и порядок этот держится
-/// вниманием оператора; машина здесь может только не отнимать у него момент, когда копию ещё
-/// можно снять.
-/// </remarks>
+/// <summary>Приложение не стартует на отставшей схеме и внятно объясняет почему.</summary>
+/// <remarks>⚠ Своя пустая база: общий хост коллекции уже накатан.</remarks>
 public sealed class SchemaGateTests : IAsyncLifetime
 {
     private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:16")
@@ -42,26 +30,20 @@ public sealed class SchemaGateTests : IAsyncLifetime
 
         var отказ = Should.Throw<InvalidOperationException>(() => _ = factory.Services);
 
-        // Сообщение обязано нести три вещи: что не так, чего не хватает поимённо и что
-        // набрать. Без третьего оператор в три часа ночи вспоминает синтаксис по памяти.
+        // Что не так, чего не хватает и что набрать.
         отказ.Message.ShouldContain("Схема базы отстала");
         отказ.Message.ShouldContain("identity: 20261022231421_Baseline");
-        // ⚠ Именно `run --rm migrate` — отдельная служба: только у неё пароль владельца схемы,
-        // служба api ходит ролью без права менять схему. И БЕЗ `dotnet EmailSslSender.Api.dll`:
-        // у образа это `ENTRYPOINT`, а команду `migrate` служба передаёт сама.
+        // ⚠ Отдельная служба migrate: только у неё пароль владельца схемы.
         отказ.Message.ShouldContain("docker compose run --rm migrate");
 
-        // ⚠ И про копию — тоже в сообщении. Разделение шагов заведено ровно затем, чтобы
-        // копию было где снять; напоминание об этом в тексте отказа — единственное место,
-        // где оператор его точно прочитает.
+        // Напоминание о копии перед миграцией.
         отказ.Message.ShouldContain("копия базы");
     }
 
     [Fact]
     public async Task После_миграции_то_же_приложение_поднимается()
     {
-        // ⚠ Зеркальный тест, и без него первый доказывает не то: приложение, не стартующее
-        // никогда, тоже прошло бы проверку «не стартует на отставшей схеме».
+        // Зеркало первого: иначе прошло бы и приложение, не стартующее никогда.
         await МигрироватьAsync();
 
         await using var factory = Factory();
@@ -71,15 +53,11 @@ public sealed class SchemaGateTests : IAsyncLifetime
         response.IsSuccessStatusCode.ShouldBeTrue();
     }
 
-    /// <summary>Накатить схему, не поднимая приложения, — командой migrate того же хоста.</summary>
     private async Task МигрироватьAsync() =>
         (await MigrateCommand.RunAsync(_postgres.GetConnectionString(), _мастерКлюч)).ShouldBe(0);
 
-    // --- обвязка ---------------------------------------------------------------------
-
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    /// <summary>Настоящее приложение на своей базе.</summary>
     private WebApplicationFactory<Program> Factory() =>
         new WebApplicationFactory<Program>().WithWebHostBuilder(builder =>
         {

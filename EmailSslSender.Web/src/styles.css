@@ -1,13 +1,7 @@
-/* Панель EAMS ssl sender: спокойная палитра, один акцент, две раскладки.
- *
- * ⚠ Раскладка выбирается атрибутом html[data-device] — режимом браузера (телефон / ПК), а не
- * шириной окна (lib/device.ts). Медиазапросов по ширине здесь нет намеренно: сначала общие
- * правила, в конце файла — поправки для режима ПК и для телефона.
- *
- * ⚠ CSP `style-src 'self'`: никаких встроенных стилей в разметке — состояние только классами.
- */
+/* ⚠ Раскладка — по html[data-device], не медиазапросами ширины; поправки режимов — в конце файла.
+   ⚠ CSP `style-src 'self'`: без встроенных стилей, состояние — только классами. */
 
-/* --- цвета и размеры ---------------------------------------------------------------------- */
+/* Цвета и размеры */
 
 :root {
   color-scheme: light;
@@ -64,7 +58,7 @@
   }
 }
 
-/* --- основа ------------------------------------------------------------------------------- */
+/* Основа */
 
 * { box-sizing: border-box; }
 html, body { margin: 0; background: var(--bg); color: var(--text); }
@@ -79,12 +73,12 @@ p { margin: 0; }
 .mono { font-family: var(--mono); font-size: 12.5px; }
 [hidden] { display: none !important; }
 
-/* Без анимаций, если система просит; индикатор загрузки остаётся — иначе он выглядит зависшим. */
+/* Индикатор загрузки крутится всегда — иначе выглядит зависшим. */
 @media (prefers-reduced-motion: reduce) {
   *:not(.spinner), *::before, *::after { animation: none !important; transition: none !important; }
 }
 
-/* --- каркас: верхняя панель, страница, заголовок ------------------------------------------ */
+/* Каркас */
 
 .top {
   position: sticky; top: 0; z-index: 10;
@@ -144,15 +138,14 @@ main { max-width: 1120px; margin: 0 auto; padding: 32px 24px 72px; }
 .tabs a:hover { color: var(--text); }
 .tabs a.active { background: var(--surface); color: var(--text); box-shadow: var(--shadow-sm); }
 
-/* --- карточки, таблицы, списки ------------------------------------------------------------ */
+/* Карточки, таблицы, списки */
 
 .card {
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
   padding: 20px 24px; box-shadow: var(--shadow-sm);
 }
 .card > h2 { margin-bottom: 14px; }
-/* Карточка без полей — для таблицы или списка во всю ширину. ⚠ Без overflow: hidden: он обрезал бы
-   выпадающее меню у нижних строк, поэтому углы скругляют сами крайние ячейки. */
+/* ⚠ Без overflow: hidden — обрезал бы меню; углы скругляют крайние ячейки. */
 .card.flush { padding: 0; }
 .card-head { padding: 18px 20px 4px; }
 .card-head h2 { margin: 0; }
@@ -162,7 +155,6 @@ main { max-width: 1120px; margin: 0 auto; padding: 32px 24px 72px; }
 table { width: 100%; border-collapse: separate; border-spacing: 0; }
 th, td { text-align: left; padding: 13px 20px; border-top: 1px solid var(--line); vertical-align: middle; }
 th { font-weight: 500; font-size: 12px; color: var(--muted); border-top: 0; padding-top: 11px; padding-bottom: 11px; background: color-mix(in srgb, var(--hover) 60%, transparent); }
-/* Заголовок, по которому сортируется таблица: кнопка без рамки, стрелка — направление. */
 th button.sort { border: 0; background: none; padding: 0; min-height: 0; font: inherit; color: inherit; gap: 5px; }
 th button.sort:hover { background: none; color: var(--text); }
 th button.sort svg { width: 13px; height: 13px; opacity: .45; }
@@ -172,12 +164,11 @@ tbody tr:hover td { background: color-mix(in srgb, var(--hover) 55%, transparent
 tr.off td:not(.actions) { opacity: .5; }
 td.actions { text-align: right; white-space: nowrap; width: 1%; }
 .sub { display: block; color: var(--muted); font-size: 12px; margin-top: 1px; }
-/* Списки в ячейке — целиком, по строке на элемент (сертификаты и получатели подписки). */
 .names, .lines { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
-/* break-word, а не anywhere: тот сжимал колонку таблицы, и адрес рвался посреди слова. */
+/* break-word, не anywhere: тот сжимает колонку таблицы. */
 .names li, .lines li { overflow-wrap: break-word; }
 .names .until { margin-left: 8px; color: var(--muted); font-size: 12px; font-weight: 400; white-space: nowrap; }
-/* Описание подписки над её сертификатами; ширина ограничена, чтобы длинный текст не раздувал колонку. */
+/* Ширина ограничена, чтобы описание не раздувало колонку. */
 .period { display: block; margin-top: 3px; font-size: 12px; }
 .period .state { color: var(--warn); }
 .desc { display: block; max-width: 340px; margin-bottom: 6px; color: var(--muted); font-size: 12.5px; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -212,7 +203,7 @@ label.search input { padding-left: 34px; }
 .empty-title { color: var(--text); font-weight: 550; }
 .empty button { margin-top: 8px; }
 
-/* --- состояния: метки, точки, плашки ------------------------------------------------------ */
+/* Состояния */
 
 .chips { display: flex; flex-wrap: wrap; gap: 4px; }
 .chip {
@@ -270,7 +261,7 @@ label.search input { padding-left: 34px; }
 .banner-text { flex: 1; display: grid; gap: 2px; min-width: 0; }
 .banner-text span { color: var(--muted); font-size: 13px; }
 
-/* --- формы -------------------------------------------------------------------------------- */
+/* Формы */
 
 form { display: grid; gap: 16px; }
 .form-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
@@ -300,7 +291,6 @@ input.code { font-size: 24px; letter-spacing: .32em; text-align: center; font-va
 label.check { display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none; }
 label.check input { width: 17px; height: 17px; margin: 0; accent-color: var(--accent); flex: none; }
 
-/* Набор переключателей-«пилюль» (типы файлов в подписке). */
 .toggle-group { display: flex; flex-wrap: wrap; gap: 6px; }
 .toggle-group label { cursor: pointer; }
 .toggle-group input { position: absolute; opacity: 0; pointer-events: none; }
@@ -311,7 +301,6 @@ label.check input { width: 17px; height: 17px; margin: 0; accent-color: var(--ac
 .toggle-group input:checked + span { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
 .toggle-group input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-/* Выбор одного из вариантов плитками (формат файла при скачивании). */
 .choices { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .choices label {
   position: relative; display: grid; gap: 1px; padding: 9px 12px; cursor: pointer;
@@ -332,7 +321,7 @@ label.check input { width: 17px; height: 17px; margin: 0; accent-color: var(--ac
 .error { color: var(--err); font-size: 13px; }
 .error:empty { display: none; }
 
-/* --- кнопки ------------------------------------------------------------------------------- */
+/* Кнопки */
 
 button, .button {
   font: inherit; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; gap: 7px;
@@ -357,7 +346,7 @@ button svg { flex: none; width: 16px; height: 16px; }
 .row-actions { display: inline-flex; gap: 6px; }
 .row-actions button { min-height: 32px; padding: 5px 11px; font-size: 13px; }
 
-/* --- меню действий (ПК; на телефоне — лист снизу, см. конец файла) ------------------------- */
+/* Меню действий (ПК) */
 
 .menu { position: relative; display: inline-block; }
 .menu-list {
@@ -369,7 +358,7 @@ button svg { flex: none; width: 16px; height: 16px; }
 .menu-list button { justify-content: flex-start; border: 0; background: none; padding: 8px 10px; border-radius: 6px; font-weight: 400; }
 .menu-list button:hover { background: var(--hover); }
 
-/* --- окна --------------------------------------------------------------------------------- */
+/* Окна */
 
 dialog {
   width: min(480px, calc(100vw - 32px)); padding: 0; border: 1px solid var(--line); border-radius: 16px;
@@ -380,7 +369,7 @@ dialog::backdrop { background: rgba(8, 10, 14, .45); backdrop-filter: blur(3px);
 dialog form { padding: 24px; gap: 18px; }
 dialog h2 { margin: 0 0 4px; font-size: 17px; }
 
-/* --- настройки по категориям (Безопасность) ----------------------------------------------- */
+/* Настройки по категориям */
 
 .settings-layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 24px; align-items: start; }
 .cat-nav { position: sticky; top: 84px; display: grid; gap: 2px; }
@@ -424,7 +413,6 @@ dialog h2 { margin: 0 0 4px; font-size: 17px; }
 .switch input:checked + span::after { transform: translateX(18px); }
 .switch input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 2px; }
 
-/* Одна панель «Сохранить» на всю страницу — появляется, когда есть изменения. */
 .savebar {
   position: sticky; bottom: 16px; z-index: 5; margin-top: 20px;
   display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
@@ -436,7 +424,7 @@ dialog h2 { margin: 0 0 4px; font-size: 17px; }
 .savebar .error { flex-basis: 100%; order: 3; }
 .savebar-actions { margin-left: auto; display: flex; gap: 8px; }
 
-/* --- вход и страницы ссылок из писем ------------------------------------------------------ */
+/* Вход и ссылки из писем */
 
 .auth { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
 .auth-card {
@@ -454,7 +442,7 @@ dialog h2 { margin: 0 0 4px; font-size: 17px; }
 .copy { display: flex; gap: 8px; }
 .copy input { font-family: var(--mono); font-size: 12px; }
 
-/* --- уведомления и загрузка --------------------------------------------------------------- */
+/* Уведомления и загрузка */
 
 .toasts { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); display: grid; gap: 8px; z-index: 100; }
 .toast {
@@ -467,18 +455,16 @@ dialog h2 { margin: 0 0 4px; font-size: 17px; }
 .spinner { width: 20px; height: 20px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; margin: 56px auto; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-/* ===== режим ПК ========================================================================== */
+/* Режим ПК */
 
-/* ⚠ Узкое окно на компьютере — по-прежнему компьютерная раскладка: прокрутка вбок вместо
-   перестройки (решение владельца: раскладку выбирает режим браузера, не ширина). Экраны входа
-   этого не касается — они по центру при любой ширине. */
+/* Узкое окно на ПК — прокрутка вбок, не перестройка. */
 html[data-device="desktop"] .shell { min-width: 900px; }
 
-/* ===== режим телефона =================================================================== */
+/* Режим телефона */
 
 html[data-device="mobile"] { font-size: 15px; }
 
-/* Каркас: шапка сверху, разделы — панелью внизу. */
+/* Разделы — панелью внизу. */
 html[data-device="mobile"] .top {
   height: auto; min-height: 56px; gap: 12px; justify-content: space-between;
   padding: env(safe-area-inset-top) 16px 0; padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right));
@@ -506,7 +492,6 @@ html[data-device="mobile"] .tabbar a.active { color: var(--accent); }
 html[data-device="mobile"] .tabs { display: flex; }
 html[data-device="mobile"] .tabs a { flex: 1; text-align: center; padding: 8px 10px; }
 
-/* Карточки и списки. */
 html[data-device="mobile"] .card { padding: 16px; border-radius: 14px; }
 html[data-device="mobile"] .card.flush { padding: 0; }
 html[data-device="mobile"] .toolbar { flex-wrap: wrap; }
@@ -516,7 +501,7 @@ html[data-device="mobile"] .pills { overflow-x: auto; scrollbar-width: none; mar
 html[data-device="mobile"] .banner { flex-wrap: wrap; }
 html[data-device="mobile"] .banner button { width: 100%; }
 
-/* Формы в одну колонку. Поля 16px: меньший шрифт iOS увеличивает при фокусе, и страница съезжает. */
+/* Поля 16px: меньший шрифт iOS увеличивает при фокусе. */
 html[data-device="mobile"] .row,
 html[data-device="mobile"] .row.three { grid-template-columns: minmax(0, 1fr); }
 html[data-device="mobile"] .choices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -530,14 +515,13 @@ html[data-device="mobile"] input:not([type]), html[data-device="mobile"] select,
 html[data-device="mobile"] textarea.key { font-size: 12px; }
 html[data-device="mobile"] input.code { font-size: 26px; min-height: 56px; }
 
-/* Кнопки под палец. */
 html[data-device="mobile"] button, html[data-device="mobile"] .button { min-height: 44px; }
 html[data-device="mobile"] button.icon { min-height: 0; padding: 10px; }
 html[data-device="mobile"] button.link { min-height: 0; }
 html[data-device="mobile"] .row-actions button { min-height: 42px; font-size: 14px; }
 html[data-device="mobile"] .actions-row button { flex: 1; }
 
-/* Окно — лист снизу во всю ширину. */
+/* Окно — лист снизу. */
 html[data-device="mobile"] dialog,
 html[data-device="mobile"] dialog.wide {
   width: 100%; max-width: 100%; margin: auto 0 0; border-radius: 20px 20px 0 0; border-bottom: 0;
@@ -551,7 +535,7 @@ html[data-device="mobile"] .sheet-body::before {
 }
 @keyframes sheet-up { from { transform: translateY(100%); } }
 
-/* Лист действий «⋯»: крупные пункты одной группой, «Отмена» отдельно. */
+/* Лист действий «⋯». */
 html[data-device="mobile"] dialog.sheet { background: var(--bg); }
 html[data-device="mobile"] .sheet-body { display: grid; gap: 10px; padding: 18px 12px calc(12px + env(safe-area-inset-bottom)); }
 html[data-device="mobile"] .sheet-title { padding: 0 12px; color: var(--muted); font-size: 13px; text-align: center; overflow-wrap: anywhere; }
@@ -565,7 +549,7 @@ html[data-device="mobile"] .sheet-list button:first-child { border-top: 0; }
 html[data-device="mobile"] .sheet-list button:active { background: var(--hover); }
 html[data-device="mobile"] .sheet-cancel { min-height: 52px; border-radius: 14px; font-size: 16px; font-weight: 600; }
 
-/* Настройки по категориям: одна колонка, панель сохранения над панелью разделов. */
+/* Панель сохранения — над панелью разделов. */
 html[data-device="mobile"] .settings-layout { grid-template-columns: minmax(0, 1fr); }
 html[data-device="mobile"] .setting-group h2 { padding: 14px 16px 8px; }
 html[data-device="mobile"] .setting-row { padding: 12px 16px; }
@@ -574,10 +558,8 @@ html[data-device="mobile"] .savebar { bottom: calc(84px + env(safe-area-inset-bo
 html[data-device="mobile"] .savebar-actions { width: 100%; }
 html[data-device="mobile"] .savebar-actions button { flex: 1; }
 
-/* Уведомления — над панелью разделов. */
 html[data-device="mobile"] .toasts { bottom: calc(84px + env(safe-area-inset-bottom)); width: calc(100vw - 28px); }
 html[data-device="mobile"] .toast { text-align: center; }
 
-/* Вход. */
 html[data-device="mobile"] .auth { padding: 16px; place-items: start center; padding-top: max(10vh, env(safe-area-inset-top)); }
 html[data-device="mobile"] .auth-card { padding: 24px 20px; }

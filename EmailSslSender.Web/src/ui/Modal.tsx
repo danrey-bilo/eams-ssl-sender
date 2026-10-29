@@ -1,12 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
 import { Cancelled, errorText } from '../lib/api';
 
-/**
- * Модальное окно с формой на <dialog>.
- *
- * onSubmit бросает — текст ошибки остаётся в окне, окно не закрывается; Cancelled (человек закрыл
- * окно кода или сессия кончилась) не показывается вовсе. На телефоне окно — лист снизу (стили).
- */
+/** Окно с формой на <dialog>: ошибка onSubmit остаётся в окне, Cancelled не показывается. */
 export function FormModal({
   title,
   note,

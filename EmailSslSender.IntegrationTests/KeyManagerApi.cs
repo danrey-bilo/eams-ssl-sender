@@ -7,15 +7,8 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace EmailSslSender.IntegrationTests;
 
-/// <summary>
-/// Key Manager Plus через API: ключ API, проверка связи, подписки, выгрузка сертификата и ключа.
-/// </summary>
-/// <remarks>
-/// ⚠ ⚠ <b>Подписки, ключ API и выгрузка требуют свежего второго фактора, и это проверяется
-/// отдельно</b> (решение владельца 2026-10-20). Подписка рассылает закрытые ключи на записанные в
-/// ней адреса: дописавший свой адрес получает ключ следующим опросом. Ключ API отдаёт их все
-/// разом, выгрузка — прямо в руки.
-/// </remarks>
+/// <summary>Key Manager Plus через API: ключ API, проверка связи, подписки, выгрузка.</summary>
+/// <remarks>⚠ Подписки, ключ API и выгрузка отдают закрытые ключи — требуют свежего второго фактора.</remarks>
 [Collection(SenderHost.Collection)]
 public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
 {
@@ -28,7 +21,7 @@ public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
 
     private const string Ключ = "A36ECFEF-1234-4C5D-8E9F-0A1B2C3D4E5F";
 
-    /// <summary>Common Name снимка этого файла — свой, чтобы не задеть соседей по коллекции.</summary>
+    /// <summary>Свой Common Name — не задеть соседей по коллекции.</summary>
     private const string Имя = "keymanager-api.example.test";
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -84,13 +77,7 @@ public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
             .GetValue<bool>().ShouldBeFalse();
     }
 
-    /// <summary>
-    /// Без свежего кода не проходит ничего, что отдаёт ключи или решает, кому они уйдут.
-    /// </summary>
-    /// <remarks>
-    /// Отказ — до разбора ресурса: подписки с таким номером нет, а ответ всё равно 403, а не 404.
-    /// Чтение и проверка связи кода не спрашивают.
-    /// </remarks>
+    // Отказ — до разбора ресурса: подписки нет, а ответ 403, не 404.
     [Fact]
     public async Task Ключ_и_подписки_без_свежего_фактора_отвергаются()
     {
@@ -108,7 +95,7 @@ public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
         await ОтказФактора(await клиент.PostAsJsonAsync(
             ЗакрытыйКлюч, new { common_name = Имя, serial_number = "01" }, Ct));
 
-        // Чтение свежего фактора не требует, проверка связи — тоже.
+        // Чтение и проверка связи кода не спрашивают.
         (await клиент.GetAsync(Подписки, Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
         (await клиент.GetAsync(Состояние, Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
         (await клиент.GetAsync("/api/keymanager/certificates", Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
@@ -125,9 +112,7 @@ public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
         (await клиент.PostAsJsonAsync(Подписки, Черновик(), Ct)).StatusCode.ShouldBe(HttpStatusCode.Created);
     }
 
-    /// <summary>
-    /// Выгрузка и показ ключа — только для пары, которую видел опрос; прочее — 404 без запроса наружу.
-    /// </summary>
+    /// <summary>Только пара, которую видел опрос; прочее — 404 без запроса наружу.</summary>
     [Fact]
     public async Task Выгрузка_пары_не_из_снимка_отвечает_404()
     {
@@ -233,7 +218,7 @@ public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
         var id = подписка["id"]!.GetValue<Guid>();
         Строки(подписка["common_names"]).ShouldBe(["a.example.com", "b.example.com"], "без пробелов, пустых и повторов");
 
-        // Снять расписание, не включив «при обновлении», — подписка без способа отправки: отказ целиком.
+        // Без расписания и «при обновлении» способа отправки нет — отказ.
         var безСпособа = await клиент.PatchAsJsonAsync($"{Подписки}/{id}", new { interval_days = 0 }, Ct);
         безСпособа.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         (await безСпособа.Content.ReadFromJsonAsync<JsonObject>(Ct))!["details"]!["field"]!.GetValue<string>().ShouldBe("on_change");
@@ -383,7 +368,7 @@ public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
     [Fact]
     public async Task Недоступный_сервер_приезжает_409_с_причиной()
     {
-        // Порт, на котором заведомо никто не слушает: нужен отказ соединения, а не сервер.
+        // Никто не слушает — отказ соединения.
         host.Settings.Values["keymanager.base_url"] = "https://127.0.0.1:1";
         await host.CreateClient().PutAsJsonAsync(КлючApi, new { api_key = Ключ }, Ct);
 
@@ -411,8 +396,6 @@ public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
             .StatusCode.ShouldBe(HttpStatusCode.OK);
     }
 
-    // --- обвязка ---------------------------------------------------------------------------
-
     private static object Черновик() => new
     {
         common_name = "site.example.com",
@@ -431,7 +414,7 @@ public sealed class KeyManagerApi(SenderHost host) : IAsyncLifetime
         конверт["details"]!["window_minutes"]!.GetValue<int>().ShouldBe(10);
     }
 
-    /// <summary>Пара «Common Name + серийный» в снимке опроса — как после настоящего опроса.</summary>
+    /// <summary>Пара «Common Name + серийный» в снимке, как после опроса.</summary>
     private async Task СнимокAsync(string серийный)
     {
         await using var scope = host.Services.CreateAsyncScope();

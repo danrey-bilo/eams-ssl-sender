@@ -6,25 +6,11 @@ using System.Text.RegularExpressions;
 
 namespace EmailSslSender.Modules.KeyManager.Delivery;
 
-/// <summary>
-/// Когда выпущен сертификат: <c>NotBefore</c> из файла, выгруженного из Key Manager Plus.
-/// </summary>
-/// <remarks>
-/// ⚠ Защита от отката (ревью надёжности 2026-10-27) сравнивает выпуски по дате выпуска, а не по сроку:
-/// сертификат, продлённый досрочно под новые предельные сроки, истекает РАНЬШЕ прежнего, но выпущен позже.
-/// Список Key Manager Plus даты выпуска не отдаёт — она берётся из самого сертификата.
-/// </remarks>
+/// <summary>Дата выпуска (<c>NotBefore</c>) из файла сертификата: список Key Manager Plus её не отдаёт.</summary>
+/// <remarks>⚠ Откат определяется по выпуску, не по сроку: досрочно продлённый истекает раньше прежнего.</remarks>
 internal static partial class CertificateIssue
 {
-    /// <summary>
-    /// Дата выпуска сертификата с этим серийным номером из файла PEM (цепочка — ищется нужный) или DER.
-    /// <c>null</c> — разобрать не удалось или в файле нет сертификата с этим номером.
-    /// </summary>
-    /// <remarks>
-    /// Файл с одним сертификатом принимается и без совпадения номера: Key Manager Plus не обещает писать
-    /// серийный номер так же, как он записан в сертификате. В цепочке без совпадения — <c>null</c>: какой из
-    /// сертификатов «тот», не угадать.
-    /// </remarks>
+    /// <summary><c>NotBefore</c> сертификата с этим серийным из PEM или DER; единственный в файле — без сверки номера.</summary>
     public static DateTimeOffset? NotBefore(byte[] file, string serialNumber)
     {
         ArgumentNullException.ThrowIfNull(file);

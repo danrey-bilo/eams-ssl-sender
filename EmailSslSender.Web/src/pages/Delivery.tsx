@@ -15,15 +15,12 @@ const LOCALES: Array<[string, string]> = [['ru', 'Русский'], ['uk', 'Ук
 /** Как у сервера: `CertificateSubscription.MaxDescription`. */
 const DESCRIPTION_MAX = 500;
 
-/** Сертификаты подписки коротко — для заголовков окон: первый и «+N». */
+/** Для заголовков окон: первый и «+N». */
 function namesText(s: Subscription): string {
   return s.common_names[0] + (s.common_names.length > 1 ? ' +' + (s.common_names.length - 1) : '');
 }
 
-/**
- * Все сертификаты подписки, по строке на каждый, со сроком из снимка Key Manager. Имени, которого в снимке
- * нет, сказано об этом — так видна опечатка; пустой снимок (опроса ещё не было) молчит.
- */
+/** Все сертификаты со сроком; имя не из снимка помечено — так видна опечатка. */
 function Names({ s, expiry }: { s: Subscription; expiry: Map<string, string | null> }) {
   return (
     <ul className="names">
@@ -81,7 +78,7 @@ function Period({ s }: { s: Subscription }) {
   return <span className="period">{range}{state && <span className="state"> · {state}</span>}</span>;
 }
 
-/** Часовой пояс браузера: по нему администратор вводит дни и время отправки. */
+/** Пояс браузера — для дней и времени отправки. */
 function browserZone(): string {
   try {
     return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
@@ -226,13 +223,11 @@ export function DeliveryPage() {
 function LastDelivery({ s }: { s: Subscription }) {
   const { show } = useOverlay();
 
-  // Выключенная не шлёт ничего — зелёная точка у неё обманывала бы.
   if (!s.enabled) {
     const last = s.last_sent_at ? 'Последняя отправка ' + fmtDateTime(s.last_sent_at) : undefined;
     return <span title={last}><Status kind="">Выключена</Status></span>;
   }
 
-  // Период окончен — опрос её больше не шлёт, как и выключенную.
   if (s.period === 'after') {
     const last = s.last_sent_at ? 'Последняя отправка ' + fmtDateTime(s.last_sent_at) : undefined;
     return <span title={last}><Status kind="">Период окончен</Status></span>;
@@ -285,7 +280,7 @@ function SubscriptionDialog({ subscription: s, known, onClose }: {
   const [planned, setPlanned] = useState(!!(s?.active_from || s?.active_until));
   const [from, setFrom] = useState(s?.active_from ?? '');
   const [until, setUntil] = useState(s?.active_until ?? '');
-  // Пояс подписки остаётся её: правка из другого пояса не сдвигает её дни и время.
+  // Правка из другого пояса не сдвигает дни и время подписки.
   const zone = s?.time_zone ?? browserZone();
   const knownNames = useMemo(() => [...new Set(known.map(c => c.common_name))].sort(), [known]);
   const offered = knownNames.filter(n => !names.some(x => x.toLowerCase() === n.toLowerCase()));
@@ -298,7 +293,7 @@ function SubscriptionDialog({ subscription: s, known, onClose }: {
   };
 
   const submit = async () => {
-    // Набранное, но не добавленное имя тоже идёт в подписку: Enter нажимают не все.
+    // Набранное без Enter имя тоже идёт в подписку.
     const all = withNames(names, splitNames(draft));
     if (all.length === 0) throw new Invalid('Добавьте хотя бы один сертификат.');
     if (formats.length === 0) throw new Invalid('Выберите хотя бы один файл.');
@@ -314,9 +309,8 @@ function SubscriptionDialog({ subscription: s, known, onClose }: {
       include_passphrase: passphrase,
       locale,
       enabled,
-      // Пустое снимает описание.
       description: description.trim(),
-      // Пустые строки снимают период и время.
+      // Пустые строки снимают описание, период и время.
       active_from: planned ? from : '',
       active_until: planned ? until : '',
       send_time: sendTime,
@@ -385,7 +379,7 @@ function SubscriptionDialog({ subscription: s, known, onClose }: {
           <Check label="Запланированный старт и окончание" checked={planned} onChange={setPlanned} />
           {planned && (
             <div className="inline">
-              {/* Подпись и поле переносятся вместе: на телефоне «по» не отрывается от своего дня. */}
+              {/* «по» не отрывается от своего дня. */}
               <span className="inline">
                 с
                 <input type="date" aria-label="Первый день" value={from} max={until || undefined} onChange={e => setFrom(e.target.value)} />

@@ -15,10 +15,8 @@ export const text = (settings: Settings, key: string): string => {
 };
 
 /**
- * Сохранить настройки: только изменённые. Пустая строка — null у обнуляемых и умолчание у прочих.
- *
- * ⚠ Неизменённые ключи не отправляются: сервер требует свежего кода за любой названный ключ
- * защиты, и форма, отправившая всё подряд, спрашивала бы код без нужды.
+ * Пустая строка — null у обнуляемых, умолчание у прочих.
+ * ⚠ Только изменённые ключи: за любой названный ключ защиты сервер спросит код.
  */
 export async function saveSettings(settings: Settings, values: Record<string, string | number | boolean>) {
   const body: { values: Record<string, unknown>; reset: string[] } = { values: {}, reset: [] };

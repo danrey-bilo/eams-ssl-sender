@@ -23,9 +23,7 @@ public sealed class SecurityHeadersTests(SenderHost host)
     [Fact]
     public async Task Ответ_с_ошибкой_тоже_несёт_заголовки_защиты()
     {
-        // Обработчик ошибок очищает ответ (Response.Clear) — заголовки обязаны пережить это.
-        // ⚠ Личность обвязки общая на коллекцию: без выхода запрос пришёл бы от соседа, вошедшего раньше
-        // (порядок тестов в Release другой — так тест и падал).
+        // ⚠ Личность общая на коллекцию — без выхода запрос пришёл бы от соседа.
         host.User.SignOut();
         var ответ = await host.CreateClient().GetAsync("/api/me", Ct);
 
@@ -37,7 +35,6 @@ public sealed class SecurityHeadersTests(SenderHost host)
     [Fact]
     public async Task HSTS_только_на_ответ_по_HTTPS()
     {
-        // Проверка здоровья в контейнере и 127.0.0.1:8001 идут по HTTP — там HSTS не нужен.
         var поHttp = await host.CreateClient().GetAsync("/api/health", Ct);
         поHttp.Headers.Contains("Strict-Transport-Security").ShouldBeFalse();
 

@@ -3,15 +3,8 @@ using Testcontainers.PostgreSql;
 
 namespace EmailSslSender.IntegrationTests;
 
-/// <summary>
-/// Сброс доступа из переменных окружения (установка через Portainer) применяется один раз на пару «адрес +
-/// пароль», а не при каждом обновлении стека (ревью безопасности 2026-10-27).
-/// </summary>
-/// <remarks>
-/// ⚠ Служба <c>migrate</c> выполняется при каждом обновлении стека. Прежде забытые в стеке переменные
-/// снова и снова меняли пароль, снимали аутентификатор и закрывали сессии — знающий пароль из переменных
-/// входил первым и подключал свой аутентификатор.
-/// </remarks>
+/// <summary>Сброс доступа из окружения — один раз на пару «адрес + пароль».</summary>
+/// <remarks>⚠ <c>migrate</c> идёт при каждом обновлении стека — забытые переменные не должны сбрасывать снова.</remarks>
 public sealed class ResetAccessOnceTests : IAsyncLifetime
 {
     private const string Адрес = "admin@example.test";
@@ -40,13 +33,13 @@ public sealed class ResetAccessOnceTests : IAsyncLifetime
         var послеСброса = await ХешAsync();
         (await ОтметокAsync()).ShouldBe(1);
 
-        // Администратор вошёл и сменил пароль; переменные забыты в стеке — обновление стека их не применяет.
+        // Администратор сменил пароль, переменные забыты в стеке.
         await ВыполнитьAsync("UPDATE users SET password_hash = 'сменён-администратором' WHERE email = @a");
         (await MigrateAsync(Сброс("Сброшенный-пароль-2026!"))).ShouldBe(0);
 
         (await ХешAsync()).ShouldBe("сменён-администратором", "та же пара второй раз не применяется");
 
-        // Сбросить снова — другой пароль.
+        // Другой пароль — новый сброс.
         (await MigrateAsync(Сброс("Ещё-один-пароль-2026!"))).ShouldBe(0);
 
         (await ХешAsync()).ShouldNotBe("сменён-администратором");

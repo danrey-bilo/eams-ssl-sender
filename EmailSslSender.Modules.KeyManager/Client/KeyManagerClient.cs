@@ -9,75 +9,43 @@ namespace EmailSslSender.Modules.KeyManager.Client;
 
 /// <summary>Сертификат из списка Key Manager Plus.</summary>
 /// <param name="CommonName">Common Name.</param>
-/// <param name="SerialNumber">Серийный номер — как его пишет Key Manager Plus.</param>
+/// <param name="SerialNumber">Серийный номер в записи KMP.</param>
 /// <param name="ExpiresOn">Действует до; <c>null</c>, если дата не разобралась.</param>
 internal sealed record KmpCertificate(string CommonName, string SerialNumber, DateOnly? ExpiresOn);
 
 /// <summary>Файл сертификата, выгруженный из Key Manager Plus.</summary>
 internal sealed record KmpFile(string FileName, string ContentType, byte[] Content)
 {
-    /// <summary>Содержимое не печатается: в файле бывает закрытый ключ.</summary>
+    /// <summary>Без содержимого: в файле бывает закрытый ключ.</summary>
     public override string ToString() => $"{FileName} ({Content.Length} байт)";
 }
 
-/// <summary>
-/// Key Manager Plus не ответил или ответил отказом.
-/// </summary>
-/// <remarks>
-/// ⚠ <b>Текст сообщения составлен здесь и секретов не несёт</b>: ни ключа API, ни содержимого
-/// файлов. Он уходит в <c>last_error</c>, в лог и администратору в ответе — ради этого и
-/// составлен по-человечески, а не <c>SafeError</c>-цепочкой типов.
-/// </remarks>
+/// <summary>Отказ или недоступность Key Manager Plus.</summary>
+/// <remarks>⚠ Текст уходит в лог, <c>last_error</c> и администратору — без ключа API и содержимого файлов.</remarks>
 internal sealed class KeyManagerException(string message, Exception? inner = null) : Exception(message, inner);
 
-/// <summary>Что модуль спрашивает у Key Manager Plus.</summary>
 internal interface IKeyManagerClient : IDisposable
 {
-    /// <summary>Все SSL-сертификаты: Common Name, серийный номер, срок.</summary>
     Task<IReadOnlyList<KmpCertificate>> ListAsync(CancellationToken cancellationToken = default);
 
     /// <summary>Выгрузить сертификат в одном из типов <see cref="CertificateFormats"/>.</summary>
     Task<KmpFile> DownloadAsync(
         string commonName, string serialNumber, string format, CancellationToken cancellationToken = default);
 
-    /// <summary>Пароль закрытого ключа; <c>null</c>, если Key Manager Plus его не хранит.</summary>
+    /// <summary>Пароль закрытого ключа; <c>null</c>, если KMP его не хранит.</summary>
     Task<string?> PassphraseAsync(
         string commonName, string serialNumber, CancellationToken cancellationToken = default);
 }
 
-/// <summary>
-/// Клиент REST API Key Manager Plus (<c>/api/pki/restapi/&lt;метод&gt;</c>).
-/// </summary>
+/// <summary>Клиент REST API Key Manager Plus (<c>/api/pki/restapi/&lt;метод&gt;</c>).</summary>
 /// <remarks>
-/// ⚠ ⚠ <b>Ключ API — только заголовком <c>AUTHTOKEN</c>, никогда в адресе.</b> Документация
-/// показывает и вариант «ключ в пути», но адрес запроса оседает в логах — нашем
-/// (<c>System.Net.Http.HttpClient</c>), прокси и самого Key Manager Plus.
-///
-/// ⚠ <b>Вход — JSON в параметре <c>INPUT_DATA</c></b> вида <c>{"operation":{"Details":{…}}}</c>,
-/// для GET — в строке запроса, закодированным.
-///
-/// ⚠ ⚠ <b><c>getAllSSLCertsExpiryDate</c> зовётся без <c>INPUT_DATA</c>.</b> Фильтр
-/// безопасности Key Manager Plus пускает к каждому адресу только объявленные параметры, и 7.1.1
-/// (build 7110) на <c>INPUT_DATA</c> у этого метода отвечает <c>400 EXTRA_PARAM_FOUND</c> — хотя
-/// документация обещает <c>customExpiryDateFormat</c> с build 7040. Срок берётся из
-/// <c>ExpiryDate</c> («Oct 2, 2025»). Неизвестный параметр на любом методе даёт тот же отказ.
-///
-/// ⚠ ⚠ <b>Конверт ответа у Key Manager Plus непостоянен</b>, и разбор терпим к этому нарочно:
-/// <c>result.status</c> у одних методов и плоский <c>Status</c> у других, <c>Success</c> и
-/// <c>SUCCESS</c>, <c>details</c> — то массив, то объект. Коды ошибок и формат отказа не описаны
-/// вовсе. Поэтому успехом считается только явное <c>success</c> в любом регистре, а всё прочее
-/// — отказом с текстом, который прислал сервер.
-///
-/// ⚠ <b>Формат ответа <c>getCertificate</c> документация не описывает</b> («Certificate object»).
-/// Принимается файл как есть; JSON вместо файла — отказ, с перечнем ключей ответа (не значений:
-/// в них может лежать ключ) — по нему клиент дописывается после сверки с живым сервером.
+/// ⚠ Ключ API — только заголовком <c>AUTHTOKEN</c>: адрес оседает в логах. KMP отвергает необъявленные
+/// параметры (<c>EXTRA_PARAM_FOUND</c>) — список запрашивается без <c>INPUT_DATA</c>; конверт ответа непостоянен.
 /// </remarks>
 internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) : IKeyManagerClient
 {
-    /// <summary>Заголовок с ключом API.</summary>
     internal const string Заголовок = "AUTHTOKEN";
 
-    /// <summary>Путь методов относительно адреса сервера.</summary>
     internal const string Путь = "api/pki/restapi/";
 
     public async Task<IReadOnlyList<KmpCertificate>> ListAsync(CancellationToken cancellationToken = default)
@@ -87,9 +55,7 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
         var корень = await JsonAsync(ответ, cancellationToken);
         Проверить(корень, "список сертификатов");
 
-        // ⚠ ⚠ Нераспознанный ответ — отказ, а не пустой список: «успех с нулём сертификатов» молча
-        // писал бы всем подпискам «сертификата нет», а через месяц очистил бы снимок (ревью надёжности
-        // 2026-10-27). В тексте — только имена полей: значения могут нести что угодно.
+        // ⚠ Нераспознанный ответ — отказ, а не пустой список: иначе снимок молча опустеет.
         var детали = корень["details"] ?? throw new KeyManagerException(
             "Key Manager Plus ответил на запрос списка сертификатов без поля details — формат ответа не "
             + $"распознан (поля ответа: {string.Join(", ", корень.Select(поле => поле.Key))}).");
@@ -102,8 +68,7 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
             var имя = Строка(элемент, "Common Name");
             var серийный = Строка(элемент, "serialNumber");
 
-            // ⚠ Строка без имени или серийного номера пропускается, а не роняет опрос: по ней
-            // нельзя ни выбрать сертификат, ни выгрузить его, а остальные от неё не зависят.
+            // Без имени или серийного её не выгрузить — пропускаем, а не роняем опрос.
             if (string.IsNullOrWhiteSpace(имя) || string.IsNullOrWhiteSpace(серийный))
             {
                 continue;
@@ -154,15 +119,13 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
 
         if (!ПохожНаСертификат(байты))
         {
-            // ⚠ Без содержимого в тексте: что бы там ни лежало, оно уходит в лог и в last_error.
+            // ⚠ Без содержимого: текст уходит в лог и last_error.
             throw new KeyManagerException(
                 $"Key Manager Plus вернул не файл сертификата для {тип} {commonName} "
                 + $"({ответ.Content.Headers.ContentType?.MediaType ?? "тип не указан"}, {байты.Length} байт).");
         }
 
-        // ⚠ ⚠ Имя своё, а не из Content-Disposition: живой 7.1.1 называет и PEM, и KEY одинаково —
-        // «mdmtst.example.com», без расширения, и получатель видел два одноимённых файла,
-        // которые не открыть двойным щелчком.
+        // ⚠ Имя своё: KMP 7.1.1 называет PEM и KEY одинаково и без расширения.
         var zip = байты.AsSpan().StartsWith("PK\x03\x04"u8);
 
         return new KmpFile(
@@ -182,7 +145,6 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
         var корень = await JsonAsync(ответ, cancellationToken);
         Проверить(корень, $"пароль ключа сертификата {commonName}");
 
-        // ⚠ details — то объект, то массив (разбор у класса): берём первый элемент любого вида.
         var детали = Элементы(корень["details"]).FirstOrDefault();
         var пароль = детали is null ? null : Строка(детали, "Passphrase") ?? Строка(детали, "passphrase");
 
@@ -191,10 +153,7 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
 
     public void Dispose() => http.Dispose();
 
-    /// <summary>
-    /// Отправить GET с ключом в заголовке и <c>INPUT_DATA</c>, если есть детали; неуспешный
-    /// HTTP — отказ.
-    /// </summary>
+    /// <summary>GET с ключом в заголовке и <c>INPUT_DATA</c>, если есть детали; неуспешный HTTP — отказ.</summary>
     private async Task<HttpResponseMessage> ЗапроситьAsync(
         string метод, JsonObject? детали, CancellationToken cancellationToken)
     {
@@ -218,9 +177,7 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
         }
         catch (HttpRequestException ошибка)
         {
-            // ⚠ В текст — вид сбоя (имя, соединение, TLS), а не сообщение исключения целиком:
-            // этого достаточно, чтобы понять, куда смотреть, и туда точно не попадёт адрес с
-            // параметрами.
+            // ⚠ Только вид сбоя, не сообщение исключения: в нём бывает адрес с параметрами.
             throw new KeyManagerException(
                 $"Key Manager Plus недоступен ({метод}): {Вид(ошибка)}.", ошибка);
         }
@@ -251,7 +208,6 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
         }
     }
 
-    /// <summary>Вид сетевого сбоя словами.</summary>
     private static string Вид(HttpRequestException ошибка) => ошибка.HttpRequestError switch
     {
         HttpRequestError.NameResolutionError => "имя сервера не разрешается",
@@ -263,14 +219,7 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
         _ => $"сбой HTTP ({ошибка.HttpRequestError})",
     };
 
-    /// <summary>
-    /// Текст отказа из тела ответа: сообщение конверта Key Manager Plus или код фильтра
-    /// безопасности (<c>EXTRA_PARAM_FOUND</c>, <c>INVALID_METHOD</c>).
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Прочее тело (HTML прокси, страница Tomcat) в текст не попадает: он едет в лог и в
-    /// <c>last_error</c>.
-    /// </remarks>
+    /// <summary>Сообщение конверта или код фильтра KMP; прочее тело (HTML прокси) не берётся.</summary>
     private static async Task<string> ПричинаAsync(HttpResponseMessage ответ, CancellationToken cancellationToken)
     {
         var текст = (await ответ.Content.ReadAsStringAsync(cancellationToken)).Trim();
@@ -293,7 +242,7 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
         }
     }
 
-    /// <summary>Тело-код фильтра безопасности Key Manager Plus: одно слово заглавными.</summary>
+    /// <summary>Код фильтра безопасности KMP: одно слово заглавными.</summary>
     [GeneratedRegex("^[A-Z][A-Z0-9_]{2,63}$")]
     private static partial Regex КодОтказа();
 
@@ -312,13 +261,8 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
         }
     }
 
-    /// <summary>
-    /// Успех — только явное <c>success</c> в любом регистре; иначе отказ с текстом сервера.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Неверный ключ Key Manager Plus отдаёт с кодом <b>200</b>:
-    /// <c>{"name":"AuthenticationFailure","result":{"status":"Failure","message":"Login Failed!"}}</c>.
-    /// </remarks>
+    /// <summary>Успех — только явное <c>success</c> в любом регистре.</summary>
+    /// <remarks>⚠ Неверный ключ KMP отдаёт с HTTP 200 и <c>"name":"AuthenticationFailure"</c>.</remarks>
     private static void Проверить(JsonObject корень, string что)
     {
         var статус = Статус(корень);
@@ -345,7 +289,7 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
     private static string? Сообщение(JsonObject корень) =>
         Строка(корень["result"] as JsonObject, "message") ?? Строка(корень, "Message") ?? Строка(корень, "message");
 
-    /// <summary><c>details</c> — массив; у некоторых методов это один объект.</summary>
+    /// <summary><c>details</c> — массив, у некоторых методов один объект.</summary>
     private static IEnumerable<JsonObject> Элементы(JsonNode? details) => details switch
     {
         JsonArray массив => массив.OfType<JsonObject>(),
@@ -353,7 +297,6 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
         _ => [],
     };
 
-    /// <summary>Значение поля строкой; число или логическое — их JSON-записью.</summary>
     private static string? Строка(JsonObject? объект, string имя)
     {
         if (объект?[имя] is not JsonValue значение)
@@ -364,13 +307,7 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
         return значение.TryGetValue<string>(out var строка) ? строка : значение.ToJsonString();
     }
 
-    /// <summary>
-    /// Срок действия из <c>ExpiryDate</c> вида «Oct 2, 2025»; со временем или в ISO — тоже.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Неразобранная дата — <c>null</c>, а не отказ: срок только показывается и упорядочивает
-    /// сертификаты, а текущий выбирается по времени появления.
-    /// </remarks>
+    /// <summary>Срок из <c>ExpiryDate</c> («Oct 2, 2025»); неразобранный — <c>null</c>, не отказ.</summary>
     internal static DateOnly? Дата(JsonObject элемент)
     {
         var текст = Строка(элемент, "ExpiryDate")?.Trim();
@@ -388,15 +325,7 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
             : null;
     }
 
-    /// <summary>
-    /// Пришёл ли JSON вместо файла.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Смотрятся первые байты, а не заявленный тип: сервер может назвать отказ
-    /// <c>text/plain</c>, а файл — <c>application/octet-stream</c>. PEM начинается с
-    /// <c>-----BEGIN</c>, DER и PKCS#12 — с байта <c>0x30</c>, JKS — с <c>0xFEEDFEED</c>; с
-    /// <c>{</c> не начинается ни один.
-    /// </remarks>
+    /// <summary>JSON вместо файла — по первым байтам: заявленному типу KMP верить нельзя.</summary>
     private static bool ПохожНаJson(byte[] байты)
     {
         ReadOnlySpan<byte> бом = [0xEF, 0xBB, 0xBF];
@@ -415,15 +344,8 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
         return false;
     }
 
-    /// <summary>
-    /// Похож ли ответ на файл сертификата или ключа хоть в одном из известных видов.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ ⚠ Страница ошибки с кодом 200 — HTML прокси или текст «Session expired» — иначе ушла бы
-    /// получателю под именем <c>site.key</c>, а подписка отметилась бы отправленной. Принимаются:
-    /// PEM (<c>-----BEGIN</c>), DER, PKCS#7 и PKCS#12 (ASN.1 SEQUENCE, байт <c>0x30</c>), JKS
-    /// (<c>0xFEEDFEED</c>) и ZIP (<c>PK\x03\x04</c>) — если Key Manager Plus упакует несколько файлов.
-    /// </remarks>
+    /// <summary>PEM, ASN.1 (DER/PKCS#7/PKCS#12), JKS или ZIP.</summary>
+    /// <remarks>⚠ Иначе страница ошибки с HTTP 200 ушла бы получателю как <c>site.key</c>.</remarks>
     internal static bool ПохожНаСертификат(byte[] байты)
     {
         ReadOnlySpan<byte> бом = [0xEF, 0xBB, 0xBF];
@@ -442,7 +364,6 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
             || начало.StartsWith("PK\x03\x04"u8);
     }
 
-    /// <summary>Отказ, пришедший JSON-ом вместо файла.</summary>
     private static string ОтказВместоФайла(byte[] байты, string commonName, string тип)
     {
         try
@@ -458,7 +379,7 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
                     return $"Key Manager Plus отказал в выгрузке {тип} сертификата {commonName}: {сообщение}";
                 }
 
-                // ⚠ Ключи, а не значения: в значениях может лежать сам закрытый ключ.
+                // ⚠ Ключи, не значения: в значениях может быть закрытый ключ.
                 var ключи = string.Join(", ", корень.Select(пара => пара.Key));
 
                 return $"Key Manager Plus вернул JSON вместо файла {тип} сертификата {commonName} "
@@ -467,19 +388,13 @@ internal sealed partial class KeyManagerClient(HttpClient http, string apiKey) :
         }
         catch (JsonException)
         {
-            // Не JSON всё-таки — ниже общий текст.
+            // Не JSON — общий текст ниже.
         }
 
         return $"Key Manager Plus вернул неразборчивый ответ вместо файла {тип} сертификата {commonName}.";
     }
 
-    /// <summary>
-    /// Имя файла из Common Name и типа: <c>*.example.com</c> + PEM → <c>wildcard.example.com.pem</c>.
-    /// </summary>
-    /// <remarks>
-    /// Расширение у каждого типа своё, поэтому имена вложений одного письма не совпадают; ZIP
-    /// (если Key Manager Plus упакует несколько файлов) называется <c>.pem.zip</c> и т. п.
-    /// </remarks>
+    /// <summary><c>*.example.com</c> + PEM → <c>wildcard.example.com.pem</c>; ZIP — <c>.pem.zip</c>.</summary>
     internal static string ИмяПоУмолчанию(string commonName, string тип, string? упаковка = null)
     {
         var имя = $"{CertificateFormats.FileBase(commonName)}.{CertificateFormats.Extension(тип)}";

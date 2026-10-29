@@ -6,14 +6,7 @@ using Npgsql;
 
 namespace EmailSslSender.IntegrationTests;
 
-/// <summary>
-/// Журнал действий — таблицей в базе (модуль audit, ревью безопасности 2026-10-27): событие пишется, читается
-/// через API, задним числом не правится и не удаляется, цепочка хешей сходится.
-/// </summary>
-/// <remarks>
-/// ⚠ Прежде журнал жил только строками ротируемого лога контейнера: поток неверных входов вытеснял из него
-/// строки о выгрузке ключей за несколько часов.
-/// </remarks>
+/// <summary>Журнал действий в базе: пишется, читается, не правится задним числом, цепочка сходится.</summary>
 [Collection(SenderHost.Collection)]
 public sealed class AuditJournalTests(SenderHost host)
 {
@@ -52,7 +45,7 @@ public sealed class AuditJournalTests(SenderHost host)
     [InlineData("TRUNCATE audit_log")]
     public async Task Журнал_задним_числом_не_правится_и_не_стирается(string sql)
     {
-        // Хоть одна строка — чтобы UPDATE и DELETE было что трогать.
+        // Хоть одна строка для UPDATE и DELETE.
         host.User.SignIn();
         (await host.CreateClient().PostAsJsonAsync("/api/certificate-subscriptions", new { }, Ct))
             .StatusCode.ShouldBe(HttpStatusCode.BadRequest);
@@ -60,7 +53,7 @@ public sealed class AuditJournalTests(SenderHost host)
         await using var db = new NpgsqlConnection(host.Postgres);
         await db.OpenAsync(Ct);
 
-        // ⚠ Даже владельцем схемы: неизменяемость держат триггеры, а не только права роли сервиса.
+        // ⚠ Владельцем схемы: неизменяемость держат триггеры, а не права роли.
         await using var команда = new NpgsqlCommand(sql, db);
         await Should.ThrowAsync<PostgresException>(() => команда.ExecuteNonQueryAsync(Ct));
     }

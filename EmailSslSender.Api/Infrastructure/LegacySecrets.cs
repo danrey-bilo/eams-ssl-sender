@@ -7,23 +7,8 @@ using Npgsql;
 
 namespace EmailSslSender.Api.Infrastructure;
 
-/// <summary>
-/// Разовая перекладка секретов из прежнего конверта «sender:» в конверт модулей EAMS «eams:».
-/// </summary>
-/// <remarks>
-/// ⚠ ⚠ <b>Зачем.</b> До версии 2.0 секреты запечатывал свой конверт проекта; модули EAMS несут свой,
-/// с тем же форматом байтов и тем же мастер-ключом, но с другими строками разделения ключей
-/// (<c>sender:dek:v1</c> → <c>eams:dek:v1</c>, <c>sender:secret:v1</c> → <c>eams:secret:v1</c>). Строки
-/// входят в шифротекст, поэтому прежнее значение конверт модулей не открывает: без перекладки
-/// администраторы потеряли бы аутентификаторы, установка — пароль SMTP и ключ API Key Manager Plus.
-///
-/// ⚠ <b>Идемпотентно.</b> Каждое значение сначала пробуется конвертом модулей: открылось — уже
-/// переложено, пропуск. Повторный <c>migrate</c> ничего не трогает. Строка обновляется условием на
-/// прежний ключ данных — параллельная правка не перезаписывается.
-///
-/// ⚠ Тела писем в очереди не перекладываются: неотправленные письма мост схемы отметил
-/// умершими, отправленные убирает уборка, и открывать их больше некому.
-/// </remarks>
+/// <summary>Разовая перекладка секретов из конверта «sender:» в конверт модулей «eams:».</summary>
+/// <remarks>⚠ Идемпотентно: открывшееся конвертом модулей пропускается, запись — условием на прежний ключ данных.</remarks>
 internal sealed class LegacySecrets(ISecretEnvelope envelope, IReadOnlyDictionary<int, byte[]> legacyKeys)
 {
     private const byte Format = 1;
@@ -36,7 +21,7 @@ internal sealed class LegacySecrets(ISecretEnvelope envelope, IReadOnlyDictionar
     private static readonly byte[] WrapDomain = Encoding.UTF8.GetBytes("sender:dek:v1\0");
     private static readonly byte[] SealDomain = Encoding.UTF8.GetBytes("sender:secret:v1\0");
 
-    /// <summary>Что перекладывается: таблица, ключ строки и контексты до и после.</summary>
+    // Таблица, ключ строки и контексты до и после.
     private sealed record Цель(
         string Name,
         string Select,
@@ -69,10 +54,9 @@ internal sealed class LegacySecrets(ISecretEnvelope envelope, IReadOnlyDictionar
     /// <summary>Итог по одной таблице.</summary>
     internal sealed record Итог(string Name, int Просмотрено, int Переложено, int НеОткрылось);
 
-    /// <summary>Ключи прежнего конверта из содержимого источника мастер-ключа — тот же формат строк.</summary>
+    /// <summary>Ключи прежнего конверта из содержимого источника мастер-ключа.</summary>
     internal static Dictionary<int, byte[]> Keys(string content)
     {
-        // ⚠ Разбор и проверку формата уже сделала связка модулей при старте; здесь только ключи.
         var ring = MasterKeyRing.Parse(content);
         var keys = new Dictionary<int, byte[]>(ring.Count);
 
@@ -175,7 +159,7 @@ internal sealed class LegacySecrets(ISecretEnvelope envelope, IReadOnlyDictionar
         }
     }
 
-    /// <summary>Открыть значение прежним конвертом — тот же алгоритм, прежние строки разделения.</summary>
+    /// <summary>Открыть значение прежним конвертом.</summary>
     internal byte[] Open(byte[] wrapped, byte[] sealedBlob, string context)
     {
         if (wrapped.Length != WrapHeaderBytes + NonceBytes + TagBytes + DataKeyBytes || wrapped[0] != Format)

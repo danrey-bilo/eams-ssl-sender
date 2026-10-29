@@ -19,22 +19,8 @@ using Microsoft.Extensions.Logging;
 
 namespace EmailSslSender.IntegrationTests;
 
-/// <summary>
-/// Настоящий соединитель против HTTPS-заглушки Key Manager Plus с самоподписанным сертификатом.
-/// </summary>
-/// <remarks>
-/// ⚠ ⚠ <b>Проверяется то, чего не видят тесты клиента на заглушке обработчика:</b> что проверка
-/// TLS действительно включена (самоподписанный сертификат сам по себе — отказ), что сертификат
-/// доверенного корня её проходит, что ключ уходит заголовком — и что ручная отправка доводит файлы
-/// до очереди писем запечатанными вложениями.
-///
-/// ⚠ ⚠ <b>Доверие заглушке — только через <see cref="KeyManagerModuleOptions.TrustedRoots"/></b>: рабочий
-/// хост корни не задаёт, а отпечатка для самоподписанного сертификата с 2.5 нет. Проверка та же —
-/// цепочка, имя (у заглушки — 127.0.0.1 в SAN) и отзыв.
-///
-/// ⚠ ⚠ <b>И что ключ не уходит туда, куда его не вводили:</b> подменённый адрес — отказ без единого
-/// запроса к нему, даже если сертификат подменного сервера проходит проверку.
-/// </remarks>
+/// <summary>Настоящий соединитель против HTTPS-заглушки Key Manager Plus с самоподписанным сертификатом.</summary>
+/// <remarks>⚠ Доверие заглушке — только через <see cref="KeyManagerModuleOptions.TrustedRoots"/>: проверка TLS та же, что в бою.</remarks>
 [Collection(SenderHost.Collection)]
 public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
 {
@@ -110,8 +96,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
     [Fact]
     public async Task Ключ_не_уходит_на_подменённый_адрес()
     {
-        // ⚠ Сценарий перехваченной сессии: адрес переставлен на свой сервер, и «проверить связь»
-        // понесла бы ключ туда. Сертификат подменного сервера проходит проверку — отказывает привязка ключа.
+        // ⚠ Сертификат подменного сервера проходит проверку — отказывает привязка ключа к адресу.
         await using var подменный = new ЗаглушкаKmp("ключ-подменного");
         await подменный.ЗапуститьAsync();
         Довериться(подменный);
@@ -156,10 +141,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
         (await ОтменёнAsync("a@example.com")).ShouldBe(1);
     }
 
-    /// <summary>
-    /// Закрытый ключ не уходит по почте без шифрования (ревью безопасности 2026-10-27): отказ с объяснением,
-    /// писем нет. Сертификат без ключа — открытые данные, ему можно.
-    /// </summary>
+    /// <summary>Сертификат без ключа — открытые данные, ему можно.</summary>
     [Fact]
     public async Task Ключ_не_уходит_по_почте_без_шифрования()
     {
@@ -191,10 +173,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
         (await ОтправитьAsync(["PEM"])).StatusCode.ShouldBe(HttpStatusCode.OK, "сертификат без ключа уходит");
     }
 
-    /// <summary>
-    /// Запрет выше читает настройку модуля почты по имени: модуль переименует её — тест покраснеет, а не
-    /// проверка молча прочтёт умолчание.
-    /// </summary>
+    /// <summary>⚠ Запрет выше читает настройку почты по имени: переименование иначе прошло бы молча.</summary>
     [Fact]
     public async Task Настройка_защиты_SMTP_есть_у_модуля_почты_с_вариантом_none()
     {
@@ -251,16 +230,13 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
             вложения.AsSpan().IndexOf(ЗаглушкаKmp.ЗакрытыйКлюч).ShouldBe(-1, "ключ в очереди не лежит открытым");
         }
 
-        // Хост включает HTML-часть писем: перечень сертификатов уходит таблицей (модуль почты, решение 0121).
+        // Хост включает HTML-часть писем.
         (await db.Database
             .SqlQueryRaw<int>(
                 "SELECT count(*)::int AS \"Value\" FROM mail_outbox WHERE starts_with(kind, 'certificate_delivery') AND html_body IS NOT NULL")
             .SingleAsync(Ct)).ShouldBe(2, "у каждого письма — HTML-часть");
     }
 
-    /// <summary>
-    /// Выгрузка отдаёт файл как есть: тип, имя вложения, без кэша — и ключ API едет заголовком.
-    /// </summary>
     [Fact]
     public async Task Выгрузка_сертификата_отдаёт_файл_под_именем_вложения_и_без_кэша()
     {
@@ -281,9 +257,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
         _kmp.Запросов.ShouldBe(1);
     }
 
-    /// <summary>
-    /// Закрытый ключ приходит текстом PEM вместе с паролем; без пароля в Key Manager Plus — <c>null</c>.
-    /// </summary>
+    /// <summary>Без пароля в Key Manager Plus — <c>null</c>.</summary>
     [Theory]
     [InlineData(true)]
     [InlineData(false)]
@@ -313,8 +287,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
             тело["passphrase"].ShouldBeNull("отказ Key Manager Plus в пароле обязан стать null, а не ошибкой");
         }
 
-        // ⚠ Показ ключа — строкой журнала в базе: прежде строка ставилась без сохранения и в журнале модуля
-        // audit пропала бы молча (ревью 2026-10-27).
+        // ⚠ Строка журнала сохранена: без SaveChangesAsync она пропала бы молча.
         var журнал = await host.CreateClient().GetFromJsonAsync<JsonNode>(
             "/api/audit?action=keymanager.private_key_viewed&limit=50", Ct);
         журнал!.ToJsonString().ShouldContain("keymanager.private_key_viewed");
@@ -338,9 +311,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
         тело["details"]!["reason"]!.GetValue<string>().ShouldBe("Key Manager Plus отдал ключ не в виде PEM");
     }
 
-    /// <summary>
-    /// В журнале — чей ключ показан, и ни ключа, ни пароля: ни в строке журнала, ни где-либо в логе.
-    /// </summary>
+    /// <summary>Ни ключа, ни пароля — ни в журнале, ни где-либо в логе.</summary>
     [Fact]
     public async Task Показ_ключа_пишется_в_журнал_без_ключа_и_пароля()
     {
@@ -354,18 +325,16 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
         {
             services.RemoveAll<IHostedService>();
 
-            // ⚠ Serilog хоста сторонних поставщиков не зовёт: подменяется вся фабрика логов этого
-            // хоста — так видна каждая строка, своя и чужая (EF, MVC), на всех уровнях.
+            // ⚠ Serilog сторонних поставщиков не зовёт: подменяется вся фабрика логов.
             services.AddSingleton<ILoggerFactory>(new LoggerFactory([перо]));
         }));
 
-        // ⚠ У отдельного хоста свои опции модуля: доверие заглушке задаётся и ему.
+        // У отдельного хоста свои опции модуля.
         Корни(фабрика.Services).Add(_kmp.Корень);
 
         var клиент = фабрика.CreateClient();
 
-        // ⚠ Мастер-ключ у каждого хоста обвязки свой и разовый: ключ API, запечатанный основным
-        // хостом, этому не открыть — вводится заново, как в панели.
+        // ⚠ Мастер-ключ у каждого хоста свой: ключ API вводится заново.
         (await клиент.PutAsJsonAsync("/api/keymanager/api-key", new { api_key = Ключ }, Ct))
             .StatusCode.ShouldBe(HttpStatusCode.NoContent);
 
@@ -397,7 +366,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
         }
     }
 
-    /// <summary>Пара «site.example.com + 0a1b2c» в снимке опроса — как после настоящего опроса.</summary>
+    /// <summary>Пара «site.example.com + 0a1b2c» в снимке опроса.</summary>
     private async Task СнимокAsync()
     {
         await using var scope = host.Services.CreateAsyncScope();
@@ -411,7 +380,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
             Ct);
     }
 
-    /// <summary>Логгер-провайдер, запоминающий каждую строку лога хоста.</summary>
+    /// <summary>Запоминает каждую строку лога хоста.</summary>
     private sealed class ВсеСтроки : ILoggerProvider
     {
         private readonly List<string> _строки = [];
@@ -455,7 +424,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
     private static X509Certificate2Collection Корни(IServiceProvider services) =>
         services.GetRequiredService<KeyManagerModuleOptions>().TrustedRoots;
 
-    /// <summary>Доверять сертификату заглушки — как рабочий хост доверяет удостоверяющему центру.</summary>
+    /// <summary>Доверять заглушке, как рабочий хост — удостоверяющему центру.</summary>
     private void Довериться(ЗаглушкаKmp заглушка) => Корни(host.Services).Add(заглушка.Корень);
 
     /// <summary>Почта настроена, но сервер недоступен: письма копятся в очереди.</summary>
@@ -484,15 +453,11 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
         return (await создано.Content.ReadFromJsonAsync<JsonObject>(Ct))!["id"]!.GetValue<Guid>();
     }
 
-    /// <summary>Писем с вложениями, ещё ждущих отправки, на адрес.</summary>
-    /// <remarks>
-    /// ⚠ Насос хоста в это время пробует недоступный сервер: попытка и причина у письма могут
-    /// меняться, а вложения стираются только на последней попытке — до неё далеко.
-    /// </remarks>
+    /// <summary>Ждущих писем с вложениями на адрес; насос тем временем пробует недоступный сервер.</summary>
     private Task<int> ЖдутAsync(string адрес) => СчётAsync(
         "length(attachments) > 0 AND next_attempt_at < '9999-01-01'", адрес);
 
-    /// <summary>Отменённых писем на адрес: вложения стёрты (модуль почты оставляет пустой массив), срок — «никогда».</summary>
+    /// <summary>Отменённых писем на адрес: вложения стёрты, срок — «никогда».</summary>
     private Task<int> ОтменёнAsync(string адрес) => СчётAsync(
         "coalesce(length(attachments), 0) = 0 AND next_attempt_at >= '9999-01-01'", адрес);
 
@@ -516,7 +481,6 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
 
         public static readonly byte[] Сертификат = "-----BEGIN CERTIFICATE-----\nзаглушка\n"u8.ToArray();
 
-        /// <summary>Пароль ключа, который хранит заглушка, когда его просят хранить.</summary>
         public const string ПарольКлюча = "пароль-заглушки-не-для-лога";
 
         private WebApplication? _приложение;
@@ -530,10 +494,9 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
 
         public int Запросов => _запросов;
 
-        /// <summary>Пароль ключа; <c>null</c> — заглушка отвечает отказом, как Key Manager Plus без пароля.</summary>
+        /// <summary><c>null</c> — отказ, как у Key Manager Plus без пароля.</summary>
         public string? Пароль { get; set; }
 
-        /// <summary>Отдавать ключ в DER, а не текстом PEM.</summary>
         public bool КлючВDer { get; set; }
 
         public async Task ЗапуститьAsync()
@@ -541,7 +504,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
             using var пара = RSA.Create(2048);
             var запрос = new CertificateRequest("CN=kmp.example.test", пара, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
 
-            // ⚠ Имя из адреса — в SAN: проверка имени хоста у соединителя не выключается.
+            // ⚠ Имя из адреса — в SAN: проверку имени хоста не выключить.
             var имена = new SubjectAlternativeNameBuilder();
             имена.AddIpAddress(IPAddress.Loopback);
             имена.AddDnsName("localhost");
@@ -567,7 +530,7 @@ public sealed class KeyManagerTlsApi(SenderHost host) : IAsyncLifetime
                     return Results.Json(new { result = new { status = "Failed", message = "Invalid API key" } });
                 }
 
-                // Как живой 7.1.1: параметр, не объявленный для метода, — 400 от фильтра безопасности.
+                // Как живой 7.1.1: необъявленный параметр — 400.
                 if (метод == "getAllSSLCertsExpiryDate" && контекст.Request.Query.Count > 0)
                 {
                     return Results.Text("EXTRA_PARAM_FOUND", "text/html", statusCode: 400);

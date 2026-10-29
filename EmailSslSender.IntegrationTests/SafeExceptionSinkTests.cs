@@ -6,17 +6,10 @@ using Serilog.Formatting.Compact;
 
 namespace EmailSslSender.IntegrationTests;
 
-/// <summary>
-/// Исключение доезжает до лога цепочкой типов и стеком, но не текстом (правило 14, решение 0095).
-/// </summary>
-/// <remarks>
-/// ⚠ ⚠ Найдено аудитом надёжности 2026-10-19: EF Core, Npgsql и ASP.NET пишут свои ошибки сами и
-/// с объектом исключения, а форматтер кладёт его текст в <c>@x</c>. Арх-тест
-/// <c>LogExceptions</c> видит только свой код. Проверка — тем же форматтером, что в бою.
-/// </remarks>
+/// <summary>Исключение доезжает до лога цепочкой типов и стеком, но не текстом.</summary>
+/// <remarks>⚠ Чужие логгеры (EF Core, Npgsql, ASP.NET) пишут исключение сами — проверка боевым форматтером.</remarks>
 public sealed class SafeExceptionSinkTests
 {
-    // мутация 2026-10-19: приёмник передал событие как есть → покраснел этот факт.
     [Fact]
     public void Текст_исключения_не_доезжает_до_записи()
     {
@@ -61,7 +54,7 @@ public sealed class SafeExceptionSinkTests
         записано.События.ShouldHaveSingleItem().Properties.ShouldNotContainKey(SafeExceptionSink.TypesProperty);
     }
 
-    /// <summary>Приёмник, запоминающий события и рисующий их боевым форматтером.</summary>
+    /// <summary>Приёмник с боевым форматтером.</summary>
     private sealed class Записи : ILogEventSink
     {
         public List<LogEvent> События { get; } = [];

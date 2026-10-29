@@ -2,14 +2,10 @@ using EmailSslSender.Api.Infrastructure;
 
 namespace EmailSslSender.IntegrationTests;
 
-/// <summary>Команда <c>migrate</c> хоста — тем же входом, что у службы migrate в бою.</summary>
-/// <remarks>
-/// ⚠ Точка входа сборки хоста, а не повтор её шагов в тесте: проход наборов, перекладка секретов и роль
-/// сервиса проверяются ровно такими, какими их выполнит установка.
-/// </remarks>
+/// <summary>Команда <c>migrate</c> через точку входа хоста — как у службы migrate, без повтора шагов.</summary>
 internal static class MigrateCommand
 {
-    /// <summary>Выполнить <c>migrate</c> на базе <paramref name="connection"/>; вернуть код завершения.</summary>
+    /// <summary>Выполнить <c>migrate</c>; вернуть код завершения.</summary>
     public static Task<int> RunAsync(string connection, string masterKey, params string[] settings)
     {
         var вход = typeof(Program).Assembly.EntryPoint

@@ -9,48 +9,19 @@ using Microsoft.Extensions.Logging;
 
 namespace EmailSslSender.Modules.KeyManager.Secrets;
 
-/// <summary>
-/// Ключ API Key Manager Plus: запечатать вместе с адресом, открыть для адреса, снять.
-/// </summary>
+/// <summary>Ключ API Key Manager Plus, привязанный к адресу (<see cref="BoundSecret"/>).</summary>
 /// <remarks>
-/// ⚠ ⚠ <b>Испорченный блоб даёт ОТКАЗ, а не «ключа нет»</b> — довод тот же, что у
-/// <c>SystemSecrets</c> почты: молчаливое «не задан» увело бы разбор в «Key Manager Plus не
-/// принимает ключ», а это авария хранилища или подмена.
-///
-/// ⚠ ⚠ <b>Ключ привязан к адресу, для которого его ввели</b> (<see cref="BoundSecret"/>). Открыть его
-/// можно только для того же адреса — сменивший адрес вводит ключ заново. Иначе перехваченная на
-/// время учётная запись направила бы ключ (а через него все закрытые ключи установки) на свой
-/// сервер одной проверкой связи.
-///
-/// ⚠ Не зовёт <c>SaveChangesAsync</c>: фиксацией распоряжается вызывающий — вместе со строкой
-/// журнала (правило 15). Исключение — перепечатка старого ключа при первом использовании
-/// (<see cref="GetForAsync"/>): она пишет сама, условным обновлением.
+/// ⚠ Испорченный блоб — отказ, а не «ключа нет». Не сохраняет: фиксирует вызывающий вместе с журналом
+/// (кроме <see cref="BindLegacyAsync"/>, условным обновлением).
 /// </remarks>
 internal sealed class ApiKeyStore(
     AppDbContext db, ISecretEnvelope envelope, ICurrentUser current, TimeProvider clock, ILogger<ApiKeyStore> log)
 {
-    /// <summary>
-    /// Контекст AEAD ключа API.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Входит в шифротекст: после первой установки его менять нельзя, иначе прежний ключ
-    /// перестанет открываться.
-    /// </remarks>
+    /// <summary>⚠ Контекст AEAD входит в шифротекст — не менять.</summary>
     internal const string Контекст = "sender:keymanager:api-key";
 
-    /// <summary>
-    /// Куда уходит ключ: адрес сервера в нормальном виде.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Нормальный вид — схема, имя хоста строчными, порт (и умолчательный), путь без
-    /// завершающей косой черты: «https://KMP:443/» и «https://kmp» — один адрес, и переписанный
-    /// по-другому адрес не должен требовать ключа заново. Строка запроса не входит: клиент её
-    /// не использует.
-    ///
-    /// ⚠ ⚠ До 2.5 к адресу дописывался закреплённый отпечаток (« sha256=…»); ключ без отпечатка
-    /// привязан к одному адресу — такая привязка открывается и сейчас. Ключ, введённый при
-    /// закреплённом отпечатке, после обновления вводится заново.
-    /// </remarks>
+    /// <summary>Адрес в нормальном виде: схема, хост строчными, порт, путь без «/».</summary>
+    /// <remarks>Ключ, привязанный в 2.4 вместе с « sha256=…», не совпадёт — вводится заново.</remarks>
     internal static string Target(string? baseUrl)
     {
         var адрес = baseUrl?.Trim() ?? string.Empty;
@@ -65,21 +36,10 @@ internal sealed class ApiKeyStore(
         return адрес;
     }
 
-    /// <summary>
-    /// Открыть ключ API для адреса или <c>null</c>, если он не задан.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ ⚠ <b>Старый ключ без привязки не открывается</b> (ревью безопасности 2026-10-20): его
-    /// привязывает к текущему адресу команда <c>migrate</c> (<see cref="BindLegacyAsync"/>), а
-    /// иначе — повторный ввод. Прежнее «доверие с первого раза» отдавало ключ тому, кто первым
-    /// подменил адрес из захваченной сессии.
-    /// </remarks>
-    /// <param name="target">Адрес из <see cref="Target"/> по текущим настройкам.</param>
-    /// <param name="cancellationToken">Отмена.</param>
+    /// <summary>Ключ API для адреса или <c>null</c>, если не задан.</summary>
+    /// <remarks>⚠ Ключ без привязки не открывается: его привязывает только <c>migrate</c> или повторный ввод.</remarks>
     /// <exception cref="KeyManagerException">Ключ вводили для другого адреса.</exception>
-    /// <exception cref="System.Security.Cryptography.CryptographicException">
-    /// Ключ есть, но не открывается.
-    /// </exception>
+    /// <exception cref="System.Security.Cryptography.CryptographicException">Ключ есть, но не открывается.</exception>
     public async Task<string?> GetForAsync(string target, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(target);
@@ -113,14 +73,8 @@ internal sealed class ApiKeyStore(
         return привязка.Secret;
     }
 
-    /// <summary>
-    /// Привязать ключ без привязки к адресу <paramref name="target"/>. Зовёт только <c>migrate</c>.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Тем же ключом данных и условным обновлением по прежнему запечатанному: ротация
-    /// перекладывает обёртку, а не ключ данных, а ключ, заданный заново между чтением и
-    /// записью, не затирается.
-    /// </remarks>
+    /// <summary>Привязать ключ 1.x к <paramref name="target"/>; зовёт только <c>migrate</c>.</summary>
+    /// <remarks>Условное обновление: ключ, заданный заново между чтением и записью, не затирается.</remarks>
     /// <returns><c>true</c> — привязан сейчас.</returns>
     public async Task<bool> BindLegacyAsync(string target, CancellationToken cancellationToken = default)
     {
@@ -149,7 +103,7 @@ internal sealed class ApiKeyStore(
             .Where(с => с.Id == KeyManagerState.SingletonId && с.ApiKey == запечатано)
             .ExecuteUpdateAsync(set => set.SetProperty(с => с.ApiKey, перепечатано), cancellationToken);
 
-        // ⚠ Без адреса и тем более без ключа: строка о факте, адрес виден в настройках.
+        // Без адреса и ключа: только факт.
         log.LogWarning("keymanager_api_key_bound_by_migrate");
 
         return изменено == 1;
@@ -160,10 +114,7 @@ internal sealed class ApiKeyStore(
         db.Set<KeyManagerState>()
             .AnyAsync(с => с.Id == KeyManagerState.SingletonId && с.ApiKey != null, cancellationToken);
 
-    /// <summary>Задать ключ для адреса; пустая строка снимает его.</summary>
-    /// <param name="value">Ключ API.</param>
-    /// <param name="target">Адрес из <see cref="Target"/> по настройкам на момент ввода.</param>
-    /// <param name="cancellationToken">Отмена.</param>
+    /// <summary>Задать ключ для адреса из <see cref="Target"/>; пустая строка снимает его.</summary>
     public async Task PutAsync(string? value, string target, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(target);

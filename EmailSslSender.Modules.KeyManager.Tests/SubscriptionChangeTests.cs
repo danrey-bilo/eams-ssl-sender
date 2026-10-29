@@ -12,15 +12,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace EmailSslSender.Modules.KeyManager.Tests;
 
-/// <summary>
-/// Правка и удаление подписки: письма в очереди не переживают права получателя, а журнал
-/// говорит, что изменилось, — без адресов.
-/// </summary>
-/// <remarks>
-/// ⚠ ⚠ <b>Главный факт файла — убранный получатель не получает ключ, уже стоящий в очереди.</b>
-/// Право проверяется при постановке письма, а уходит оно позже: почта лежит, сервер не отвечает
-/// — и всё это время закрытый ключ ждёт отправки тому, у кого право уже отняли.
-/// </remarks>
+/// <summary>⚠ Убранный получатель не получает ключ, уже стоящий в очереди; журнал — без адресов.</summary>
 [Collection(KeyManagerDatabaseCollection.Name)]
 public sealed class SubscriptionChangeTests(KeyManagerDatabase база) : IAsyncLifetime
 {
@@ -187,10 +179,7 @@ public sealed class SubscriptionChangeTests(KeyManagerDatabase база) : IAsyn
 
     public static TheoryData<string> Сужения => new() { "formats", "include_passphrase", "enabled" };
 
-    /// <summary>
-    /// Сервер почты лежит, письмо с ключом ждёт повтора — а администратор убрал KEY, снял пароль ключа
-    /// или отключил подписку. Письмо не уходит (ревью безопасности 2026-10-27).
-    /// </summary>
+    /// <summary>Письмо с ключом ждёт повтора, а KEY, пароль или подписку сняли — письмо не уходит.</summary>
     [Theory]
     [MemberData(nameof(Сужения))]
     public async Task Сужение_подписки_отменяет_письма_в_очереди(string поле)
@@ -241,10 +230,7 @@ public sealed class SubscriptionChangeTests(KeyManagerDatabase база) : IAsyn
         (await Прочитать(id)).OnChange.ShouldBeTrue("отказ ничего не поменял");
     }
 
-    /// <summary>
-    /// Подписка 2.0 без способа отправки (тогда проверки не было) остаётся правимой: убрать получателя —
-    /// действие безопасности, и отказ «выберите способ» его не должен блокировать.
-    /// </summary>
+    /// <summary>Подписка 2.0 без способа отправки: убрать получателя всё равно можно.</summary>
     [Fact]
     public async Task Подписку_без_способа_из_прежней_версии_можно_сузить()
     {
@@ -262,7 +248,7 @@ public sealed class SubscriptionChangeTests(KeyManagerDatabase база) : IAsyn
         (await Прочитать(id)).Recipients.ShouldBe(["a@example.com"]);
     }
 
-    // --- обвязка ---------------------------------------------------------------------------
+    // Обвязка
 
     private static SubscriptionsController Контроллер(AsyncServiceScope scope) =>
         ActivatorUtilities.CreateInstance<SubscriptionsController>(scope.ServiceProvider, new PollWakeup());

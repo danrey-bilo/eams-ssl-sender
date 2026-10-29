@@ -2,13 +2,7 @@ using Modules.Core.Contracts.Audit;
 
 namespace EmailSslSender.Api.Infrastructure;
 
-/// <summary>
-/// Обернуть последнюю регистрацию службы: обёртка получает прежнюю реализацию и решает, что с ней делать.
-/// </summary>
-/// <remarks>
-/// ⚠ Обёртывается ПОСЛЕДНЯЯ регистрация — та, что и разрешалась бы без обёртки. Время жизни прежнее:
-/// обёртка писателя журнала живёт столько же, сколько сам писатель (областью запроса).
-/// </remarks>
+/// <summary>Обернуть последнюю регистрацию службы, сохранив её время жизни.</summary>
 internal static class ServiceDecoration
 {
     public static IServiceCollection Decorate<T>(this IServiceCollection services, Func<T, IServiceProvider, T> decorate)
@@ -44,7 +38,7 @@ internal sealed class LoggedAuditWriter(IAuditWriter journal, LogAuditWriter log
 }
 
 /// <summary>Событие безопасности — в журнал модуля audit и строкой в лог.</summary>
-/// <remarks>Сначала лог: строка в логе остаётся, даже если запись в журнал своим подключением не удалась.</remarks>
+/// <remarks>Сначала лог: строка останется, даже если запись в журнал не удалась.</remarks>
 internal sealed class LoggedSecurityEventWriter(ISecurityEventWriter journal, LogAuditWriter log) : ISecurityEventWriter
 {
     public async Task RecordAsync(SecurityEvent securityEvent, CancellationToken cancellationToken = default)
@@ -54,7 +48,7 @@ internal sealed class LoggedSecurityEventWriter(ISecurityEventWriter journal, Lo
     }
 }
 
-/// <summary>Решение о праве — в журнал модуля audit (отказы и обходы суперпользователя) и отказ строкой в лог.</summary>
+/// <summary>Решение о праве — в журнал модуля audit и отказ строкой в лог.</summary>
 internal sealed class LoggedAuthorizationAuditor(IAuthorizationAuditor journal, LogAuditWriter log) : IAuthorizationAuditor
 {
     public async Task RecordAsync(

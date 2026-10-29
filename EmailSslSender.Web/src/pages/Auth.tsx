@@ -18,7 +18,7 @@ export function AuthCard({ title, children }: { title: string; children: ReactNo
   );
 }
 
-/** Отправка формы входа: ошибка — в форму, «Сервер недоступен» — тоже. */
+/** Отправка формы входа; любые ошибки — в форму. */
 function useSubmit(action: () => Promise<void>) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -123,7 +123,6 @@ export function SecondFactor({ challenge, onEntered, onBack }: {
         <p className="muted">{viaEmail ? 'Код из письма' : 'Код из приложения-аутентификатора'}</p>
         <CodeInput value={code} onChange={setCode} />
         {sent && <p className="muted small">Код отправлен на почту.</p>}
-        {/* ⚠ Письмо приложение не заменяет: запасной путь — сброс фактора другим администратором. */}
         {!viaEmail && <p className="muted small">Нет доступа к приложению — попросите другого администратора сбросить второй фактор.</p>}
         <ErrorText text={error} />
         <button type="submit" className="primary" disabled={busy}>Подтвердить</button>
@@ -146,8 +145,7 @@ export function Enrollment({ onDone, onLogout }: { onDone: () => void; onLogout:
     onDone();
   });
 
-  // ⚠ Секрет заводится ОДИН раз: каждый вызов setup выдаёт новый, и второй, пришедший раньше
-  // первого, показал бы QR, который сервер уже забыл.
+  // ⚠ setup — один раз: каждый вызов выдаёт новый секрет.
   const started = useRef(false);
 
   useEffect(() => {

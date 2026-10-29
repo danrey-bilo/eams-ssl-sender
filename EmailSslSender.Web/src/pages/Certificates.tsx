@@ -9,7 +9,7 @@ import { Icon } from '../ui/Icon';
 import { FormModal } from '../ui/Modal';
 import { useOverlay } from '../ui/Overlay';
 
-/** Типы файлов Key Manager Plus и что в них лежит — словами для выбора. */
+/** Типы файлов Key Manager Plus словами. */
 const FORMATS: Array<[format: string, title: string, hint: string]> = [
   ['PEM', 'PEM', 'сертификат'],
   ['CRT', 'CRT', 'сертификат'],
@@ -23,7 +23,6 @@ const FORMATS: Array<[format: string, title: string, hint: string]> = [
 
 const DAY = 86_400_000;
 
-/** Порядок списка: по имени или по сроку действия — сначала истекающие или сначала дальние. */
 type Order = 'name' | 'expiry-asc' | 'expiry-desc';
 
 const ORDERS: Array<[Order, string]> = [
@@ -32,7 +31,7 @@ const ORDERS: Array<[Order, string]> = [
   ['expiry-desc', 'Сначала дальние'],
 ];
 
-/** Выбранный порядок помнит браузер: это удобство одного человека, а не настройка сервиса. */
+/** Порядок помнит браузер, не сервер. */
 const ORDER_KEY = 'certificates.order';
 
 function savedOrder(): Order {
@@ -47,7 +46,7 @@ function savedOrder(): Order {
 const byName = (a: KnownCertificate, b: KnownCertificate) =>
   a.common_name.localeCompare(b.common_name) || (b.expires_on ?? '').localeCompare(a.expires_on ?? '');
 
-/** По сроку в нужную сторону; сертификат без срока — в конце при любом направлении. */
+/** Без срока — в конце при любом направлении. */
 const byExpiry = (direction: 1 | -1) => (a: KnownCertificate, b: KnownCertificate) => {
   if (!a.expires_on || !b.expires_on) return a.expires_on ? -1 : b.expires_on ? 1 : byName(a, b);
   return direction * a.expires_on.localeCompare(b.expires_on) || byName(a, b);
@@ -59,7 +58,7 @@ const COMPARE: Record<Order, (a: KnownCertificate, b: KnownCertificate) => numbe
   'expiry-desc': byExpiry(-1),
 };
 
-/** Основа имени файла: «*» в имени файла недопустим. */
+/** «*» в имени файла недопустим. */
 const fileBase = (c: KnownCertificate) => c.common_name.replace('*', 'wildcard');
 
 function daysLeft(ymd: string | null): number | null {
@@ -96,7 +95,7 @@ export function CertificatesPage() {
     try { localStorage.setItem(ORDER_KEY, next); } catch { /* без хранилища — порядок до перезагрузки */ }
   };
 
-  // ⚠ Сервер отдаёт только то, что пришло в последнем опросе: пропавших и чужих здесь нет.
+  // Только сертификаты последнего опроса.
   const rows = useMemo(() => {
     if (!data) return [];
     const q = query.trim().toLowerCase();
@@ -119,8 +118,7 @@ export function CertificatesPage() {
 
   const reveal = async (c: KnownCertificate) => {
     let key: PrivateKey | null = null;
-    // ⚠ Ключ запрашивается ДО окна: без свежего кода сервер откажет, и поверх страницы
-    // откроется окно кода, а не пустое окно ключа под ним.
+    // ⚠ Ключ — до окна: без свежего кода откроется окно кода, а не пустое окно ключа.
     if (!await run(async () => {
       key = await api.post<PrivateKey>('/api/keymanager/certificates/private-key', {
         common_name: c.common_name, serial_number: c.serial_number,
@@ -159,7 +157,7 @@ export function CertificatesPage() {
               <input type="search" placeholder="Поиск по имени или серийному" value={query} onChange={e => setQuery(e.target.value)} />
             </label>
             <div className="inline">
-              {/* На телефоне заголовков таблицы нет — порядок выбирается списком. */}
+              {/* На телефоне нет заголовков — порядок списком. */}
               {isMobile && (
                 <select className="order" aria-label="Порядок" value={order} onChange={e => choose(e.target.value as Order)}>
                   {ORDERS.map(([value, title]) => <option key={value} value={value}>{title}</option>)}
@@ -193,7 +191,6 @@ export function CertificatesPage() {
                     </button>
                   </th>
                   <th aria-sort={order === 'expiry-asc' ? 'ascending' : order === 'expiry-desc' ? 'descending' : 'none'}>
-                    {/* Щелчок по сроку переключает направление: сначала истекающие ↔ сначала дальние. */}
                     <button
                       type="button"
                       className="sort"

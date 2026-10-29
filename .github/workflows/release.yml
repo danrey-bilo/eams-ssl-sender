@@ -1,11 +1,4 @@
-# Релиз: тег vX.Y.Z → образ в GitHub Container Registry и страница релиза с файлами установки.
-#
-#   git tag v1.0.0 && git push origin v1.0.0
-#
-# Образ: ghcr.io/<владелец>/<репозиторий>:X.Y.Z, :X.Y и :latest. К релизу прикладываются:
-#   - email-ssl-sender-vX.Y.Z.zip — для Portainer: docker-compose.yml, .env.example, образ (.tar)
-#     и README.md с шагами установки;
-#   - email-ssl-sender-cli-vX.Y.Z.zip — для командной строки: секреты файлами, scripts/*.sh.
+# Тег vX.Y.Z → образ в ghcr.io и страница релиза с архивами для Portainer и командной строки.
 name: release
 
 on:
@@ -25,13 +18,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      # ⚠ Действия закреплены хешем коммита, а не тегом: тег можно переставить, а у задачи есть
-      # право писать релиз и образ. Токен в .git/config не остаётся — он попал бы в контекст сборки.
-      #
-      # ⚠ ⚠ Модули EAMS — подмодули modules/<имя> из ЗАКРЫТЫХ репозиториев danrey-bilo/module-*: токен
-      # задачи (GITHUB_TOKEN) читает только этот репозиторий. Нужен секрет MODULES_TOKEN — fine-grained
-      # токен с правом Contents: Read-only на этот репозиторий и восемь module-* (README, «Модули EAMS»).
-      # Подмодули встают на закреплённые в репозитории коммиты, не на свежие ветки.
+      # ⚠ Действия — только по хешу коммита. MODULES_TOKEN — чтение этого репозитория и закрытых module-*.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -45,8 +32,7 @@ jobs:
           echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
           echo "image=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
 
-      # Тесты не гоняются здесь: им нужен Docker для PostgreSQL (Testcontainers), и релиз
-      # тегируется с проверенного main. Сборка образа сама проверяет компиляцию и типы панели.
+      # Тестов здесь нет: тег ставится на проверенный main.
 
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
@@ -72,7 +58,7 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          # Версия сборки — из тега: её пишет журнал при старте (sender_started).
+          # Версия из тега попадает в журнал при старте.
           build-args: |
             VERSION=${{ steps.v.outputs.version }}
 
@@ -84,8 +70,7 @@ jobs:
         run: |
           docker pull "$IMAGE:$VERSION"
 
-          # Главный архив — для Portainer (и для docker compose с .env): стек, переменные, образ и
-          # инструкция. Образ и стек закреплены на версии релиза, а не на latest.
+          # Архив для Portainer, закреплён на версии релиза.
           PKG="email-ssl-sender-$TAG"
           mkdir -p "pkg/$PKG"
           docker save "$IMAGE:$VERSION" -o "pkg/$PKG/email-ssl-sender-image-$TAG.tar"
@@ -96,7 +81,7 @@ jobs:
           cp LICENSE LICENSE.ru.md "pkg/$PKG/"
           (cd pkg && zip -qr "../$PKG.zip" "$PKG")
 
-          # Вариант для командной строки — секреты файлами, скрипты установки.
+          # Архив для командной строки.
           mkdir -p "cli/email-ssl-sender/scripts"
           sed "s|\${SENDER_IMAGE:-[^}]*}|\${SENDER_IMAGE:-$IMAGE:$VERSION}|" docker-compose.yml \
             > "cli/email-ssl-sender/docker-compose.yml"
@@ -106,7 +91,7 @@ jobs:
           chmod +x cli/email-ssl-sender/scripts/*.sh
           (cd cli && zip -qr "../email-ssl-sender-cli-$TAG.zip" email-ssl-sender)
 
-          # Страница релиза: «Что нового» — раздел этой версии из CHANGELOG.md, затем установка.
+          # «Что нового» — раздел версии из CHANGELOG.md.
           awk -v v="$VERSION" '/^## / { show = ($0 == "## " v || index($0, "## " v " ") == 1); next } show' \
             CHANGELOG.md | sed '/./,$!d' > changes.md
           {

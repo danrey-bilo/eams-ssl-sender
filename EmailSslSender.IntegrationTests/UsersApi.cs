@@ -6,22 +6,14 @@ using Modules.Core.Errors;
 
 namespace EmailSslSender.IntegrationTests;
 
-/// <summary>
-/// Учётные записи по HTTP: права, приглашение, активация.
-/// </summary>
-/// <remarks>
-/// Здесь проверяется то, чего не видно изнутри модуля: что маршруты подняты, что конвейер
-/// прав их закрывает и что активация работает <b>без входа</b> — иначе приглашённый заперт
-/// снаружи навсегда.
-/// </remarks>
+/// <summary>Учётные записи по HTTP: маршруты, права, приглашение, активация без входа.</summary>
 [Collection(SenderHost.Collection)]
 public sealed class UsersApi(SenderHost host)
 {
     [Fact]
     public async Task Список_без_входа_отвечает_401_а_не_404()
     {
-        // 404 означал бы, что контроллер не найден маршрутизацией — самая незаметная
-        // поломка модульного монолита.
+        // 404 значил бы, что маршрутизация не нашла контроллер модуля.
         host.User.SignOut();
 
         (await Client().GetAsync("/api/users", Ct)).StatusCode.ShouldBe(HttpStatusCode.Unauthorized);
@@ -30,8 +22,6 @@ public sealed class UsersApi(SenderHost host)
     [Fact]
     public async Task Заведение_отдаёт_ссылку_приглашения()
     {
-        // ⚠ Ссылка в теле ответа — временно, до появления почты. Отправлять её пока нечем,
-        // а без неё приглашённый не войдёт никогда.
         SignIn("user.create");
 
         var created = await CreateAsync(Email());
@@ -44,8 +34,6 @@ public sealed class UsersApi(SenderHost host)
     [Fact]
     public async Task Ответ_не_содержит_хеша_пароля()
     {
-        // ⚠ Схема выхода — то место, где секрет утекает тише всего: поле добавляют «на
-        // время отладки», а замечают через год в чужом отчёте об ошибке.
         SignIn("user.create");
 
         var response = await Client().PostAsJsonAsync(
@@ -57,13 +45,10 @@ public sealed class UsersApi(SenderHost host)
         body.ShouldNotContain(Strong);
     }
 
-    // --- активация ------------------------------------------------------------------------
-
     [Fact]
     public async Task Активация_доступна_без_входа()
     {
-        // ⚠ Свойство, без которого весь путь приглашения бессмыслен: человек, который
-        // активирует учётную запись, ещё не может войти — у него нет пароля.
+        // ⚠ У активирующего ещё нет пароля — войти он не может.
         SignIn("user.create");
 
         var created = await CreateAsync(Email());
@@ -101,15 +86,7 @@ public sealed class UsersApi(SenderHost host)
         response.StatusCode.ShouldBe(HttpStatusCode.OK);
     }
 
-    /// <summary>
-    /// Ссылка приглашения проверяется телом запроса; адресом — больше никак.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ ⚠ Ревью безопасности 2026-10-20. Прежде это был <c>GET /api/activation?token=…</c>: адрес
-    /// запроса оседает в журналах Cloudflare и любого прокси по пути, и действующая ссылка
-    /// приглашения лежала там открытым текстом весь свой срок. Старый путь не должен отвечать
-    /// сведениями — иначе забытый клиент продолжал бы класть ссылку в адрес.
-    /// </remarks>
+    /// <summary>⚠ Адрес запроса оседает в журналах Cloudflare и прокси — ссылка только телом.</summary>
     [Fact]
     public async Task Ссылку_приглашения_в_адресе_не_принимают()
     {
@@ -136,8 +113,7 @@ public sealed class UsersApi(SenderHost host)
     [Fact]
     public async Task Непригодный_пароль_отвечает_списком_нарушений()
     {
-        // ⚠ Все нарушения разом, а не первое найденное: иначе человек узнаёт требования по
-        // одному за попытку, и форма превращается в игру «угадай следующее правило».
+        // Все нарушения разом, а не по одному за попытку.
         SignIn("user.create");
 
         var token = (await CreateAsync(Email()))["invitation_token"]!.GetValue<string>();
@@ -151,11 +127,10 @@ public sealed class UsersApi(SenderHost host)
         response.StatusCode.ShouldBe(HttpStatusCode.BadRequest);
         envelope.Code.ShouldBe("PASSWORD_POLICY_VIOLATION");
 
-        // Машинные коды рядом с русским текстом: клиент показывает свои формулировки, а не
-        // подставляет чужие в переведённый шаблон.
+        // Машинные коды: клиент показывает свои формулировки.
         envelope.Details!["codes"]!.ToString()!.ShouldContain("min_length");
 
-        // И самого пароля в ответе нет: ответы валидации уходят в логи клиента.
+        // Пароля в ответе нет: ответы валидации уходят в логи клиента.
         (await response.Content.ReadAsStringAsync(Ct)).ShouldNotContain("коротко");
     }
 
@@ -171,15 +146,7 @@ public sealed class UsersApi(SenderHost host)
         (await Envelope(response)).Code.ShouldBe("ACTIVATION_TOKEN_INVALID");
     }
 
-    // --- свежий второй фактор -----------------------------------------------------------------
-
-    /// <summary>
-    /// Всё, что меняет доступ, без свежего кода отвергается; правка имени и чтение — нет.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ ⚠ Решение владельца 2026-10-20. Номер учётной записи случайный: отказ обязан случиться в
-    /// фильтре, до разбора ресурса, — иначе по 404 и 403 перебором выяснялось бы, кто существует.
-    /// </remarks>
+    /// <summary>⚠ Номер случайный: отказ — в фильтре до разбора ресурса, иначе 404/403 выдали бы, кто существует.</summary>
     [Fact]
     public async Task Действия_над_доступом_без_свежего_кода_отвергаются()
     {
@@ -216,17 +183,15 @@ public sealed class UsersApi(SenderHost host)
                 (await Envelope(ответ)).Code.ShouldBe(ErrorCodes.SecondFactorRequired, $"{метод} {путь}");
             }
 
-            // Чтение кода не спрашивает. Правку учётной записи модуль закрывает кодом целиком — и имя тоже.
+            // Чтение кода не спрашивает.
             (await Client().GetAsync("/api/users", Ct)).StatusCode.ShouldBe(HttpStatusCode.OK);
         }
         finally
         {
-            // Давняя отметка не должна достаться соседям по коллекции.
+            // Давняя отметка не достаётся соседям по коллекции.
             host.User.StepUpAt = DateTimeOffset.UtcNow;
         }
     }
-
-    // --- инварианты по HTTP -----------------------------------------------------------------
 
     [Fact]
     public async Task Занятый_адрес_отвечает_409()
@@ -245,8 +210,7 @@ public sealed class UsersApi(SenderHost host)
     [Fact]
     public async Task Ссылка_приглашения_в_журнал_не_попадает()
     {
-        // ⚠ Правило редактирования секретных имён: последнее слово `invitation_token`
-        // секретно. Без этого пропуск в систему лежал бы в append-only таблице вечно.
+        // ⚠ Журнал только дописывается: пропуск в систему лежал бы там вечно.
         SignIn("user.create", "audit.read");
 
         var created = await CreateAsync(Email());
@@ -261,10 +225,7 @@ public sealed class UsersApi(SenderHost host)
     [Fact]
     public async Task Ошибка_разбора_приходит_нашим_конвертом()
     {
-        // ⚠ Найдено живой проверкой. Атрибут [ApiController] сам отвечает на непрошедший
-        // разбор — и отвечает ProblemDetails по RFC 9457, мимо нашего конверта, мимо
-        // request_id и мимо машинных кодов. Клиент, написанный под наш формат, показал бы
-        // пустую ошибку вместо внятной.
+        // ⚠ [ApiController] сам отвечает ProblemDetails мимо нашего конверта.
         SignIn("user.create");
 
         using var broken = new StringContent("{}", System.Text.Encoding.UTF8, "application/json");
@@ -278,7 +239,7 @@ public sealed class UsersApi(SenderHost host)
         envelope.RequestId.ShouldNotBeNullOrWhiteSpace();
         envelope.Details.ShouldNotBeNull();
 
-        // И чужого формата в ответе нет ни следа.
+        // Следов ProblemDetails нет.
         var raw = await response.Content.ReadAsStringAsync(Ct);
         raw.ShouldNotContain("traceId");
         raw.ShouldNotContain("tools.ietf.org");
@@ -287,8 +248,7 @@ public sealed class UsersApi(SenderHost host)
     [Fact]
     public async Task Присланный_пароль_в_ответ_валидации_не_попадает()
     {
-        // Сообщения валидации содержат присланные значения, а присылают туда в том числе
-        // пароли. Ответ уходит в лог клиента и в отчёты об ошибках.
+        // Сообщения валидации повторяют присланное, а ответ уходит в лог клиента.
         SignIn("user.create");
 
         using var body = new StringContent(
@@ -301,8 +261,6 @@ public sealed class UsersApi(SenderHost host)
         (await response.Content.ReadAsStringAsync(Ct))
             .ShouldNotContain("секрет-который-нельзя-показывать");
     }
-
-    // --- обвязка -----------------------------------------------------------------------------
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 

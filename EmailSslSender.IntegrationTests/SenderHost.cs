@@ -14,29 +14,12 @@ using Testcontainers.PostgreSql;
 
 namespace EmailSslSender.IntegrationTests;
 
-/// <summary>
-/// Настоящее приложение на настоящей базе, поднятой в контейнере на время прогона.
-/// </summary>
-/// <remarks>
-/// <b>Свой чистый PostgreSQL на прогон, а не общая база.</b> Половина того, что здесь
-/// проверяется, — поведение базы, а не кода: частичные индексы, citext, условные обновления.
-/// На общей базе такие тесты зеленеют на чистой и краснеют на рабочей, а состояние течёт
-/// между прогонами.
-///
-/// ⚠ Схема накатывается <b>миграциями</b>, и обвязка делает это сама, до поднятия
-/// приложения: приложение схему не трогает и при отставании не стартует.
-/// </remarks>
+/// <summary>Настоящее приложение на своём чистом PostgreSQL в контейнере на время прогона.</summary>
 public sealed class SenderHost : WebApplicationFactory<Program>, IAsyncLifetime
 {
     private readonly Dictionary<string, string> _fixtureFactors = new(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>
-    /// Войти паролем и, если вход того требует, завершить его кодом аутентификатора.
-    /// </summary>
-    /// <remarks>
-    /// Первый вход учётной записи без подтверждённого фактора даёт сессию настройки — её обвязка
-    /// доводит до рабочей, подключая аутентификатор (<see cref="CompleteInitialFactorAsync"/>).
-    /// </remarks>
+    /// <summary>Войти паролем и при нужде завершить вход кодом; сессию настройки довести подключением фактора.</summary>
     public async Task<HttpResponseMessage> LoginFixtureAsync(HttpClient client, string email, string password,
         bool cookie, CancellationToken cancellationToken, bool completeFactor = true)
     {
@@ -48,8 +31,7 @@ public sealed class SenderHost : WebApplicationFactory<Program>, IAsyncLifetime
             var challenge = refusal["details"]?["challenge"]?.GetValue<string>();
             if (challenge is null) return response;
 
-            // Раздельные положительные входы в пределах одного 30-секундного шага иначе упёрлись
-            // бы в защиту от повтора кода — она проверяется своими тестами.
+            // Иначе два входа в одном 30-секундном шаге упрутся в защиту от повтора кода.
             await using var scope = Services.CreateAsyncScope();
             await scope.ServiceProvider.GetRequiredService<AppDbContext>().Database.ExecuteSqlInterpolatedAsync(
                 $"UPDATE user_two_factor SET last_step = -1 WHERE user_id IN (SELECT id FROM users WHERE email = {email})", cancellationToken);
@@ -115,7 +97,7 @@ public sealed class SenderHost : WebApplicationFactory<Program>, IAsyncLifetime
         (await RequestAsync(HttpMethod.Post, "/api/me/two-factor/totp/confirm", new { code })).EnsureSuccessStatusCode();
     }
 
-    /// <summary>Секрет аутентификатора, подключённого обвязкой, — для тестов, которым нужен свой код.</summary>
+    /// <summary>Секрет аутентификатора, подключённого обвязкой.</summary>
     public string? FactorSecret(string email) => _fixtureFactors.GetValueOrDefault(email);
 
     /// <summary>Текущий код аутентификатора по секрету base32 (RFC 6238).</summary>
@@ -175,26 +157,17 @@ public sealed class SenderHost : WebApplicationFactory<Program>, IAsyncLifetime
         await команда.ExecuteNonQueryAsync();
     }
 
-    /// <summary>
-    /// Накатить схему ДО поднятия приложения — настоящей командой <c>migrate</c>.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Приложение схему не накатывает и при отставании не стартует: миграция — отдельный
-    /// шаг. Обвязка повторяет боевой порядок: сначала команда <c>migrate</c> того же хоста (наборы
-    /// модулей, набор проекта, перекладка секретов), потом сервер. Сверку модели каждого набора
-    /// с его миграциями держат тесты модулей.
-    /// </remarks>
+    /// <summary>⚠ Схема — настоящей командой <c>migrate</c> до поднятия: на отставшей схеме хост не стартует.</summary>
     private async Task MigrateAsync() =>
         (await MigrateCommand.RunAsync(_postgres.GetConnectionString(), _мастерКлюч))
             .ShouldBe(0, "команда migrate не прошла на чистой базе");
 
-    /// <summary>Мастер-ключ прогона — один на команду migrate и на сервер, заведомо одноразовый.</summary>
+    /// <summary>Одноразовый мастер-ключ прогона — общий у <c>migrate</c> и сервера.</summary>
     private readonly string _мастерКлюч = MigrateCommand.NewMasterKey();
 
     public override async ValueTask DisposeAsync()
     {
-        // ⚠ ⚠ ИНВАРИАНТ КОЛЛЕКЦИИ: общая таблица настроек пуста. Оставленная строка
-        // `auth.lockout_threshold = 1` роняет не себя, а десятки чужих тестов.
+        // ⚠ Таблица настроек обязана остаться пустой: забытая строка роняет чужие тесты.
         var осталось = await СтрокНастроекAsync();
 
         await base.DisposeAsync();
@@ -209,7 +182,7 @@ public sealed class SenderHost : WebApplicationFactory<Program>, IAsyncLifetime
         }
     }
 
-    /// <summary>Строка подключения к базе прогона — проверкам, что смотрят мимо приложения.</summary>
+    /// <summary>Строка подключения к базе прогона.</summary>
     public string Postgres => _postgres.GetConnectionString();
 
     /// <summary>Кто пришёл с запросом — задаёт тест.</summary>
@@ -218,18 +191,10 @@ public sealed class SenderHost : WebApplicationFactory<Program>, IAsyncLifetime
     /// <summary>Настройки, которыми управляет тест.</summary>
     public TestSettings Settings { get; } = new();
 
-    /// <summary>
-    /// Читать ли настройки по-настоящему — из базы и конфигурации.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Снимается только через <see cref="SystemSettingsFixture"/>: она же чистит таблицу до и
-    /// после.
-    /// </remarks>
+    /// <summary>⚠ Настоящие настройки из базы — только через <see cref="SystemSettingsFixture"/>, она чистит таблицу.</summary>
     public bool НастоящиеНастройки { get; set; }
 
-    /// <summary>
-    /// Убрать всё, что тесты записали в таблицу настроек, — и вернуть строки набора миграций проекта.
-    /// </summary>
+    /// <summary>Очистить таблицу настроек и вернуть строки набора <c>sender</c>.</summary>
     public async Task ОчиститьНастройкиAsync(CancellationToken cancellationToken = default)
     {
         await using var scope = Services.CreateAsyncScope();
@@ -250,7 +215,7 @@ public sealed class SenderHost : WebApplicationFactory<Program>, IAsyncLifetime
             "INSERT INTO system_settings (key, value, updated_at) VALUES ('auth.lockout_threshold', '1', now())");
     }
 
-    /// <summary>Сколько строк в таблице настроек сверх строк набора миграций проекта.</summary>
+    /// <summary>Строк в таблице настроек сверх набора <c>sender</c>.</summary>
     public async Task<int> СтрокНастроекAsync(CancellationToken cancellationToken = default)
     {
         await using var scope = Services.CreateAsyncScope();
@@ -271,13 +236,11 @@ public sealed class SenderHost : WebApplicationFactory<Program>, IAsyncLifetime
 
         builder.UseSetting("ConnectionStrings:Postgres", _postgres.GetConnectionString());
 
-        // Пределы частоты подняты: тесты входят десятки раз подряд с одного адреса. Сами пределы
-        // проверяют свои тесты.
+        // Пределы подняты: тесты входят десятки раз с одного адреса.
         builder.UseSetting("RateLimits:LoginPerMinute", "1000");
         builder.UseSetting("RateLimits:LoginPerAddressPerMinute", "1000");
         builder.UseSetting("RateLimits:ActivationPerMinute", "10000");
 
-        // Мастер-ключ свой на прогон и заведомо одноразовый — тот же, что у команды migrate.
         builder.UseSetting(MasterKeyFile.InlineKey, _мастерКлюч);
 
         builder.ConfigureTestServices(services =>
@@ -293,7 +256,7 @@ public sealed class SenderHost : WebApplicationFactory<Program>, IAsyncLifetime
                 ? (ISettingsReader)настоящиеНастройки.ImplementationFactory!(sp)
                 : Settings);
 
-            // Тестовые контроллеры (если есть) — частью приложения.
+            // Тестовые контроллеры — частью приложения.
             services.AddControllers().AddApplicationPart(typeof(SenderHost).Assembly);
         });
     }

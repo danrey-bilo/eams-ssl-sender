@@ -9,65 +9,36 @@ using Modules.Core.Errors;
 
 namespace EmailSslSender.Modules.KeyManager.Client;
 
-/// <summary>Что задано для связи с Key Manager Plus — без открытия ключа API.</summary>
+/// <summary>Настройки связи с Key Manager Plus — без открытия ключа API.</summary>
 internal sealed record KeyManagerConfiguration(bool Enabled, string? BaseUrl, bool ApiKeySet)
 {
-    /// <summary>Можно ли хотя бы попробовать соединиться: адрес и ключ заданы.</summary>
+    /// <summary>Адрес и ключ заданы.</summary>
     public bool Ready => !string.IsNullOrWhiteSpace(BaseUrl) && ApiKeySet;
 
-    /// <summary>Опрашивать ли: включено и готово.</summary>
+    /// <summary>Включено и готово — опрашивать.</summary>
     public bool Configured => Enabled && Ready;
 }
 
-/// <summary>
-/// Кто открывает клиента Key Manager Plus по текущим настройкам.
-/// </summary>
-/// <remarks>
-/// ⚠ Интерфейс заведён ради тестов доставки: они проверяют выбор сертификата, сроки и
-/// атомарность, и настоящий HTTPS-сервер им не нужен. Сам клиент проверяется отдельно на
-/// заглушке <c>HttpMessageHandler</c>.
-/// </remarks>
+/// <summary>Открывает клиента KMP; интерфейс — ради тестов доставки без HTTPS-сервера.</summary>
 internal interface IKeyManagerConnector
 {
-    /// <summary>Прочитать настройки и признак «ключ задан».</summary>
     Task<KeyManagerConfiguration> ReadAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>Открыть клиента.</summary>
     /// <exception cref="AppException"><c>KEYMANAGER_NOT_CONFIGURED</c>: нет адреса или ключа.</exception>
-    /// <exception cref="KeyManagerException">
-    /// Адрес задан неверно либо сменился после ввода ключа API.
-    /// </exception>
+    /// <exception cref="KeyManagerException">Адрес неверен или сменился после ввода ключа.</exception>
     Task<IKeyManagerClient> OpenAsync(CancellationToken cancellationToken = default);
 }
 
-/// <summary>
-/// Открывает клиента на свежем <see cref="SocketsHttpHandler"/> по текущим настройкам.
-/// </summary>
+/// <summary>Клиент на свежем обработчике на каждый проход: адрес и TLS правятся без перезапуска.</summary>
 /// <remarks>
-/// ⚠ <b>Соединение собирается на проход, а не живёт синглтоном.</b> Адрес правится без
-/// перезапуска, а проверка TLS зашивается в обработчик при создании; опрос же ходит раз в
-/// четверть часа, и цена нового рукопожатия ничтожна.
-///
-/// ⚠ ⚠ <b>Перенаправления выключены.</b> <c>HttpClient</c> при перенаправлении снимает только
-/// <c>Authorization</c>, а свой заголовок <c>AUTHTOKEN</c> понёс бы на любой хост, куда
-/// укажет <c>Location</c>.
-///
-/// ⚠ ⚠ <b>Ключ открывается только для адреса, для которого его ввели</b> (<c>ApiKeyStore</c>):
-/// сменивший <c>keymanager.base_url</c> получает отказ, а не соединение с ключом в заголовке.
-///
-/// ⚠ ⚠ <b>Сертификат сервера — только по цепочке удостоверяющего центра</b> (решение владельца
-/// 2026-10-28, версия 2.5): цепочка, имя хоста и отзыв (<c>Online</c>). У живого сервера владельца
-/// сертификат Sectigo, и отозванный сертификат обязан не пройти — значит, серверу нужен выход к
-/// OCSP/CRL центра. Закреплённого отпечатка для самоподписанного сертификата больше нет, и
-/// отключить проверку нечем; свой центр — корневой сертификат в <c>SSL_CERT_FILE</c> контейнера.
+/// ⚠ Перенаправления выключены: <c>AUTHTOKEN</c> ушёл бы на хост из <c>Location</c>.
+/// TLS — только цепочка УЦ, имя хоста и отзыв; отключить проверку нельзя.
 /// </remarks>
 internal sealed class KeyManagerConnector(
     ISettingsReader settings, ApiKeyStore apiKey, KeyManagerModuleOptions options) : IKeyManagerConnector
 {
-    /// <summary>Сколько ждём ответа целиком.</summary>
     private static readonly TimeSpan Таймаут = TimeSpan.FromSeconds(30);
 
-    /// <summary>Потолок ответа: файлы сертификатов весят килобайты, список — сотни килобайт.</summary>
     private const int ПотолокОтвета = 16 * 1024 * 1024;
 
     public async Task<KeyManagerConfiguration> ReadAsync(CancellationToken cancellationToken = default) =>
@@ -113,8 +84,7 @@ internal sealed class KeyManagerConnector(
 
         if (options.TrustedRoots.Count > 0)
         {
-            // Только тесты хоста: заглушка Key Manager Plus — корень своей цепочки. Проверка та же, меняется
-            // лишь хранилище корней.
+            // Только тесты хоста: проверка та же, меняется лишь хранилище корней.
             var политика = new X509ChainPolicy
             {
                 TrustMode = X509ChainTrustMode.CustomRootTrust,

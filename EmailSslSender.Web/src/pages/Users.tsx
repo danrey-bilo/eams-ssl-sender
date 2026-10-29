@@ -159,8 +159,7 @@ function InviteDialog({ onClose, onCreated }: { onClose: (done: boolean) => void
       onSubmit={async () => onCreated(await api.post<UserCreated>('/api/users', {
         email: email.trim(),
         display_name: name.trim() || null,
-        // Ролей нет: каждая учётная запись — администратор, а распоряжаться суперпользователем
-        // модуль учётных записей разрешает только суперпользователю.
+        // Ролей нет: суперпользователем распоряжается только суперпользователь.
         is_superuser: true,
       }))}
       onClose={onClose}

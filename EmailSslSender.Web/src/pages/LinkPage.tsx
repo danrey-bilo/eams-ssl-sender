@@ -7,8 +7,7 @@ import { AuthCard } from './Auth';
 
 type Kind = 'activate' | 'reset';
 
-// ⚠ Токен приходит во ФРАГМЕНТЕ адреса и стирается из адресной строки сразу, ещё до первого
-// рендера: фрагмент не уходит на сервер и не оседает в логах прокси, а стёртый — в истории вкладки.
+// ⚠ Токен — во фрагменте адреса (не уходит на сервер); стирается до первого рендера.
 const token = new URLSearchParams(location.hash.slice(1)).get('token') ?? '';
 if (location.pathname === '/activate' || location.pathname === '/password-reset') {
   history.replaceState(null, '', location.pathname);
@@ -28,7 +27,7 @@ export function LinkPage({ kind }: { kind: Kind }) {
     if (!token) return;
     (async () => {
       if (kind === 'activate') {
-        // ⚠ Токен — телом POST, не в адресе запроса: адрес оседает в журналах Cloudflare и прокси.
+        // ⚠ Токен — телом POST: адрес оседает в журналах прокси.
         const r = await publicPost<{ email: string; policy: PasswordPolicy }>('/api/activation/info', { token });
         if (!r.ok) return setState('invalid');
         setWho(r.data.email);

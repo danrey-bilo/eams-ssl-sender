@@ -10,18 +10,11 @@ using Testcontainers.PostgreSql;
 
 namespace EmailSslSender.IntegrationTests;
 
-/// <summary>
-/// Обновление установки 1.x: прежняя схема с данными → <c>migrate</c> → схема модулей EAMS.
-/// </summary>
-/// <remarks>
-/// ⚠ ⚠ <b>Главная проверка перехода на модули.</b> Живая установка идёт ровно этой дорогой: прежние
-/// миграции хоста, мост, отметка базовых миграций модулей, перекладка секретов из конверта «sender:» в
-/// «eams:». Две дороги — новая установка и обновлённая — обязаны дать одну схему, а администраторы
-/// не должны потерять ни аутентификатор, ни пароль SMTP, ни ключ Key Manager Plus.
-/// </remarks>
+/// <summary>Обновление 1.x: прежняя схема с данными → <c>migrate</c> → схема модулей EAMS.</summary>
+/// <remarks>⚠ Новая и обновлённая установки дают одну схему, секреты 1.x открываются конвертом модулей.</remarks>
 public sealed class ModulesBridgeTests : IAsyncLifetime
 {
-    /// <summary>Последняя миграция версии 1.4.0 — схема, с которой обновляется живая установка.</summary>
+    /// <summary>Последняя миграция 1.4.0.</summary>
     private const string Версия14 = "20261026154101_RenameSenderName";
 
     private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:16")
@@ -59,7 +52,7 @@ public sealed class ModulesBridgeTests : IAsyncLifetime
         (await MigrateCommand.RunAsync(прежняя, МастерКлюч)).ShouldBe(0, "migrate на прежней схеме");
         (await MigrateCommand.RunAsync(новая, МастерКлюч)).ShouldBe(0, "migrate на пустой базе");
 
-        // Одна схема на обеих дорогах — по каталогу, без учёта порядка колонок.
+        // Каталог без учёта порядка колонок.
         (await КаталогAsync(прежняя)).ShouldBe(await КаталогAsync(новая));
 
         await using var db = new NpgsqlConnection(прежняя);
@@ -74,7 +67,6 @@ public sealed class ModulesBridgeTests : IAsyncLifetime
         (await ЗначениеAsync<long>(db, "SELECT count(*) FROM mail_outbox WHERE sent_at IS NULL AND expires_at <= now()"))
             .ShouldBe(1, "неотправленное письмо прежнего конверта умирает, а не уходит без тела");
 
-        // Секреты открываются конвертом модулей тем же мастер-ключом.
         var конверт = new SecretEnvelope(MasterKeyRing.Parse(МастерКлюч));
 
         var (ключTotp, секретTotp) = await ПараAsync(db, $"SELECT data_key, secret FROM user_two_factor WHERE user_id = '{кто}'");
@@ -86,17 +78,15 @@ public sealed class ModulesBridgeTests : IAsyncLifetime
         var (ключKmp, ключApi) = await ПараAsync(db, "SELECT data_key, api_key FROM keymanager_state WHERE id = 1");
         конверт.OpenText(ключKmp, ключApi, "sender:keymanager:api-key").ShouldBe(КлючKmp);
 
-        // Повторный migrate ничего не трогает: всё уже под конвертом модулей.
+        // Повторный migrate ничего не трогает.
         (await MigrateCommand.RunAsync(прежняя, МастерКлюч)).ShouldBe(0);
         var (ещёРаз, _) = await ПараAsync(db, "SELECT data_key, sealed FROM system_secrets WHERE key = 'smtp_password'");
         ещёРаз.Bytes.ShouldBe(ключSmtp.Bytes, "повторная перекладка — значит, проверка «уже переложено» не работает");
     }
 
-    // --- обвязка ---------------------------------------------------------------------------
-
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    /// <summary>Данные установки 1.x, запечатанные прежним конвертом «sender:».</summary>
+    /// <summary>Данные 1.x под прежним конвертом «sender:».</summary>
     private async Task ЗаполнитьAsync(string connection, Guid кто, byte[] totp, string парольSmtp, string ключKmp)
     {
         await using var db = new NpgsqlConnection(connection);
@@ -143,7 +133,7 @@ public sealed class ModulesBridgeTests : IAsyncLifetime
         return new NpgsqlConnectionStringBuilder(_postgres.GetConnectionString()) { Database = имя }.ConnectionString;
     }
 
-    /// <summary>Колонки, ограничения, индексы и расширения схемы <c>public</c> — без таблиц истории.</summary>
+    /// <summary>Каталог схемы <c>public</c> без таблиц истории.</summary>
     private static async Task<List<string>> КаталогAsync(string connection)
     {
         await using var db = new NpgsqlConnection(connection);
@@ -198,7 +188,7 @@ public sealed class ModulesBridgeTests : IAsyncLifetime
         return (new WrappedDataKey((byte[])читатель.GetValue(0)), new SealedSecret((byte[])читатель.GetValue(1)));
     }
 
-    /// <summary>Конверт версии 1.x — запечатать так, как запечатывала установка до модулей.</summary>
+    /// <summary>Конверт 1.x.</summary>
     private static class ПрежнийКонверт
     {
         public static (byte[] Wrapped, byte[] Sealed) Seal(byte[] kek, byte[] открыто, string context)

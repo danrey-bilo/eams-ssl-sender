@@ -11,14 +11,7 @@ using Microsoft.Extensions.Logging;
 
 namespace EmailSslSender.IntegrationTests;
 
-/// <summary>
-/// Журнал говорит, ЧТО изменилось: значения — у настроек и Key Manager Plus, у прочих — имена полей.
-/// </summary>
-/// <remarks>
-/// ⚠ ⚠ Без значений строка «settings.system.update» не говорила бы, какой ключ и с чего на что, —
-/// то есть после подмены <c>mail.smtp_host</c> или <c>keymanager.base_url</c> журнал молчал бы о
-/// главном. Писать всё подряд тоже нельзя: у учётных записей в изменениях лежат адреса почты.
-/// </remarks>
+/// <summary>Значения изменений — только у настроек и Key Manager Plus, у прочих — имена полей (там адреса почты).</summary>
 [Collection(SenderHost.Collection)]
 public sealed class AuditChangesTests(SenderHost host)
 {
@@ -134,7 +127,7 @@ public sealed class AuditChangesTests(SenderHost host)
 
     private static LogAuditWriter Журнал(Перо перо) => new(new TestUser(), new ПустойКонтекст(), перо);
 
-    /// <summary>Контекст запроса без запроса: адреса и номера нет.</summary>
+    /// <summary>Контекст без запроса.</summary>
     private sealed class ПустойКонтекст : IAuditContextAccessor
     {
         public AuditContext Current { get; } = new();
@@ -144,7 +137,7 @@ public sealed class AuditChangesTests(SenderHost host)
         }
     }
 
-    /// <summary>Логгер журнала, запоминающий строки и структурные поля.</summary>
+    /// <summary>Логгер, запоминающий строки и поля.</summary>
     private sealed class Перо : ILogger<LogAuditWriter>
     {
         public List<string> Строки { get; } = [];

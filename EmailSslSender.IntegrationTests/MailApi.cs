@@ -8,18 +8,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace EmailSslSender.IntegrationTests;
 
-/// <summary>
-/// Почта: состояние, пароль SMTP, проверочное письмо.
-/// </summary>
-/// <remarks>
-/// ⚠ ⚠ <b>Пароль SMTP требует свежего второго фактора, и это проверяется отдельно</b> (решение
-/// владельца 2026-10-20). Тот, кто меняет SMTP, направляет письма сброса на свой релей и собирает
-/// одноразовые ссылки всех, кто попросит восстановление.
-///
-/// ⚠ <b>Проверочное письмо — зонд наружу из-под сервера:</b> оно устанавливает исходящее
-/// соединение на хост и порт из настроек и показывает ответ. Свежего кода оно не спрашивает:
-/// хост и порт — настройки защиты, и сменить их без свежего кода нельзя.
-/// </remarks>
+/// <summary>Почта: состояние, пароль SMTP, проверочное письмо.</summary>
 [Collection(SenderHost.Collection)]
 public sealed class MailApi(SenderHost host)
 {
@@ -46,7 +35,7 @@ public sealed class MailApi(SenderHost host)
 
         состояние["password_set"]!.GetValue<bool>().ShouldBeTrue();
 
-        // ⚠ Ни в одном поле и ни в каком виде: ответ проверяется целиком, а не по полям.
+        // Ответ проверяется целиком, а не по полям.
         тело.ShouldNotContain("очень-секретный-пароль");
 
         await Снять();
@@ -55,8 +44,7 @@ public sealed class MailApi(SenderHost host)
     [Fact]
     public async Task Пароль_задаётся_и_снимается_пустой_строкой()
     {
-        // ⚠ Пустая строка СНИМАЕТ пароль, и это законное состояние: реле в той же сети
-        // принимает почту без авторизации. Отказ на пустой строке запретил бы такую установку.
+        // Без пароля — законно: реле в той же сети принимает почту без авторизации.
         await using var _ = await SystemSettingsFixture.НачатьAsync(host);
         Войти("settings.read", "settings.security.manage");
 
@@ -76,8 +64,7 @@ public sealed class MailApi(SenderHost host)
         var ответ = await host.CreateClient()
             .PostAsJsonAsync(Проверка, new { to = "кто@example.com" }, Ct);
 
-        // ⚠ 409, а не 503: это не «сервис недоступен», а «настройка не заполнена», и чинится
-        // она человеком за минуту.
+        // 409, а не 503: не заполнена настройка, сервис не лежит.
         ответ.StatusCode.ShouldBe(HttpStatusCode.Conflict);
         (await Код(ответ)).ShouldBe("MAIL_NOT_CONFIGURED");
     }
@@ -85,13 +72,10 @@ public sealed class MailApi(SenderHost host)
     [Fact]
     public async Task Отказ_чужого_сервера_приезжает_409_с_его_текстом()
     {
-        // ⚠ ⚠ 409, а не 502, и причина в жизни: Cloudflare подменяет тело любого 5xx от origin
-        // своей страницей, и конверт с `details.reason` до браузера не доезжает. Администратор
-        // увидел бы «письмо не отправлено» вместо `5.7.1 Authentication Required`.
+        // ⚠ 409, а не 502: Cloudflare подменяет тело любого 5xx, и `details.reason` не доехал бы.
         await using var _ = await SystemSettingsFixture.НачатьAsync(host);
         Войти("settings.read", "settings.security.manage", "settings.manage");
 
-        // Настраиваем почту на заведомо недоступный порт: ответ будет отказом соединения.
         await Настроить();
 
         var ответ = await host.CreateClient()
@@ -100,7 +84,7 @@ public sealed class MailApi(SenderHost host)
         ответ.StatusCode.ShouldBe(HttpStatusCode.Conflict);
         (await Код(ответ)).ShouldBe("MAIL_SEND_FAILED");
 
-        // Текст чужого сервера уезжает администратору целиком — ради этого ручка и существует.
+        // Текст чужого сервера уезжает администратору целиком.
         var тело = JsonNode.Parse(await ответ.Content.ReadAsStringAsync(Ct))!;
         тело["details"]!["reason"]!.GetValue<string>().ShouldNotBeNullOrWhiteSpace();
     }
@@ -108,8 +92,7 @@ public sealed class MailApi(SenderHost host)
     [Fact]
     public async Task Пароль_не_уходит_на_сменившийся_сервер()
     {
-        // ⚠ ⚠ Сценарий перехваченной сессии: пароль вводили для настоящего сервера, а сервер в
-        // настройках переставили на свой. Отказ — до соединения, с просьбой ввести пароль заново.
+        // ⚠ Пароль привязан к серверу: на сменившийся — отказ до соединения.
         Войти();
 
         try
@@ -128,7 +111,7 @@ public sealed class MailApi(SenderHost host)
             причина.ShouldContain("Введите пароль SMTP заново");
             причина.ShouldNotContain("очень-секретный-пароль");
 
-            // Свой сервер — пароль открывается, и отказ уже сетевой (порт заведомо пуст).
+            // Свой сервер — пароль открывается, отказ уже сетевой.
             host.Settings.Values["mail.smtp_host"] = "127.0.0.1";
 
             var свой = await host.CreateClient().PostAsJsonAsync(Проверка, new { to = "кто@example.com" }, Ct);
@@ -146,8 +129,7 @@ public sealed class MailApi(SenderHost host)
     [Fact]
     public async Task Чужой_отказ_приезжает_типом_а_не_текстом()
     {
-        // ⚠ Внутри попытки открывается пароль из базы: отказ криптографии (а с ним Npgsql и что
-        // угодно ещё) не должен уезжать наружу своим сообщением — только цепочкой типов.
+        // ⚠ Отказ криптографии или Npgsql уезжает наружу только цепочкой типов, без текста.
         Войти();
 
         try
@@ -176,14 +158,7 @@ public sealed class MailApi(SenderHost host)
         }
     }
 
-    /// <summary>
-    /// Пароль SMTP без свежего кода не меняется; проверочное письмо кода не спрашивает.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ ⚠ Решение владельца 2026-10-20: сменивший SMTP направляет письма сброса и коды входа на
-    /// свой релей. Проверочное письмо уходит на уже настроенный сервер — его отказ здесь «не
-    /// указано куда», а не 403.
-    /// </remarks>
+    /// <summary>⚠ Сменивший SMTP направил бы письма сброса и коды входа на свой релей.</summary>
     [Fact]
     public async Task Пароль_SMTP_и_проверочное_письмо_без_свежего_кода_отвергаются()
     {
@@ -198,8 +173,7 @@ public sealed class MailApi(SenderHost host)
             (await Код(ответ)).ShouldBe("SECOND_FACTOR_REQUIRED");
             (await ответ.Content.ReadAsStringAsync(Ct)).ShouldNotContain("очень-секретный-пароль");
 
-            // ⚠ Модуль почты закрывает кодом и проверочное письмо: оно уходит с паролем SMTP на сервер из
-            // настроек, и подменённый сервер узнал бы пароль.
+            // Проверочное письмо несёт пароль SMTP — подменённый сервер узнал бы его.
             var проверка = await host.CreateClient().PostAsJsonAsync(Проверка, new { to = "" }, Ct);
 
             проверка.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
@@ -223,8 +197,6 @@ public sealed class MailApi(SenderHost host)
             .StatusCode.ShouldBe(HttpStatusCode.BadRequest);
     }
 
-    // --- обвязка ---------------------------------------------------------------------------
-
     private void Войти(params string[] права)
     {
         host.User.SignIn();
@@ -247,15 +219,12 @@ public sealed class MailApi(SenderHost host)
                 {
                     ["mail.enabled"] = true,
 
-                    // Порт, на котором заведомо никто не слушает: нам нужен отказ соединения,
-                    // а не работающий почтовик.
+                    // Пустой порт: нужен отказ соединения.
                     ["mail.smtp_host"] = "127.0.0.1",
                     ["mail.smtp_port"] = 1,
                     ["mail.smtp_security"] = "none",
 
-                    // ⚠ Вскрытие 44: без адреса отправителя почта НЕ считается настроенной, и
-                    // отказ пришёл бы «не настроена» вместо ответа чужого сервера. Прежде адрес
-                    // угадывался из учётной записи SMTP — и угадывался неверно.
+                    // Без адреса отправителя почта не считается настроенной.
                     ["mail.from_address"] = "vault@example.com",
                 },
             },
@@ -275,7 +244,7 @@ public sealed class MailApi(SenderHost host)
     private static async Task<string> Причина(HttpResponseMessage ответ) =>
         JsonNode.Parse(await ответ.Content.ReadAsStringAsync(Ct))!["details"]!["reason"]!.GetValue<string>();
 
-    /// <summary>Почта со входом по паролю на заведомо пустой порт — на подставных настройках.</summary>
+    /// <summary>Почта со входом по паролю на пустой порт — подставными настройками.</summary>
     private void ПочтаСВходом(string сервер)
     {
         host.Settings.Values.Clear();
@@ -287,7 +256,7 @@ public sealed class MailApi(SenderHost host)
         host.Settings.Values["mail.from_address"] = "vault@example.com";
     }
 
-    /// <summary>Строки журнала по событию пароля — прирост считается ими.</summary>
+    /// <summary>Строки журнала по событию пароля.</summary>
     private async Task<List<string>> Записи()
     {
         await using var scope = host.Services.CreateAsyncScope();

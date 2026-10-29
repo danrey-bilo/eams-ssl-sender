@@ -5,20 +5,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace EmailSslSender.Modules.KeyManager.Secrets;
 
-/// <summary>
-/// Перекладывает обёртку ключа данных ключа API под действующую версию мастер-ключа.
-/// </summary>
-/// <remarks>
-/// ⚠ ⚠ <b>Написан в том же изменении, что и запечатывание.</b> Цель ротации, добавленная позже,
-/// означала бы, что <c>rewrap-keys</c> отчитывается об успехе, не тронув ключ API, — и старую
-/// версию мастер-ключа нельзя вывести из обращения, а никто об этом не знает.
-///
-/// ⚠ Трогается только обёртка; ключ API в память не открывается.
-///
-/// ⚠ <b>Условное обновление по прежней обёртке</b> — довод тот же, что у <c>SystemSecretsRewrap</c>:
-/// ключ, перезаданный между чтением и записью, иначе получил бы обёртку от старого ключа данных
-/// и перестал бы открываться.
-/// </remarks>
+/// <summary>Перекладывает обёртку ключа данных ключа API под текущий мастер-ключ; ключ не открывается.</summary>
+/// <remarks>⚠ Условное обновление по прежней обёртке: перезаданный между чтением и записью ключ не сломается.</remarks>
 internal sealed class ApiKeyRewrap(AppDbContext db, ISecretEnvelope envelope) : IRewrapTarget
 {
     public string Name => "keymanager_state";
@@ -28,7 +16,7 @@ internal sealed class ApiKeyRewrap(AppDbContext db, ISecretEnvelope envelope) : 
         db.InTransactionAsync(
             async token =>
             {
-                // Строка одна, и курсор у неё один: второй заход начинается после неё.
+                // Строка одна: второй заход уже после неё.
                 if (after is not null)
                 {
                     return new RewrapBatch(0, 0, null);

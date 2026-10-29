@@ -1,4 +1,4 @@
-// Ответы API — ровно те поля, что отдают контроллеры (snake_case, как в JSON).
+// Ответы API в snake_case, как в JSON.
 
 export interface Tokens {
   access_token: string;
@@ -51,7 +51,7 @@ export interface Subscription {
   include_passphrase: boolean;
   on_change: boolean;
   interval_days: number | null;
-  /** Период, в который опрос шлёт сам: ГГГГ-ММ-ДД, оба дня включительно. Вручную — всегда. */
+  /** Период автоотправки, ГГГГ-ММ-ДД включительно. */
   active_from: string | null;
   active_until: string | null;
   /** Время отправки ЧЧ:ММ; null — сразу, как опрос заметит. */

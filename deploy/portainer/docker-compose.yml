@@ -1,10 +1,5 @@
-# EAMS ssl sender — стек для Portainer (Stacks → Add stack → Upload) или для `docker compose up -d`.
-#
-# Все значения — в .env (Portainer: «Load variables from .env file»). Секреты приходят переменными:
-# в Portainer нет файлов секретов на сервере. Подробно — README.md рядом.
-#
-# Порядок при каждом развёртывании: postgres → migrate (схема, роль базы, первый администратор)
-# → api → cloudflared. Обновление образа — новый SENDER_IMAGE и «Update the stack».
+# Стек для Portainer (Stacks → Add stack → Upload) или `docker compose up -d`. Подробно — README.md рядом.
+# Значения — в .env (Portainer: «Load variables from .env file»). Обновление — новый SENDER_IMAGE и «Update the stack».
 
 x-logging: &logging
   driver: json-file
@@ -28,7 +23,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?задайте POSTGRES_PASSWORD в .env}
     volumes:
       - pgdata:/var/lib/postgresql/data
-    # Только внутренняя сеть: базе не нужен ни интернет, ни туннель.
+    # Только внутренняя сеть.
     networks:
       - db
     security_opt:
@@ -50,8 +45,7 @@ services:
       timeout: 5s
       retries: 20
 
-  # Одноразовая служба: накатывает схему, заводит роль sender_app (сервис ходит ею — без права
-  # менять схему) и, если заданы, первого администратора или сброс доступа. Завершается с кодом 0.
+  # Разово: схема, роль sender_app и, если заданы, первый администратор или сброс доступа.
   migrate:
     image: ${SENDER_IMAGE:-ghcr.io/danrey-bilo/eams-ssl-sender:latest}
     command: ["migrate"]
@@ -87,15 +81,14 @@ services:
       ConnectionStrings__Postgres: "Host=postgres;Port=5432;Database=sender;Username=sender_app;Maximum Pool Size=40;GSS Encryption Mode=Disable"
       SENDER_POSTGRES_PASSWORD: ${SENDER_APP_PASSWORD:?задайте SENDER_APP_PASSWORD в .env}
       SENDER_MASTER_KEK: ${SENDER_MASTER_KEK:?задайте SENDER_MASTER_KEK в .env}
-      # Заголовкам X-Forwarded-* верим только от адреса cloudflared (и своего прокси, если задан) — не от
-      # всей подсети туннеля: в неё входит и шлюз моста, то есть сам сервер.
+      # ⚠ X-Forwarded-* — только от адреса cloudflared (не всей подсети) и своего прокси, если задан.
       ForwardedHeaders__KnownProxies: ${SENDER_TUNNEL_PROXY_IP:-172.31.250.2}
       ForwardedHeaders__KnownNetworks: ${SENDER_TRUSTED_PROXY_NETWORKS:-}
     <<: *hardening
     read_only: true
     tmpfs:
       - /tmp
-    # Наружу — только через туннель; на сервере порт открыт лишь для 127.0.0.1.
+    # Наружу — только через туннель.
     ports:
       - "127.0.0.1:${SENDER_HTTP_PORT:-8001}:8001"
     networks:
@@ -117,7 +110,6 @@ services:
       migrate:
         condition: service_completed_successfully
 
-  # Cloudflare Tunnel: публикует панель наружу исходящим соединением, без открытых портов.
   # В Cloudflare сервис туннеля — HTTP `api:8001`.
   cloudflared:
     image: cloudflare/cloudflared:latest
@@ -142,10 +134,10 @@ volumes:
 
 networks:
   default:
-  # База и служебные контейнеры. internal: из этой сети нет выхода наружу.
+  # База, без выхода наружу.
   db:
     internal: true
-  # Только туннель и API. Подсеть закреплена, чтобы API верил заголовкам именно от неё.
+  # Туннель и API; подсеть закреплена.
   edge:
     ipam:
       config:

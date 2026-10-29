@@ -6,33 +6,8 @@ using Npgsql;
 
 namespace EmailSslSender.Api.Infrastructure;
 
-/// <summary>
-/// Узкая роль, которой ходит работающий сервис: только чтение и запись строк, без DDL.
-/// </summary>
-/// <remarks>
-/// ⚠ ⚠ <b>Зачем.</b> Владелец схемы в образе <c>postgres</c> — суперпользователь. Ходи сервис
-/// им, любая уязвимость в приложении становилась бы правами суперпользователя базы:
-/// <c>COPY … TO PROGRAM</c> — это выполнение команд в контейнере базы, а <c>ALTER</c> и
-/// <c>DROP</c> — порча схемы. Роль сервиса умеет только <c>SELECT/INSERT/UPDATE/DELETE</c>
-/// в схеме <c>public</c>; схему меняет одна команда <c>migrate</c>, и она ходит владельцем из
-/// отдельной службы, у которой есть его пароль (у службы <c>api</c> его нет).
-///
-/// ⚠ <b>Заводится и обновляется каждой командой <c>migrate</c></b>, идемпотентно: роль
-/// создаётся или приводится к нужным атрибутам, пароль берётся из файла секрета (сменили файл —
-/// следующий <c>migrate</c> сменил пароль), права выдаются на всё, что есть, и по умолчанию —
-/// на всё, что создадут будущие миграции того же владельца.
-///
-/// ⚠ <b>Текст DDL собирает сам PostgreSQL</b> (<c>format</c> с <c>%I</c> и <c>%L</c>):
-/// параметром в <c>CREATE ROLE</c> имя и пароль не передать, а склейка в C# — это ровно та
-/// инъекция, от которой роль и защищает.
-///
-/// ⚠ <b>Пароль уходит проверочным значением SCRAM-SHA-256, а не текстом</b> (ревью безопасности
-/// 2026-10-20): текст команды PostgreSQL пишет в журнал при ошибке или при
-/// <c>log_statement</c>, и открытый пароль роли остался бы там.
-///
-/// ⚠ <b>Журнал миграций роль только читает</b>: старт проверяет по нему схему, а писать в него
-/// может лишь <c>migrate</c>.
-/// </remarks>
+/// <summary>Узкая роль работающего сервиса: чтение и запись строк, без DDL.</summary>
+/// <remarks>⚠ DDL собирает PostgreSQL (<c>format</c> с <c>%I</c>/<c>%L</c>), пароль уходит проверочным значением SCRAM.</remarks>
 public static partial class RuntimeRole
 {
     /// <summary>Переменная с именем роли сервиса.</summary>
@@ -41,20 +16,12 @@ public static partial class RuntimeRole
     /// <summary>Переменная с путём к файлу пароля роли сервиса.</summary>
     public const string PasswordFileVariable = "SENDER_APP_PASSWORD_FILE";
 
-    /// <summary>Пароль роли прямо в переменной — для Portainer; файл, если задан, главнее.</summary>
+    /// <summary>Пароль роли прямо в переменной — для Portainer; файл главнее.</summary>
     public const string PasswordVariable = "SENDER_APP_PASSWORD";
 
-    /// <summary>Атрибуты роли: вход и ничего сверх.</summary>
     private const string Атрибуты = "LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS INHERIT";
 
-    /// <summary>
-    /// Права, по одной команде. <c>%1$I</c> — роль, <c>%2$I</c> — база.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Последовательности — ради столбцов <c>IDENTITY</c>: без <c>USAGE</c> на них вставка
-    /// строки с автономером падает. <c>ALTER DEFAULT PRIVILEGES</c> действует на объекты,
-    /// которые создаст текущая роль, — владелец, который и накатывает миграции.
-    /// </remarks>
+    // %1$I — роль, %2$I — база. Последовательности — ради столбцов IDENTITY.
     private static readonly string[] Права =
     [
         "GRANT CONNECT ON DATABASE %2$I TO %1$I",
@@ -65,10 +32,7 @@ public static partial class RuntimeRole
         "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO %1$I",
     ];
 
-    /// <summary>
-    /// Имя и пароль роли сервиса из конфигурации или <c>null</c>, если роль не задана
-    /// (разработка, тесты — там сервис ходит владельцем).
-    /// </summary>
+    /// <summary>Имя и пароль роли сервиса или <c>null</c>, если роль не задана (разработка, тесты).</summary>
     public static (string Role, string Password)? FromConfiguration(IConfiguration configuration)
     {
         ArgumentNullException.ThrowIfNull(configuration);
@@ -89,11 +53,7 @@ public static partial class RuntimeRole
         return (роль, пароль);
     }
 
-    /// <summary>Завести или обновить роль сервиса и выдать ей права. Ходит владельцем схемы.</summary>
-    /// <param name="connection">Открытое подключение владельца схемы.</param>
-    /// <param name="role">Имя роли сервиса.</param>
-    /// <param name="password">Её пароль.</param>
-    /// <param name="cancellationToken">Отмена.</param>
+    /// <summary>Завести или обновить роль сервиса и выдать ей права; ходит владельцем схемы.</summary>
     public static async Task EnsureAsync(
         NpgsqlConnection connection, string role, string password, CancellationToken cancellationToken = default)
     {
@@ -111,8 +71,7 @@ public static partial class RuntimeRole
 
         var владелец = await ЗначениеAsync<string>(connection, транзакция, "SELECT current_user", cancellationToken);
 
-        // ⚠ Сервис, ходящий владельцем, — ровно то, от чего роль защищает; выдать «роли сервиса»
-        // права самой себе и отрапортовать успех было бы тихим провалом всей затеи.
+        // ⚠ Сервис, ходящий владельцем, — ровно то, от чего роль защищает.
         if (string.Equals(владелец, role, StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
@@ -136,8 +95,7 @@ public static partial class RuntimeRole
                 ("r", role));
         }
 
-        // ⚠ Таблицы истории миграций — прежняя хоста и по одной на набор модуля (решение EAMS 0114):
-        // читать их сервису нужно (проверка схемы при старте), менять — нет.
+        // Историю миграций сервис только читает — проверка схемы при старте.
         var истории = new List<string>();
 
         await using (var список = new NpgsqlCommand(
@@ -160,11 +118,7 @@ public static partial class RuntimeRole
                 cancellationToken, ("t", история), ("r", role));
         }
 
-        // ⚠ ⚠ Журнал действий (модуль audit) только дописывается: общая раздача выше дала сервису и UPDATE/DELETE
-        // на журнал — список модуля начинается с изъятий, поэтому он идёт ПОСЛЕ неё (README модуля). Роль
-        // обслуживания у проекта та же, что у сервиса: ей нужна только `audit_ensure_partition` — партиции
-        // наперёд. Удаление партиций у сервиса отбирается: срок хранения выключен, журнал хранится всегда, и
-        // стереть его не может даже захвативший процесс.
+        // ⚠ Права журнала — ПОСЛЕ общей раздачи: список модуля начинается с изъятий; удаление партиций отбирается.
         foreach (var правоЖурнала in AuditPrivileges.Grants(role, role))
         {
             await using var выдача = new NpgsqlCommand(правоЖурнала, connection, транзакция);
@@ -177,14 +131,14 @@ public static partial class RuntimeRole
             await отзыв.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        // Отметки применённого сброса доступа пишет и читает только migrate (владелец схемы): сервису они не нужны.
+        // Отметки сброса доступа — только у migrate.
         await using (var отзыв = new NpgsqlCommand(
             $"REVOKE ALL ON sender_reset_access_marks FROM {role}", connection, транзакция))
         {
             await отзыв.ExecuteNonQueryAsync(cancellationToken);
         }
 
-        // В PostgreSQL 15+ так уже по умолчанию; явно — на случай базы, обновлённой со старой версии.
+        // В PostgreSQL 15+ так по умолчанию; явно — для базы, обновлённой со старой версии.
         await using (var отзыв = new NpgsqlCommand("REVOKE CREATE ON SCHEMA public FROM PUBLIC", connection, транзакция))
         {
             await отзыв.ExecuteNonQueryAsync(cancellationToken);
@@ -193,7 +147,6 @@ public static partial class RuntimeRole
         await транзакция.CommitAsync(cancellationToken);
     }
 
-    /// <summary>Собрать команду запросом <c>format</c> и выполнить собранное.</summary>
     private static async Task ВыполнитьСобраннуюAsync(
         NpgsqlConnection connection,
         NpgsqlTransaction транзакция,
@@ -225,14 +178,7 @@ public static partial class RuntimeRole
             ?? throw new InvalidOperationException("PostgreSQL не вернул значения: " + запрос));
     }
 
-    /// <summary>
-    /// Проверочное значение SCRAM-SHA-256 в формате PostgreSQL:
-    /// <c>SCRAM-SHA-256$итерации:соль$StoredKey:ServerKey</c> (RFC 5802, RFC 7677).
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Пароль приводится к NFKC — так его нормализует SASLprep на стороне PostgreSQL; для
-    /// паролей из <c>gen-secrets.sh</c> (латиница, цифры, «-», «_») это ничего не меняет.
-    /// </remarks>
+    /// <summary>Проверочное значение SCRAM-SHA-256 в формате PostgreSQL (NFKC — как SASLprep).</summary>
     internal static string Scram(string password)
     {
         const int итераций = 4096;
@@ -249,7 +195,6 @@ public static partial class RuntimeRole
             + $"${Convert.ToBase64String(хранимый)}:{Convert.ToBase64String(серверный)}";
     }
 
-    /// <summary>Имя роли: обычный идентификатор PostgreSQL без кавычек.</summary>
     [GeneratedRegex("^[a-z][a-z0-9_]{0,62}$")]
     private static partial Regex Имя();
 }

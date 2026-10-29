@@ -15,21 +15,10 @@ internal enum SchedulePeriod
     After,
 }
 
-/// <summary>
-/// Период «с — по» и время отправки подписки: когда опрос вправе её слать.
-/// </summary>
+/// <summary>Период «с — по» и время отправки: когда опрос вправе слать подписку (ручная шлёт всегда).</summary>
 /// <remarks>
-/// ⚠ ⚠ Решение владельца 2026-10-28: подписка может начинать и заканчивать рассылку в заданные дни и
-/// слать в заданное время суток. Это держит только опрос — ручная отправка шлёт всегда.
-///
-/// ⚠ ⚠ <b>Время отправки — «в это время», а не «не раньше».</b> Опрос разбирает каждое время отправки один
-/// раз (<see cref="CertificateSubscription.LastSlotAt"/>): шлёт, что пора, и до следующего дня молчит —
-/// обновление, замеченное в 10:00 при времени 09:00, уходит завтра в 09:00. Пропущенное время (сервис
-/// стоял, Key Manager Plus не отвечал) догоняется первым опросом после него.
-///
-/// ⚠ Дни и время — по часовому поясу подписки (IANA, из браузера администратора), с переходом на летнее
-/// время. Пояс, которого нет в базе часовых поясов (её обновили), считается UTC: письмо уйдёт со сдвигом,
-/// но уйдёт — сохранение подписки неизвестный пояс не пропускает.
+/// ⚠ Время — «в это время», а не «не раньше»: каждое разбирается один раз
+/// (<see cref="CertificateSubscription.LastSlotAt"/>), пропущенное догоняется. Неизвестный пояс — UTC.
 /// </remarks>
 internal static class SendSchedule
 {
@@ -54,13 +43,8 @@ internal static class SendSchedule
             : SchedulePeriod.Active;
     }
 
-    /// <summary>
-    /// Можно ли опросу слать подписку сейчас и какое время отправки он при этом разбирает.
-    /// </summary>
-    /// <returns>
-    /// <c>Allowed</c> — можно; <c>Slot</c> — разбираемое время отправки, если оно задано: его надо отметить
-    /// разобранным, когда отправка состоялась или слать оказалось нечего.
-    /// </returns>
+    /// <summary>Можно ли опросу слать подписку сейчас и какое время отправки он разбирает.</summary>
+    /// <returns><c>Slot</c> — разбираемое время отправки, если задано: после прохода отметить разобранным.</returns>
     public static (bool Allowed, DateTimeOffset? Slot) Check(CertificateSubscription subscription, DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(subscription);
@@ -97,13 +81,7 @@ internal static class SendSchedule
         return subscription.LastSlotAt >= слот ? (false, null) : (true, слот);
     }
 
-    /// <summary>
-    /// Сколько дней календаря подписки между двумя мгновениями — для «раз в N дней» со временем отправки.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Со временем отправки «раз в N дней» считается днями, а не часами: отправка в 09:00:40 иначе не
-    /// подошла бы через неделю в 09:00:10, и письмо ждало бы ещё сутки.
-    /// </remarks>
+    /// <summary>Дни календаря подписки между мгновениями: «раз в N дней» со временем — днями, не часами.</summary>
     public static int DaysBetween(CertificateSubscription subscription, DateTimeOffset from, DateTimeOffset to)
     {
         ArgumentNullException.ThrowIfNull(subscription);
@@ -119,10 +97,7 @@ internal static class SendSchedule
     private static DateOnly День(DateTimeOffset мгновение, TimeZoneInfo пояс) =>
         DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(мгновение, пояс).DateTime);
 
-    /// <summary>Мгновение «день, время» в поясе.</summary>
-    /// <remarks>
-    /// ⚠ Времени, которого в этот день нет (часы переведены вперёд), — первая минута после перевода.
-    /// </remarks>
+    /// <summary>Мгновение «день, время» в поясе; пропущенное переводом часов — первая минута после.</summary>
     private static DateTimeOffset Момент(DateOnly день, TimeOnly время, TimeZoneInfo пояс)
     {
         var местное = день.ToDateTime(время, DateTimeKind.Unspecified);

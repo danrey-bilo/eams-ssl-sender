@@ -4,33 +4,14 @@ using Modules.Core.Contracts.Audit;
 
 namespace EmailSslSender.IntegrationTests;
 
-/// <summary>
-/// Размер страницы: одно поведение на все выдачи с курсором.
-/// </summary>
-/// <remarks>
-/// ⚠ ⚠ <b>Заведено 2026-08-28 по следу настоящего расхождения.</b> Четыре выдачи решали вопрос
-/// «а если попросили тысячу» по-разному: три <b>молча подрезали</b> до потолка, четвёртая
-/// <b>отвечала отказом</b>. Одна ошибка клиента — два исхода на соседних адресах одного API.
-///
-/// ⚠ <b>Арх-проверка (<c>PagingLimits</c>) держит МЕХАНИЗМ, эта — ОТВЕТ.</b> Первая запрещает
-/// подрезать где бы то ни было; вторая проверяет, что клиент действительно получает 422, а не
-/// что код выглядит правильно. Без второй достаточно позвать общий помощник и проглотить его
-/// исключение.
-///
-/// ⚠ <b>Проверяются все адреса разом, а не по одному в своём сьюте.</b> Расхождение возникло
-/// именно потому, что каждый адрес проверялся отдельно и своим модулем: сравнить их было негде.
-/// </remarks>
+/// <summary>Размер страницы: предел вне допустимого — 422 на всех выдачах с курсором, без подрезки.</summary>
 [Collection(SenderHost.Collection)]
 public sealed class PagingApi(SenderHost host)
 {
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
 
-    /// <summary>Выдачи с курсором и права, которыми они закрыты.</summary>
-    /// <remarks>
-    /// ⚠ Список закрытый и пополняется вместе с новой постраничной выдачей. Забыть строку можно
-    /// — и это осознанная граница: сторож формы (<c>PagingLimits</c>) машинный и полный, а этот
-    /// список про ответ, и полным его не сделать, не подняв каждую выдачу с её данными.
-    /// </remarks>
+    /// <summary>Выдачи с курсором и их права.</summary>
+    /// <remarks>⚠ Новая постраничная выдача — новая строка здесь.</remarks>
     public static TheoryData<string, string[]> Выдачи() => new()
     {
         { "/api/users", [] },
@@ -53,11 +34,9 @@ public sealed class PagingApi(SenderHost host)
 
             var тело = JsonDocument.Parse(await ответ.Content.ReadAsStringAsync(Ct));
 
-            // ⚠ Код тот же самый у всех: клиент, разбирающий ответ машинно, обязан узнавать
-            // эту ошибку по коду, а не по тексту.
             тело.RootElement.GetProperty("code").GetString().ShouldBe("VALIDATION_ERROR", адрес);
 
-            // Сообщение обязано называть допустимый диапазон — иначе клиенту нечего исправлять.
+            // Сообщение называет допустимый диапазон.
             тело.RootElement.GetProperty("message").GetString()
                 .ShouldNotBeNull(адрес)
                 .ShouldContain("до", Case.Sensitive, адрес);
@@ -68,7 +47,6 @@ public sealed class PagingApi(SenderHost host)
     [MemberData(nameof(Выдачи))]
     public async Task Предел_внутри_допустимого_и_его_отсутствие_работают(string адрес, string[] права)
     {
-        // Зеркало: без него «всё отвергается» зеленело бы у выдачи, отвергающей вообще всё.
         Войти(права);
 
         foreach (var запрос in new[] { string.Empty, "?limit=1", "?limit=20" })
@@ -83,7 +61,7 @@ public sealed class PagingApi(SenderHost host)
     {
         host.User.SignIn();
 
-        // Журналу нужен ещё и вид актора: он пишет строку о самом чтении.
+        // Журнал пишет и само чтение — нужен вид актора.
         host.User.ActorType = AuditActorType.User;
     }
 }

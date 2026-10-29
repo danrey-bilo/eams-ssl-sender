@@ -23,12 +23,7 @@ interface Category {
   items: Item[];
 }
 
-/**
- * Настройки защиты по категориям. Границы и умолчания приходят с сервера.
- *
- * ⚠ Одна кнопка «Сохранить» на всю страницу: уходят только изменённые ключи, и сервер за них
- * спросит свежий код — окно кода откроется само.
- */
+/** Настройки защиты; одна кнопка «Сохранить», уходят только изменённые ключи. */
 const CATEGORIES: Category[] = [
   {
     id: 'step-up',
@@ -95,7 +90,7 @@ export function SecurityPage() {
   if (!data) return <Spinner />;
 
   const [settings, me] = data;
-  // ⚠ Ключ по значениям: после сохранения форма собирается заново из новых значений.
+  // Ключ по значениям: после сохранения форма пересобирается.
   const version = JSON.stringify(Object.values(settings).map(s => s.value)) + (me.step_up_until ?? '');
   return <SecurityForm key={version} settings={settings} me={me} onSaved={reload} />;
 }

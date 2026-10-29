@@ -21,7 +21,7 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
   );
 }
 
-/** Группа без <label>: внутри свои переключатели, а метки внутри метки HTML не допускает. */
+/** Без <label>: метка внутри метки недопустима. */
 export function Group({ label, children }: { label: string; children: ReactNode }) {
   return <div className="field" role="group" aria-label={label}><span>{label}</span>{children}</div>;
 }
@@ -53,7 +53,7 @@ export function CodeInput({ value, onChange, autoFocus = true }: { value: string
   );
 }
 
-/** Скопировать текст; в небезопасном контексте буфер недоступен — тогда просто выделить. */
+/** Скопировать; без буфера (небезопасный контекст) — выделить. */
 export function useCopy(): [boolean, (text: string) => Promise<void>] {
   const [copied, setCopied] = useState(false);
   const copy = async (text: string) => {

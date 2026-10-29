@@ -12,15 +12,7 @@ using Microsoft.Extensions.DependencyInjection;
 
 namespace EmailSslSender.Modules.KeyManager.Tests;
 
-/// <summary>
-/// Выгрузка сертификата и показ закрытого ключа администратору: что отдаётся, кому и что остаётся в журнале.
-/// </summary>
-/// <remarks>
-/// ⚠ ⚠ <b>Главные факты файла — «только то, что видел опрос» и «содержимое не оседает нигде».</b>
-/// Первое не даёт выгрузке стать сквозной трубой к Key Manager Plus по любому Common Name; второе
-/// проверяется по журналу действий И по логу: ключ, попавший в строку лога, уезжает в тикеты
-/// целиком.
-/// </remarks>
+/// <summary>⚠ Выгрузка — только того, что видел опрос; содержимое не оседает ни в журнале, ни в логе.</summary>
 [Collection(KeyManagerDatabaseCollection.Name)]
 public sealed class ExportTests(KeyManagerDatabase база) : IAsyncLifetime
 {
@@ -74,14 +66,7 @@ public sealed class ExportTests(KeyManagerDatabase база) : IAsyncLifetime
         (await Выгрузить("*.example.com", "bb02", "KEY")).FileName.ShouldBe("wildcard.example.com.key");
     }
 
-    /// <summary>
-    /// Пары нет в снимке — 404, и в Key Manager Plus не уходит ни одного запроса.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ ⚠ Ключ API отдаёт любые сертификаты; без этой проверки выгрузка спрашивала бы у Key
-    /// Manager Plus всё, что ей назовут. Чужой серийный номер у известного имени — тот же отказ.
-    /// </remarks>
-    // мутация 2026-10-20: снял проверку снимка (выгрузка по присланной паре) → покраснел этот факт.
+    /// <summary>⚠ Пары нет в снимке — 404, в KMP не уходит ни одного запроса.</summary>
     [Theory]
     [InlineData("other.example.com", Серийный)]
     [InlineData(Имя, "ff99")]
@@ -158,9 +143,7 @@ public sealed class ExportTests(KeyManagerDatabase база) : IAsyncLifetime
         строка.Changes.ContainsKey("format").ShouldBeFalse();
     }
 
-    /// <summary>
-    /// Ни ключ, ни пароль не оседают ни в журнале действий, ни в логе — и при отказе в пароле тоже.
-    /// </summary>
+    /// <summary>Ни ключ, ни пароль не оседают в журнале и логе — и при отказе в пароле тоже.</summary>
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -193,9 +176,7 @@ public sealed class ExportTests(KeyManagerDatabase база) : IAsyncLifetime
         }
     }
 
-    /// <summary>Ключ не текстом PEM — отказ с понятной причиной, без содержимого и без строки журнала.</summary>
-    // мутация 2026-10-20: `Pem` вернул текст без проверки начала → покраснел случай «KEY:aa01»;
-    // DER и не-UTF-8 держит строгий декодер.
+    /// <summary>Ключ не текстом PEM — отказ без содержимого и без строки журнала.</summary>
     [Theory]
     [InlineData(new byte[] { 0x30, 0x82, 0x04, 0xBD, 0x02, 0x01, 0x00 })]
     [InlineData(new byte[] { 0xFF, 0xFE, 0x2D, 0x2D, 0x2D, 0x2D, 0x2D })]
@@ -225,7 +206,7 @@ public sealed class ExportTests(KeyManagerDatabase база) : IAsyncLifetime
             + Uri.EscapeDataString("a\"b\\c.pem"));
     }
 
-    // --- обвязка ---------------------------------------------------------------------------
+    // Обвязка
 
     private async Task Снимок(string имя, string серийный)
     {

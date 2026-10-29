@@ -4,25 +4,8 @@ using Modules.Hosting;
 
 namespace EmailSslSender.Api.Infrastructure;
 
-/// <summary>
-/// Пределы частоты проекта: числа для классов дорогих путей и потолки на всех клиентов вместе.
-/// </summary>
-/// <remarks>
-/// ⚠ ⚠ <b>Предел по адресу — потолок, а не единственная мера.</b> Люди одной организации
-/// часто выходят в сеть с одного офисного адреса, и предел «10 входов в минуту на адрес»
-/// отказывал бы им по утрам. Поэтому:
-///
-/// - <b>вход</b> — по адресу потолок <c>LoginPerAddressPerMinute</c> (100) против потока; перебор
-///   одной учётной записи держат предел на пару «адрес + почта» в модуле личностей
-///   (<c>LoginPerMinute</c>, 10) и блокировка после неудач;
-/// - <b>переспрос внутри сессии</b> (код переподтверждения, второй фактор, смена пароля) —
-///   предел на человека после опознания, а по адресу потолок в <c>AddressFactor</c> (10) раз выше;
-/// - <b>активация и сброс пароля</b> — по адресу: опознавать там некого.
-///
-/// ⚠ <b>Какие пути дорогие, объявляют модули</b> (правила <see cref="RateLimitRule"/>, решение EAMS
-/// 0111), ограничивает набор хостинга (<see cref="ModuleRateLimits"/>). Здесь — только числа и их
-/// прежние ключи конфигурации, чтобы установки не потеряли своих значений.
-/// </remarks>
+/// <summary>Числа пределов для классов дорогих путей и потолки на всех клиентов вместе.</summary>
+/// <remarks>Предел по адресу — лишь потолок: офис выходит в сеть с одного адреса.</remarks>
 internal sealed class RateLimitGroups
 {
     private readonly Dictionary<string, int> _всего;
@@ -36,9 +19,7 @@ internal sealed class RateLimitGroups
 
         var входПоАдресу = configuration.GetValue("RateLimits:LoginPerAddressPerMinute", 100);
 
-        // ⚠ Активация и сброс ограничиваются тоже, и не ради перебора ссылки: 256 бит
-        // случайности перебрать нельзя. Причина другая — «забыл пароль» ставит письмо, и
-        // поток просьб иначе превратил бы установку в рассыльщика чужими руками.
+        // «Забыл пароль» ставит письмо — без предела установка стала бы рассыльщиком.
         var активация = configuration.GetValue("RateLimits:ActivationPerMinute", 20);
 
         var множитель = Math.Max(1, configuration.GetValue("RateLimits:AddressFactor", 10));
@@ -49,24 +30,20 @@ internal sealed class RateLimitGroups
             [RateLimitClasses.Reauthentication] = new(LoginPerMinute * множитель, LoginPerMinute),
             [RateLimitClasses.OneTimeLink] = new(активация, PerUser: null),
 
-            // Выгрузка журнала действий (модуль audit): до потолка строк в памяти разом — пять выгрузок в минуту
-            // на человека хватает с запасом, а параллельный поток их иначе останавливал бы процесс.
+            // Выгрузка журнала держит строки в памяти разом.
             [RateLimitClasses.BulkTransfer] = new(
                 configuration.GetValue("RateLimits:BulkTransferPerAddressPerMinute", 10),
                 configuration.GetValue("RateLimits:BulkTransferPerUserPerMinute", 5)),
         };
 
-        // ⚠ Второе звено — предел на всех клиентов вместе для классов, где запрос считает argon2
-        // без входа (ревью безопасности 2026-10-20): предел «на адрес» поток со множества адресов
-        // не держит, а память и процессор у сервера одни.
+        // ⚠ Предел на всех вместе там, где argon2 считается без входа: поток со многих адресов.
         _всего = new Dictionary<string, int>(StringComparer.Ordinal)
         {
             [RateLimitClasses.SignIn] = configuration.GetValue("RateLimits:LoginTotalPerMinute", 300),
             [RateLimitClasses.OneTimeLink] = configuration.GetValue("RateLimits:ActivationTotalPerMinute", 60),
         };
 
-        // ⚠ Готовность открыта без входа и каждый раз спрашивает базу (ревью безопасности
-        // 2026-10-20). Проба контейнера ходит раз в полминуты с 127.0.0.1 — предел её не задевает.
+        // Готовность открыта без входа и спрашивает базу.
         _проба = configuration.GetValue("RateLimits:ReadyPerAddressPerMinute", 120);
     }
 
@@ -76,13 +53,8 @@ internal sealed class RateLimitGroups
     /// <summary>Пределы классов — для ограничителя набора хостинга.</summary>
     public IReadOnlyDictionary<string, RateLimitPolicy> Policies { get; }
 
-    /// <summary>
-    /// Достроить ограничитель набора хостинга звеньями проекта: потолок на всех и проба готовности.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ Зовётся <b>после</b> <c>AddModuleRateLimits</c>: настройки ограничителя применяются по
-    /// порядку, и здесь цепочка надевается на уже собранный ограничитель классов, а не заменяет его.
-    /// </remarks>
+    /// <summary>Достроить ограничитель хостинга потолком на всех и пробой готовности.</summary>
+    /// <remarks>⚠ Только после <c>AddModuleRateLimits</c>: цепочка надевается на собранный ограничитель.</remarks>
     public void ChainProjectLimits(IServiceCollection services)
     {
         ArgumentNullException.ThrowIfNull(services);

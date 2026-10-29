@@ -14,21 +14,8 @@ namespace EmailSslSender.Modules.KeyManager.Delivery;
 /// <param name="Sent">Сколько подписок отправлено.</param>
 internal readonly record struct PollRun(bool Polled, int Certificates, int Sent);
 
-/// <summary>
-/// Один проход: сверить прежние письма, спросить Key Manager Plus, отправить подписки, которым пора.
-/// </summary>
-/// <remarks>
-/// ⚠ ⚠ <b>«Сертификат обновился» замечается только так.</b> Вебхуков, истории и отметки
-/// «изменён» у REST API Key Manager Plus нет. Продление — это новый серийный номер у того же
-/// Common Name в <c>getAllSSLCertsExpiryDate</c>, и опрос сравнивает его с отправленным в
-/// подписке.
-///
-/// ⚠ <b>Ненастроенная интеграция — тихий пустой проход.</b> Строка в лог раз в четверть часа у
-/// установки, которой Key Manager Plus не нужен, утопила бы в логе всё остальное.
-///
-/// ⚠ <b>Одна подписка не уносит остальные:</b> у каждой своя транзакция, и неудача остаётся в
-/// её <c>last_error</c>.
-/// </remarks>
+/// <summary>Один проход: сверить прежние письма, спросить Key Manager Plus, отправить подписки, которым пора.</summary>
+/// <remarks>⚠ Вебхуков у Key Manager Plus нет: обновление — новый серийный у того же Common Name.</remarks>
 internal sealed class CertificatePolling(
     AppDbContext db,
     IKeyManagerConnector connector,
@@ -96,7 +83,7 @@ internal sealed class CertificatePolling(
                 }
             }
 
-            // ⚠ Проход без отправок молчит — по той же причине, что и ненастроенный.
+            // Проход без отправок, как и ненастроенный, молчит: не топить лог.
             if (отправлено > 0)
             {
                 log.LogInformation("keymanager_poll_delivered {Sent} {Certificates}", отправлено, снимок.Certificates.Count);
@@ -109,24 +96,8 @@ internal sealed class CertificatePolling(
     /// <summary>Сколько раз подряд отправка повторяется сама, если не дошло ни одно письмо.</summary>
     internal const int ПовторовСамих = 3;
 
-    /// <summary>
-    /// Сверить письма прежних отправок с очередью: ушедшие забыть, умершие — в <c>last_error</c>.
-    /// </summary>
-    /// <remarks>
-    /// ⚠ ⚠ <b>Умершее письмо одного из получателей НЕ отправляется заново само.</b> Причина смерти
-    /// бывает у одного адреса (ящика нет) — повтор слал бы остальным получателям подписки дубли без
-    /// конца. Ошибка видна в подписке, а отправить повторно — кнопка, когда причина устранена.
-    ///
-    /// ⚠ ⚠ <b>Не дошло НИ ОДНО письмо отправки</b> (почта лежала дольше всех попыток) — дублей нет, а
-    /// обновлённый сертификат иначе не ушёл бы никогда: подписка «при обновлении» его уже отметила
-    /// (ревью надёжности 2026-10-27). Тогда отметки этой отправки снимаются, и этот же проход опроса
-    /// отправляет её заново — не больше <see cref="ПовторовСамих"/> раз подряд, дальше только кнопкой.
-    /// Время отправки повтор не ждёт, период «с — по» — соблюдает.
-    ///
-    /// ⚠ Строка берётся <c>FOR UPDATE SKIP LOCKED</c> и сверяется по прежним номерам: если подписку
-    /// тем временем отправили снова (или она занята отправкой), её новые номера не затираются
-    /// вердиктом о старых.
-    /// </remarks>
+    /// <summary>Сверить письма прежних отправок с очередью: ушедшие забыть, умершие — в <c>last_error</c>.</summary>
+    /// <remarks>⚠ Умершее письмо части получателей само не повторяется (дубли остальным); не дошло ни одно — автоповтор.</remarks>
     private async Task СверитьПисьмаAsync(CancellationToken cancellationToken)
     {
         try
@@ -171,7 +142,7 @@ internal sealed class CertificatePolling(
         }
     }
 
-    /// <summary>Вердикт о письмах отправки — в подписку: снять номера, записать ошибку, при надобности повторить.</summary>
+    /// <summary>Вердикт о письмах — в подписку; ⚠ только если её номера не сменила новая отправка.</summary>
     private async Task ЗакрытьОтправкуAsync(
         Guid id, Guid[] было, IReadOnlyList<MailLetterStatus> умершие, bool всеУмерли, CancellationToken cancellationToken)
     {
@@ -206,8 +177,7 @@ internal sealed class CertificatePolling(
                 }
                 else if (строка.AutoRetries < ПовторовСамих)
                 {
-                    // Снять отметки ровно этой отправки: «при обновлении» увидит её сертификаты неотправленными,
-                    // расписание — неотправленным полный набор.
+                    // Снять отметки ровно этой отправки, чтобы этот же проход отправил её заново.
                     строка.SentSerials = new Dictionary<string, string>(
                         строка.SentSerials.Where(пара => !несли.TryGetValue(пара.Key, out var нёс)
                             || !string.Equals(нёс, пара.Value, StringComparison.OrdinalIgnoreCase)),
@@ -218,7 +188,7 @@ internal sealed class CertificatePolling(
                         строка.LastFullSentAt = null;
                     }
 
-                    // Время отправки этой отправки уже разобрано; повтор — её же письма, он не ждёт следующего.
+                    // Повтор не ждёт следующего времени отправки.
                     строка.LastSlotAt = null;
 
                     строка.AutoRetries++;
@@ -249,12 +219,7 @@ internal sealed class CertificatePolling(
         + string.Join("; ", умершие.Select(п => п.LastError is null ? п.ToAddress : $"{п.ToAddress} — {п.LastError}"))
         + ".";
 
-    /// <summary>Неудачный опрос — в <c>last_poll_error</c>, чтобы панель его показала, и в лог.</summary>
-    /// <remarks>
-    /// ⚠ Любая ошибка, а не только отказ Key Manager Plus: не открывшийся ключ API (сменили файл
-    /// мастер-ключа), сбой базы при записи снимка — иначе панель показывала бы прежний удачный опрос без
-    /// ошибки, а причина жила бы только в логе (ревью надёжности 2026-10-27).
-    /// </remarks>
+    /// <summary>Любой неудачный опрос — в <c>last_poll_error</c> для панели и в лог.</summary>
     private async Task НеудачаОпросаAsync(Exception ошибка)
     {
         var текст = ошибка is KeyManagerException ? ошибка.Message : $"Опрос не удался: {SafeError.Describe(ошибка)}.";
