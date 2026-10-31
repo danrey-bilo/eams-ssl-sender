@@ -1,12 +1,13 @@
 {
   "name": "email-ssl-sender-web",
   "private": true,
-  "version": "2.6.1",
+  "version": "2.6.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --no-warnings scripts/server-text.test.mjs"
   },
   "dependencies": {
     "react": "19.3.1",

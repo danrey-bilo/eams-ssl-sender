@@ -5,6 +5,7 @@ import { api, Cancelled, errorText } from '../lib/api';
 import { fmtDateTime } from '../lib/format';
 import { useLoad } from '../lib/hooks';
 import { lang, translator } from '../lib/i18n';
+import { serverMessage } from '../lib/serverText';
 import { loadSettings, saveSettings, text, type Settings } from '../lib/settings';
 import type { KeyManagerStatus, MailStatus } from '../lib/types';
 import { Check, ErrorText, Failed, Field, PageHead, Spinner, Status, Tabs, type DotKind } from '../ui/bits';
@@ -64,7 +65,7 @@ function MailSettings({ myEmail }: { myEmail: string }) {
           <span>{t('В очереди')} <b>{mail.pending}</b></span>
           <span>{t('Не ушло')} <b>{mail.failed}</b></span>
         </div>
-        {mail.last_error && <p className="note">{mail.last_error}</p>}
+        {mail.last_error && <p className="note">{serverMessage(mail.last_error, lang())}</p>}
       </section>
       <section className="card">
         <SmtpForm mail={mail} settings={settings} onSaved={reload} onDropPassword={dropPassword} />
@@ -220,7 +221,7 @@ function KeyManagerSettings() {
           <span>{t('Опрос')} <b>{fmtDateTime(km.last_poll_at)}</b></span>
           <span>{t('Сертификатов')} <b>{km.last_poll_count ?? '—'}</b></span>
         </div>
-        {km.last_poll_error && <p className="note">{km.last_poll_error}</p>}
+        {km.last_poll_error && <p className="note">{serverMessage(km.last_poll_error, lang())}</p>}
       </section>
       <section className="card">
         <ConnectionForm km={km} settings={settings} onSaved={reload} onDropKey={dropKey} />

@@ -6,6 +6,7 @@ import { isMobile } from '../lib/device';
 import { fmtDate, fmtDateTime } from '../lib/format';
 import { useLoad } from '../lib/hooks';
 import { lang, LANGS, translator } from '../lib/i18n';
+import { serverMessage } from '../lib/serverText';
 import type { KeyManagerStatus, KnownCertificate, MailStatus, Subscription } from '../lib/types';
 import { Check, Dot, Empty, Failed, Field, Group, PageHead, Spinner, Status, type DotKind } from '../ui/bits';
 import { Icon } from '../ui/Icon';
@@ -241,8 +242,8 @@ function LastDelivery({ s }: { s: Subscription }) {
       return (
         <button
           className="link status"
-          title={s.last_error ?? ''}
-          onClick={() => show(close => <FormModal title={namesText(s)} note={s.last_error} submit={t('Понятно')} cancel={null} onClose={close} />)}
+          title={serverMessage(s.last_error ?? '', lang())}
+          onClick={() => show(close => <FormModal title={namesText(s)} note={serverMessage(s.last_error ?? '', lang())} submit={t('Понятно')} cancel={null} onClose={close} />)}
         >
           <Dot kind="err" />{t('Ошибка')}
         </button>

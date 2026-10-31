@@ -3,6 +3,8 @@
 
 import { t } from '../i18n/common';
 import { serverText } from '../i18n/errors';
+import { lang } from './i18n';
+import { serverMessage } from './serverText';
 import type { Tokens } from './types';
 
 export class ApiError extends Error {
@@ -182,5 +184,5 @@ export const api = {
 export const errorText = (err: unknown): string => {
   if (!(err instanceof ApiError)) return t('Что-то пошло не так.');
   const reason = err.details?.reason;
-  return typeof reason === 'string' && reason ? reason : serverText(err.code, err.message, err.details?.field);
+  return typeof reason === 'string' && reason ? serverMessage(reason, lang()) : serverText(err.code, err.message, err.details?.field);
 };

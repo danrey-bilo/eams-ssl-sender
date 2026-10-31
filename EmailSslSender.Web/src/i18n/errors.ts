@@ -1,4 +1,5 @@
 import { lang } from '../lib/i18n';
+import { serverMessage } from '../lib/serverText';
 
 type Text = { uk: string; en: string };
 
@@ -79,7 +80,10 @@ const FIELDS: Record<string, Text> = {
 /** Текст отказа на языке интерфейса; русский — как прислал сервер. */
 export function serverText(code: string | undefined, message: string, field: unknown): string {
   const current = lang();
-  if (current === 'ru' || !code) return message;
+  if (current === 'ru') return message;
+  // Знакомый текст сервиса точнее общего по коду.
+  const exact = serverMessage(message, current);
+  if (exact !== message || !code) return exact;
   const byField = code === 'VALIDATION_ERROR' && typeof field === 'string' ? FIELDS[field] : undefined;
   return (byField ?? CODES[code])?.[current] ?? message;
 }
