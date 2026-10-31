@@ -1,6 +1,5 @@
 import { useState, type FormEvent } from 'react';
 import { common } from '../i18n/common';
-import { language } from '../i18n/language';
 import { settings as settingsDict } from '../i18n/settings';
 import { api, Cancelled, errorText } from '../lib/api';
 import { fmtDateTime } from '../lib/format';
@@ -12,21 +11,18 @@ import { Check, ErrorText, Failed, Field, PageHead, Spinner, Status, Tabs, type 
 import { Icon } from '../ui/Icon';
 import { FormModal } from '../ui/Modal';
 import { useOverlay } from '../ui/Overlay';
-import { LanguageSettings } from './Language';
 
-const t = translator({ ...common, ...language, ...settingsDict });
+const t = translator({ ...common, ...settingsDict });
 
-const sections = (): Array<[string, string]> => [['#/settings/mail', t('Почта')], ['#/settings/keymanager', 'Key Manager'], ['#/settings/language', t('Язык')]];
+const sections = (): Array<[string, string]> => [['#/settings/mail', t('Почта')], ['#/settings/keymanager', 'Key Manager']];
 
 export function SettingsPage({ section, myEmail }: { section?: string; myEmail: string }) {
-  const current = section === 'keymanager' || section === 'language' ? section : 'mail';
+  const current = section === 'keymanager' ? 'keymanager' : 'mail';
   return (
     <>
       <PageHead title={t('Настройки')} sub={t('Откуда берутся сертификаты и как уходят письма')} />
       <Tabs items={sections()} value={'#/settings/' + current} />
-      {current === 'mail' && <MailSettings myEmail={myEmail} />}
-      {current === 'keymanager' && <KeyManagerSettings />}
-      {current === 'language' && <LanguageSettings />}
+      {current === 'mail' ? <MailSettings myEmail={myEmail} /> : <KeyManagerSettings />}
     </>
   );
 }

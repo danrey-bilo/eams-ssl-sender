@@ -9,6 +9,7 @@ import type { Me, PasswordPolicy, Session, TwoFactorStatus } from '../lib/types'
 import { ErrorText, Failed, Field, PageHead, Spinner, Status } from '../ui/bits';
 import { Icon } from '../ui/Icon';
 import { useOverlay } from '../ui/Overlay';
+import { LanguageCard } from './Language';
 
 const t = translator({ ...common, ...profile });
 
@@ -33,6 +34,7 @@ export function ProfilePage({ onRenamed, onLogout }: { onRenamed: () => void; on
       </PageHead>
       <div className="stack">
         <div className="card"><NameForm me={me} onSaved={onRenamed} /></div>
+        <LanguageCard />
         <div className="card"><PasswordForm policy={policy} /></div>
         <div className="card">
           <h2>{t('Второй фактор')}</h2>

@@ -8,7 +8,9 @@ const formats = new Map<string, [dateTime: Intl.DateTimeFormat, date: Intl.DateT
 function formatsOf(tag: string) {
   let pair = formats.get(tag);
   if (!pair) {
-    pair = [new Intl.DateTimeFormat(tag, { dateStyle: 'short', timeStyle: 'short' }), new Intl.DateTimeFormat(tag, { dateStyle: 'short' })];
+    // Год — четырьмя цифрами на всех языках (короткий стиль uk-UA даёт «27.10.26»).
+    const date = { day: '2-digit', month: '2-digit', year: 'numeric' } as const;
+    pair = [new Intl.DateTimeFormat(tag, { ...date, hour: '2-digit', minute: '2-digit' }), new Intl.DateTimeFormat(tag, date)];
     formats.set(tag, pair);
   }
   return pair;

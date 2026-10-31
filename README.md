@@ -54,7 +54,7 @@ and send them to every team that installs them. EAMS ssl sender does that for yo
 | **Deployment** | One public Docker image on Docker Hub ([`danreero/eams-ssl-sender`](https://hub.docker.com/r/danreero/eams-ssl-sender)), PostgreSQL and Cloudflare Tunnel — no inbound ports on your server. Portainer-friendly. |
 
 > The web panel speaks English, Ukrainian and Russian: every user picks their own language in
-> **Settings → Language**. Letters to recipients can be in any of the three, and the
+> their **Profile** (initials at the top right). Letters to recipients can be in any of the three, and the
 > [user guide](#documentation) is available in English and Russian.
 
 ## Screenshots

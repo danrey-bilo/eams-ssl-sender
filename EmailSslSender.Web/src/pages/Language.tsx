@@ -6,8 +6,8 @@ import { useOverlay } from '../ui/Overlay';
 
 const t = translator({ ...common, ...language });
 
-/** Язык интерфейса — личное предпочтение, без кода подтверждения. */
-export function LanguageSettings() {
+/** Язык интерфейса в профиле — личное предпочтение, без кода подтверждения. */
+export function LanguageCard() {
   const current = useLang();
   const { toast } = useOverlay();
 
