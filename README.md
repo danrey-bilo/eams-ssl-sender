@@ -26,7 +26,7 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/delivery.png" alt="Subscriptions in the web panel" width="900">
+  <img src="docs/images/delivery-en.png" alt="Subscriptions in the web panel" width="900">
 </p>
 
 ## Why
@@ -67,6 +67,12 @@ and send them to every team that installs them. EAMS ssl sender does that for yo
   <tr>
     <td align="center"><sub>A subscription: two certificates, sent on renewal at 09:00, with KEY, CRT and PFX</sub></td>
     <td align="center"><sub>Certificates sorted by expiry · the Key Manager Plus connection</sub></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><img src="docs/images/profile-language.png" alt="Interface language in the profile" width="70%"></td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center"><sub>Profile: every user picks the interface language — English, Ukrainian or Russian</sub></td>
   </tr>
   <tr>
     <td colspan="2" align="center"><img src="docs/images/mobile-delivery.png" alt="Delivery on a phone" width="30%">&nbsp;&nbsp;&nbsp;<img src="docs/images/mobile-certificates.png" alt="Certificates on a phone" width="30%"></td>
