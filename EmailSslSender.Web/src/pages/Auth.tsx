@@ -1,10 +1,15 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { auth } from '../i18n/auth';
+import { common } from '../i18n/common';
 import { adopt, api, ApiError, Cancelled, errorText, publicPost } from '../lib/api';
 import { passwordRules } from '../lib/format';
+import { translator } from '../lib/i18n';
 import { qrPath } from '../lib/qr';
 import type { PasswordPolicy, SecondFactorChallenge, Tokens, TotpSetup } from '../lib/types';
 import { CodeInput, ErrorText, Field, Spinner } from '../ui/bits';
 import { Brand } from '../ui/Icon';
+
+const t = translator({ ...common, ...auth });
 
 export function AuthCard({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -55,18 +60,18 @@ export function Login({ message, onEntered, onSecondFactor }: {
   if (forgot) return <Forgot email={email} onBack={() => setForgot(false)} />;
 
   return (
-    <AuthCard title="Вход">
+    <AuthCard title={t('Вход')}>
       <form onSubmit={submit}>
-        <Field label="Почта">
+        <Field label={t('Почта')}>
           <input type="email" autoComplete="username" required autoFocus placeholder="admin@example.com"
             value={email} onChange={e => setEmail(e.target.value)} />
         </Field>
-        <Field label="Пароль">
+        <Field label={t('Пароль')}>
           <input type="password" autoComplete="current-password" required value={password} onChange={e => setPassword(e.target.value)} />
         </Field>
         <ErrorText text={error || message || ''} />
-        <button type="submit" className="primary" disabled={busy}>Войти</button>
-        <button type="button" className="link" onClick={() => setForgot(true)}>Забыли пароль?</button>
+        <button type="submit" className="primary" disabled={busy}>{t('Войти')}</button>
+        <button type="button" className="link" onClick={() => setForgot(true)}>{t('Забыли пароль?')}</button>
       </form>
     </AuthCard>
   );
@@ -81,14 +86,14 @@ function Forgot({ email: initial, onBack }: { email: string; onBack: () => void 
   });
 
   return (
-    <AuthCard title="Сброс пароля">
+    <AuthCard title={t('Сброс пароля')}>
       <form onSubmit={submit}>
-        <Field label="Почта">
+        <Field label={t('Почта')}>
           <input type="email" required autoFocus value={email} onChange={e => setEmail(e.target.value)} />
         </Field>
-        {sent && <p className="muted">Если адрес есть в системе, ссылка придёт на почту.</p>}
-        <button type="submit" className="primary" disabled={busy}>Отправить ссылку</button>
-        <button type="button" className="link" onClick={onBack}>Назад</button>
+        {sent && <p className="muted">{t('Если адрес есть в системе, ссылка придёт на почту.')}</p>}
+        <button type="submit" className="primary" disabled={busy}>{t('Отправить ссылку')}</button>
+        <button type="button" className="link" onClick={onBack}>{t('Назад')}</button>
       </form>
     </AuthCard>
   );
@@ -106,7 +111,7 @@ export function SecondFactor({ challenge, onEntered, onBack }: {
     const r = await publicPost<Tokens>('/api/auth/two-factor', { challenge: challenge.challenge, code, use_cookie: true });
     if (r.ok) { adopt(r.data); onEntered(); return; }
     if (r.error.code === 'ACTIVATION_TOKEN_INVALID' || r.error.code === 'SESSION_EXPIRED') {
-      onBack('Время на ввод кода вышло. Войдите снова.');
+      onBack(t('Время на ввод кода вышло. Войдите снова.'));
       return;
     }
     throw r.error;
@@ -114,23 +119,23 @@ export function SecondFactor({ challenge, onEntered, onBack }: {
 
   const sendEmail = async () => {
     const r = await publicPost('/api/auth/two-factor/email', { challenge: challenge.challenge });
-    if (r.ok) setSent(true); else setError(r.error.message);
+    if (r.ok) setSent(true); else setError(errorText(r.error));
   };
 
   return (
-    <AuthCard title="Подтверждение входа">
+    <AuthCard title={t('Подтверждение входа')}>
       <form onSubmit={submit}>
-        <p className="muted">{viaEmail ? 'Код из письма' : 'Код из приложения-аутентификатора'}</p>
+        <p className="muted">{viaEmail ? t('Код из письма') : t('Код из приложения-аутентификатора')}</p>
         <CodeInput value={code} onChange={setCode} />
-        {sent && <p className="muted small">Код отправлен на почту.</p>}
-        {!viaEmail && <p className="muted small">Нет доступа к приложению — попросите другого администратора сбросить второй фактор.</p>}
+        {sent && <p className="muted small">{t('Код отправлен на почту.')}</p>}
+        {!viaEmail && <p className="muted small">{t('Нет доступа к приложению — попросите другого администратора сбросить второй фактор.')}</p>}
         <ErrorText text={error} />
-        <button type="submit" className="primary" disabled={busy}>Подтвердить</button>
+        <button type="submit" className="primary" disabled={busy}>{t('Подтвердить')}</button>
         <div className="inline">
           {(challenge.available ?? []).includes('email') && (
-            <button type="button" className="link" onClick={sendEmail}>{viaEmail ? 'Отправить ещё раз' : 'Код на почту'}</button>
+            <button type="button" className="link" onClick={sendEmail}>{viaEmail ? t('Отправить ещё раз') : t('Код на почту')}</button>
           )}
-          <button type="button" className="link" onClick={() => onBack()}>Назад</button>
+          <button type="button" className="link" onClick={() => onBack()}>{t('Назад')}</button>
         </div>
       </form>
     </AuthCard>
@@ -159,14 +164,14 @@ export function Enrollment({ onDone, onLogout }: { onDone: () => void; onLogout:
   const qr = setup ? qrPath(setup.uri) : null;
 
   return (
-    <AuthCard title="Аутентификатор">
+    <AuthCard title={t('Аутентификатор')}>
       {!setup && !error && <Spinner />}
       {setup && (
         <form onSubmit={submit}>
-          <p className="muted">Отсканируйте код в Google Authenticator, Aegis или 1Password и введите шесть цифр.</p>
+          <p className="muted">{t('Отсканируйте код в Google Authenticator, Aegis или 1Password и введите шесть цифр.')}</p>
           <div className="qr">
             {qr && (
-              <svg viewBox={`0 0 ${qr.size} ${qr.size}`} shapeRendering="crispEdges" role="img" aria-label="QR-код для приложения-аутентификатора">
+              <svg viewBox={`0 0 ${qr.size} ${qr.size}`} shapeRendering="crispEdges" role="img" aria-label={t('QR-код для приложения-аутентификатора')}>
                 <rect width={qr.size} height={qr.size} fill="#fff" />
                 <path d={qr.path} fill="#000" />
               </svg>
@@ -175,8 +180,8 @@ export function Enrollment({ onDone, onLogout }: { onDone: () => void; onLogout:
           </div>
           <CodeInput value={code} onChange={setCode} />
           <ErrorText text={error} />
-          <button type="submit" className="primary" disabled={busy}>Подключить</button>
-          <button type="button" className="link" onClick={onLogout}>Выйти</button>
+          <button type="submit" className="primary" disabled={busy}>{t('Подключить')}</button>
+          <button type="button" className="link" onClick={onLogout}>{t('Выйти')}</button>
         </form>
       )}
       {!setup && error && <ErrorText text={error} />}
@@ -190,7 +195,8 @@ export function PasswordChange({ onDone, onLogout }: { onDone: () => void; onLog
   const [next, setNext] = useState('');
   const [repeat, setRepeat] = useState('');
   const { error, busy, submit } = useSubmit(async () => {
-    if (next !== repeat) throw new ApiError(400, 'VALIDATION_ERROR', 'Пароли не совпадают.');
+    // ⚠ Без кода: errorText подменил бы переведённый текст общим отказом VALIDATION_ERROR.
+    if (next !== repeat) throw new ApiError(400, undefined, t('Пароли не совпадают.'));
     await api.post('/api/me/password', { current_password: current, new_password: next });
     onDone();
   });
@@ -198,22 +204,22 @@ export function PasswordChange({ onDone, onLogout }: { onDone: () => void; onLog
   useEffect(() => { api.get<PasswordPolicy>('/api/auth/password-policy').then(setPolicy, () => null); }, []);
 
   return (
-    <AuthCard title="Новый пароль">
+    <AuthCard title={t('Новый пароль')}>
       <form onSubmit={submit}>
-        <p className="muted">Администратор попросил задать новый пароль.</p>
-        <Field label="Текущий пароль">
+        <p className="muted">{t('Администратор попросил задать новый пароль.')}</p>
+        <Field label={t('Текущий пароль')}>
           <input type="password" autoComplete="current-password" required autoFocus value={current} onChange={e => setCurrent(e.target.value)} />
         </Field>
-        <Field label="Новый пароль">
+        <Field label={t('Новый пароль')}>
           <input type="password" autoComplete="new-password" required value={next} onChange={e => setNext(e.target.value)} />
         </Field>
-        <Field label="Ещё раз">
+        <Field label={t('Ещё раз')}>
           <input type="password" autoComplete="new-password" required value={repeat} onChange={e => setRepeat(e.target.value)} />
         </Field>
         {policy && <p className="muted small">{passwordRules(policy)}</p>}
         <ErrorText text={error} />
-        <button type="submit" className="primary" disabled={busy}>Сменить пароль</button>
-        <button type="button" className="link" onClick={onLogout}>Выйти</button>
+        <button type="submit" className="primary" disabled={busy}>{t('Сменить пароль')}</button>
+        <button type="button" className="link" onClick={onLogout}>{t('Выйти')}</button>
       </form>
     </AuthCard>
   );

@@ -1,8 +1,11 @@
 import { useMemo, useState } from 'react';
+import { common } from '../i18n/common';
+import { delivery } from '../i18n/delivery';
 import { api } from '../lib/api';
 import { isMobile } from '../lib/device';
 import { fmtDate, fmtDateTime } from '../lib/format';
 import { useLoad } from '../lib/hooks';
+import { lang, LANGS, translator } from '../lib/i18n';
 import type { KeyManagerStatus, KnownCertificate, MailStatus, Subscription } from '../lib/types';
 import { Check, Dot, Empty, Failed, Field, Group, PageHead, Spinner, Status, type DotKind } from '../ui/bits';
 import { Icon } from '../ui/Icon';
@@ -10,8 +13,9 @@ import { Menu } from '../ui/Menu';
 import { FormModal, Invalid } from '../ui/Modal';
 import { useOverlay } from '../ui/Overlay';
 
+const t = translator({ ...common, ...delivery });
+
 const FORMATS = ['PEM', 'KEY', 'CRT', 'CER', 'DER', 'P7B', 'PKCS', 'JKS'];
-const LOCALES: Array<[string, string]> = [['ru', 'Русский'], ['uk', 'Українська'], ['en', 'English']];
 /** Как у сервера: `CertificateSubscription.MaxDescription`. */
 const DESCRIPTION_MAX = 500;
 
@@ -29,21 +33,13 @@ function Names({ s, expiry }: { s: Subscription; expiry: Map<string, string | nu
         return (
           <li key={n}>
             <span className="strong">{n}</span>
-            {until ? <span className="until">до {fmtDate(until)}</span>
-              : expiry.size > 0 && !expiry.has(n.toLowerCase()) && <span className="until">нет в Key Manager</span>}
+            {until ? <span className="until">{t('до {date}', { date: fmtDate(until) })}</span>
+              : expiry.size > 0 && !expiry.has(n.toLowerCase()) && <span className="until">{t('нет в Key Manager')}</span>}
           </li>
         );
       })}
     </ul>
   );
-}
-
-/** «1 сертификат», «2 сертификата», «5 сертификатов». */
-function certificatesText(n: number): string {
-  const last = n % 10, tens = n % 100;
-  const word = last === 1 && tens !== 11 ? 'сертификат'
-    : last >= 2 && last <= 4 && (tens < 12 || tens > 14) ? 'сертификата' : 'сертификатов';
-  return n + ' ' + word;
 }
 
 /** Разобрать ввод имён: через пробел, запятую, точку с запятой или с новой строки. */
@@ -62,19 +58,20 @@ function withNames(list: string[], more: string[]): string[] {
 
 function scheduleText(s: Subscription): string {
   const parts: string[] = [];
-  if (s.on_change) parts.push('при обновлении');
-  if (s.interval_days) parts.push('раз в ' + s.interval_days + ' дн.');
-  if (!parts.length) parts.push('вручную');
-  if (s.send_time) parts.push('в ' + s.send_time);
+  if (s.on_change) parts.push(t('при обновлении'));
+  if (s.interval_days) parts.push(t('раз в {n} дн.', { n: s.interval_days }));
+  if (!parts.length) parts.push(t('вручную'));
+  if (s.send_time) parts.push(t('в {time}', { time: s.send_time }));
   return parts.join(' · ');
 }
 
 /** Период «с — по», если он есть, и где подписка относительно него. */
 function Period({ s }: { s: Subscription }) {
   if (!s.active_from && !s.active_until) return null;
-  const range = [s.active_from && 'с ' + fmtDate(s.active_from), s.active_until && 'по ' + fmtDate(s.active_until)]
-    .filter(Boolean).join(' ');
-  const state = s.period === 'before' ? 'ещё не началась' : s.period === 'after' ? 'окончена' : null;
+  const range = s.active_from && s.active_until
+    ? t('с {from} по {until}', { from: fmtDate(s.active_from), until: fmtDate(s.active_until) })
+    : s.active_from ? t('с {from}', { from: fmtDate(s.active_from) }) : t('по {until}', { until: fmtDate(s.active_until) });
+  const state = s.period === 'before' ? t('ещё не началась') : s.period === 'after' ? t('окончена') : null;
   return <span className="period">{range}{state && <span className="state"> · {state}</span>}</span>;
 }
 
@@ -110,38 +107,40 @@ export function DeliveryPage() {
 
   const [subscriptions, km, mail, known] = data;
 
-  const kmState: [DotKind, string] = !km.configured ? ['', km.enabled ? 'Key Manager не настроен' : 'Key Manager выключен']
-    : km.last_poll_error ? ['err', 'Key Manager: ошибка'] : ['ok', 'Key Manager'];
-  const mailState: [DotKind, string] = !mail.configured ? ['', 'Почта не настроена']
-    : mail.failed && mail.last_error ? ['err', 'Почта: ошибка'] : ['ok', 'Почта'];
+  const kmState: [DotKind, string] = !km.configured ? ['', km.enabled ? t('Key Manager не настроен') : t('Key Manager выключен')]
+    : km.last_poll_error ? ['err', t('Key Manager: ошибка')] : ['ok', 'Key Manager'];
+  const mailState: [DotKind, string] = !mail.configured ? ['', t('Почта не настроена')]
+    : mail.failed && mail.last_error ? ['err', t('Почта: ошибка')] : ['ok', t('Почта')];
 
   const edit = async (s: Subscription | null) => {
     const saved = await show(close => <SubscriptionDialog subscription={s} known={known} onClose={close} />);
-    if (saved) { toast(s ? 'Сохранено' : 'Подписка добавлена'); reload(); }
+    if (saved) { toast(s ? t('Сохранено') : t('Подписка добавлена')); reload(); }
   };
 
   const send = async (s: Subscription) => {
-    const what = s.common_names.length > 1 ? certificatesText(s.common_names.length) : s.common_names[0];
-    if (!await confirm('Отправить ' + what + '?', 'Файлы уйдут сейчас: ' + s.recipients.join(', '), 'Отправить')) return;
-    await run(() => api.post('/api/certificate-subscriptions/' + s.id + '/send'), 'Отправлено в очередь');
+    const question = s.common_names.length > 1
+      ? t('Отправить сертификаты ({n})?', { n: s.common_names.length })
+      : t('Отправить {name}?', { name: s.common_names[0] ?? '' });
+    if (!await confirm(question, t('Файлы уйдут сейчас: {recipients}', { recipients: s.recipients.join(', ') }), t('Отправить'))) return;
+    await run(() => api.post('/api/certificate-subscriptions/' + s.id + '/send'), t('Отправлено в очередь'));
     reload();
   };
 
   const toggle = async (s: Subscription) => {
-    const done = s.enabled ? 'Подписка отключена' : 'Подписка включена';
+    const done = s.enabled ? t('Подписка отключена') : t('Подписка включена');
     if (await run(() => api.patch('/api/certificate-subscriptions/' + s.id, { enabled: !s.enabled }), done)) reload();
   };
 
   const remove = async (s: Subscription) => {
-    if (!await confirm('Удалить подписку?', s.common_names.join(', ') + ' больше не будет рассылаться.', 'Удалить', true)) return;
-    if (await run(() => api.del('/api/certificate-subscriptions/' + s.id), 'Подписка удалена')) reload();
+    if (!await confirm(t('Удалить подписку?'), t('{names} больше не будет рассылаться.', { names: s.common_names.join(', ') }), t('Удалить'), true)) return;
+    if (await run(() => api.del('/api/certificate-subscriptions/' + s.id), t('Подписка удалена'))) reload();
   };
 
-  const add = <button className="primary" onClick={() => edit(null)}><Icon name="plus" />Добавить</button>;
+  const add = <button className="primary" onClick={() => edit(null)}><Icon name="plus" />{t('Добавить')}</button>;
 
   return (
     <>
-      <PageHead title="Рассылка" sub="Кому и когда уходят файлы сертификатов">{subscriptions.length > 0 && add}</PageHead>
+      <PageHead title={t('Рассылка')} sub={t('Кому и когда уходят файлы сертификатов')}>{subscriptions.length > 0 && add}</PageHead>
       <div className="pills">
         <a className="pill" href="#/settings/keymanager"><Dot kind={kmState[0]} />{kmState[1]}</a>
         <a className="pill" href="#/settings/mail"><Dot kind={mailState[0]} />{mailState[1]}</a>
@@ -149,7 +148,7 @@ export function DeliveryPage() {
 
       {subscriptions.length === 0 ? (
         <div className="card">
-          <Empty title="Подписок пока нет" hint="Подписка — какие сертификаты, кому и когда отправлять.">{add}</Empty>
+          <Empty title={t('Подписок пока нет')} hint={t('Подписка — какие сертификаты, кому и когда отправлять.')}>{add}</Empty>
         </div>
       ) : isMobile ? (
         <div className="card flush">
@@ -165,10 +164,10 @@ export function DeliveryPage() {
                   <div className="item-status"><LastDelivery s={s} /></div>
                 </div>
                 <Menu title={namesText(s)} items={[
-                  { text: 'Отправить сейчас', action: () => send(s) },
-                  { text: 'Изменить', action: () => edit(s) },
-                  { text: s.enabled ? 'Отключить' : 'Включить', action: () => toggle(s) },
-                  { text: 'Удалить', action: () => remove(s), danger: true },
+                  { text: t('Отправить сейчас'), action: () => send(s) },
+                  { text: t('Изменить'), action: () => edit(s) },
+                  { text: s.enabled ? t('Отключить') : t('Включить'), action: () => toggle(s) },
+                  { text: t('Удалить'), action: () => remove(s), danger: true },
                 ]} />
               </div>
             ))}
@@ -179,11 +178,11 @@ export function DeliveryPage() {
           <table>
             <thead>
               <tr>
-                <th>Сертификат</th>
-                <th>Кому</th>
-                <th>Файлы</th>
-                <th>Когда</th>
-                <th>Последняя отправка</th>
+                <th>{t('Сертификат')}</th>
+                <th>{t('Кому')}</th>
+                <th>{t('Файлы')}</th>
+                <th>{t('Когда')}</th>
+                <th>{t('Последняя отправка')}</th>
                 <th />
               </tr>
             </thead>
@@ -203,12 +202,12 @@ export function DeliveryPage() {
                   <td className="muted">{scheduleText(s)}<Period s={s} /></td>
                   <td><LastDelivery s={s} /></td>
                   <td className="actions">
-                    <button className="icon" title="Отправить сейчас" onClick={() => send(s)}><Icon name="send" /></button>
-                    <button className="icon" title="Изменить" onClick={() => edit(s)}><Icon name="edit" /></button>
-                    <button className="icon" title={s.enabled ? 'Отключить' : 'Включить'} onClick={() => toggle(s)}>
+                    <button className="icon" title={t('Отправить сейчас')} onClick={() => send(s)}><Icon name="send" /></button>
+                    <button className="icon" title={t('Изменить')} onClick={() => edit(s)}><Icon name="edit" /></button>
+                    <button className="icon" title={s.enabled ? t('Отключить') : t('Включить')} onClick={() => toggle(s)}>
                       <Icon name={s.enabled ? 'pause' : 'play'} />
                     </button>
-                    <button className="icon danger" title="Удалить" onClick={() => remove(s)}><Icon name="trash" /></button>
+                    <button className="icon danger" title={t('Удалить')} onClick={() => remove(s)}><Icon name="trash" /></button>
                   </td>
                 </tr>
               ))}
@@ -224,17 +223,17 @@ function LastDelivery({ s }: { s: Subscription }) {
   const { show } = useOverlay();
 
   if (!s.enabled) {
-    const last = s.last_sent_at ? 'Последняя отправка ' + fmtDateTime(s.last_sent_at) : undefined;
-    return <span title={last}><Status kind="">Выключена</Status></span>;
+    const last = s.last_sent_at ? t('Последняя отправка {when}', { when: fmtDateTime(s.last_sent_at) }) : undefined;
+    return <span title={last}><Status kind="">{t('Выключена')}</Status></span>;
   }
 
   if (s.period === 'after') {
-    const last = s.last_sent_at ? 'Последняя отправка ' + fmtDateTime(s.last_sent_at) : undefined;
-    return <span title={last}><Status kind="">Период окончен</Status></span>;
+    const last = s.last_sent_at ? t('Последняя отправка {when}', { when: fmtDateTime(s.last_sent_at) }) : undefined;
+    return <span title={last}><Status kind="">{t('Период окончен')}</Status></span>;
   }
 
   if (s.period === 'before' && s.delivery === 'none' && s.active_from) {
-    return <span className="muted">начнётся {fmtDate(s.active_from)}</span>;
+    return <span className="muted">{t('начнётся {date}', { date: fmtDate(s.active_from) })}</span>;
   }
 
   switch (s.delivery) {
@@ -243,13 +242,13 @@ function LastDelivery({ s }: { s: Subscription }) {
         <button
           className="link status"
           title={s.last_error ?? ''}
-          onClick={() => show(close => <FormModal title={namesText(s)} note={s.last_error} submit="Понятно" cancel={null} onClose={close} />)}
+          onClick={() => show(close => <FormModal title={namesText(s)} note={s.last_error} submit={t('Понятно')} cancel={null} onClose={close} />)}
         >
-          <Dot kind="err" />Ошибка
+          <Dot kind="err" />{t('Ошибка')}
         </button>
       );
     case 'queued':
-      return <span title="Письма ждут отправки"><Status kind="warn">В очереди</Status></span>;
+      return <span title={t('Письма ждут отправки')}><Status kind="warn">{t('В очереди')}</Status></span>;
     case 'sent':
       return (
         <span title={Object.entries(s.sent_serials).map(([n, serial]) => n + ': ' + serial).join('\n')}>
@@ -257,7 +256,7 @@ function LastDelivery({ s }: { s: Subscription }) {
         </span>
       );
     default:
-      return <span className="muted">ещё не отправлялся</span>;
+      return <span className="muted">{t('ещё не отправлялся')}</span>;
   }
 }
 
@@ -274,7 +273,8 @@ function SubscriptionDialog({ subscription: s, known, onClose }: {
   const [days, setDays] = useState(s?.interval_days ? String(s.interval_days) : '');
   const [passphrase, setPassphrase] = useState(s?.include_passphrase ?? false);
   const [enabled, setEnabled] = useState(s ? s.enabled : true);
-  const [locale, setLocale] = useState(s?.locale ?? 'ru');
+  // Новая подписка пишет на языке интерфейса; у существующей — свой.
+  const [locale, setLocale] = useState<string>(s?.locale ?? lang());
   const [description, setDescription] = useState(s?.description ?? '');
   const [sendTime, setSendTime] = useState(s?.send_time ?? '');
   const [planned, setPlanned] = useState(!!(s?.active_from || s?.active_until));
@@ -295,11 +295,11 @@ function SubscriptionDialog({ subscription: s, known, onClose }: {
   const submit = async () => {
     // Набранное без Enter имя тоже идёт в подписку.
     const all = withNames(names, splitNames(draft));
-    if (all.length === 0) throw new Invalid('Добавьте хотя бы один сертификат.');
-    if (formats.length === 0) throw new Invalid('Выберите хотя бы один файл.');
-    if (!onChange && !days) throw new Invalid('Выберите, когда отправлять: при обновлении, раз в N дней или оба варианта.');
-    if (planned && !from && !until) throw new Invalid('Укажите первый или последний день отправки.');
-    if (planned && from && until && until < from) throw new Invalid('Последний день раньше первого.');
+    if (all.length === 0) throw new Invalid(t('Добавьте хотя бы один сертификат.'));
+    if (formats.length === 0) throw new Invalid(t('Выберите хотя бы один файл.'));
+    if (!onChange && !days) throw new Invalid(t('Выберите, когда отправлять: при обновлении, раз в N дней или оба варианта.'));
+    if (planned && !from && !until) throw new Invalid(t('Укажите первый или последний день отправки.'));
+    if (planned && from && until && until < from) throw new Invalid(t('Последний день раньше первого.'));
     const body = {
       common_names: all,
       recipients: recipients.split(/[\s,;]+/).map(v => v.trim()).filter(Boolean),
@@ -321,20 +321,20 @@ function SubscriptionDialog({ subscription: s, known, onClose }: {
   };
 
   return (
-    <FormModal title={s ? 'Подписка' : 'Новая подписка'} submit={s ? 'Сохранить' : 'Добавить'} onSubmit={submit} onClose={onClose}>
+    <FormModal title={s ? t('Подписка') : t('Новая подписка')} submit={s ? t('Сохранить') : t('Добавить')} onSubmit={submit} onClose={onClose}>
       <datalist id="known-names">{offered.map(n => <option key={n} value={n} />)}</datalist>
-      <Field label="Описание" hint="Видно только здесь, в письма не уходит.">
-        <textarea rows={2} maxLength={DESCRIPTION_MAX} placeholder="Для кого и зачем эта рассылка"
+      <Field label={t('Описание')} hint={t('Видно только здесь, в письма не уходит.')}>
+        <textarea rows={2} maxLength={DESCRIPTION_MAX} placeholder={t('Для кого и зачем эта рассылка')}
           value={description} onChange={e => setDescription(e.target.value)} />
       </Field>
-      <Group label="Сертификаты (Common Name)">
+      <Group label={t('Сертификаты (Common Name)')}>
         <div className="stack tight">
           {names.length > 0 && (
             <div className="chips">
               {names.map(n => (
                 <span key={n} className="chip removable">
                   {n}
-                  <button type="button" className="chip-x" aria-label={'Убрать ' + n} title="Убрать"
+                  <button type="button" className="chip-x" aria-label={t('Убрать {name}', { name: n })} title={t('Убрать')}
                     onClick={() => setNames(list => list.filter(x => x !== n))}>×</button>
                 </span>
               ))}
@@ -342,18 +342,18 @@ function SubscriptionDialog({ subscription: s, known, onClose }: {
           )}
           <div className="add-row">
             <input type="text" list="known-names" placeholder="*.example.com" autoFocus={!s} value={draft}
-              aria-label="Common Name сертификата"
+              aria-label={t('Common Name сертификата')}
               onChange={e => setDraft(e.target.value)}
               onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addDraft(); } }} />
-            <button type="button" onClick={addDraft} disabled={!draft.trim()}><Icon name="plus" />Добавить</button>
+            <button type="button" onClick={addDraft} disabled={!draft.trim()}><Icon name="plus" />{t('Добавить')}</button>
           </div>
-          <small className="muted">Один или несколько. При обновлении уходит только обновлённый, по расписанию и вручную — все.</small>
+          <small className="muted">{t('Один или несколько. При обновлении уходит только обновлённый, по расписанию и вручную — все.')}</small>
         </div>
       </Group>
-      <Field label="Кому — по адресу в строке">
+      <Field label={t('Кому — по адресу в строке')}>
         <textarea rows={3} placeholder={'admin@example.com\nops@example.com'} value={recipients} onChange={e => setRecipients(e.target.value)} />
       </Field>
-      <Group label="Файлы">
+      <Group label={t('Файлы')}>
         <div className="toggle-group">
           {FORMATS.map(f => (
             <label key={f}>
@@ -363,48 +363,48 @@ function SubscriptionDialog({ subscription: s, known, onClose }: {
           ))}
         </div>
       </Group>
-      <Group label="Когда отправлять">
+      <Group label={t('Когда отправлять')}>
         <div className="stack tight">
-          <Check label="При обновлении в Key Manager" checked={onChange} onChange={setOnChange} />
+          <Check label={t('При обновлении в Key Manager')} checked={onChange} onChange={setOnChange} />
           <div className="inline">
-            Повторять раз в
-            <input type="number" min={1} max={365} placeholder="—" aria-label="Дней" value={days} onChange={e => setDays(e.target.value)} />
-            дн.
+            {t('Повторять раз в')}
+            <input type="number" min={1} max={365} placeholder="—" aria-label={t('Дней')} value={days} onChange={e => setDays(e.target.value)} />
+            {t('дн.')}
           </div>
           <div className="inline">
-            Время отправки
-            <input type="time" aria-label="Время отправки" value={sendTime} onChange={e => setSendTime(e.target.value)} />
-            {sendTime && <button type="button" className="link" onClick={() => setSendTime('')}>без времени</button>}
+            {t('Время отправки')}
+            <input type="time" aria-label={t('Время отправки')} value={sendTime} onChange={e => setSendTime(e.target.value)} />
+            {sendTime && <button type="button" className="link" onClick={() => setSendTime('')}>{t('без времени')}</button>}
           </div>
-          <Check label="Запланированный старт и окончание" checked={planned} onChange={setPlanned} />
+          <Check label={t('Запланированный старт и окончание')} checked={planned} onChange={setPlanned} />
           {planned && (
             <div className="inline">
               {/* «по» не отрывается от своего дня. */}
               <span className="inline">
-                с
-                <input type="date" aria-label="Первый день" value={from} max={until || undefined} onChange={e => setFrom(e.target.value)} />
+                {t('с')}
+                <input type="date" aria-label={t('Первый день')} value={from} max={until || undefined} onChange={e => setFrom(e.target.value)} />
               </span>
               <span className="inline">
-                по
-                <input type="date" aria-label="Последний день" value={until} min={from || undefined} onChange={e => setUntil(e.target.value)} />
+                {t('по')}
+                <input type="date" aria-label={t('Последний день')} value={until} min={from || undefined} onChange={e => setUntil(e.target.value)} />
               </span>
             </div>
           )}
           <small className="muted">
-            {sendTime ? 'Письма уходят в ' + sendTime + ', замеченное позже — на следующий день.' : 'Без времени — сразу, как заметит опрос.'}
-            {(sendTime || planned) && ' Время и дни — по поясу ' + zone + '; вручную можно отправить всегда.'}
+            {sendTime ? t('Письма уходят в {time}, замеченное позже — на следующий день.', { time: sendTime }) : t('Без времени — сразу, как заметит опрос.')}
+            {(sendTime || planned) && ' ' + t('Время и дни — по поясу {zone}; вручную можно отправить всегда.', { zone })}
           </small>
         </div>
       </Group>
       <div className="row">
-        <Field label="Язык письма">
+        <Field label={t('Язык письма')}>
           <select value={locale} onChange={e => setLocale(e.target.value)}>
-            {LOCALES.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+            {LANGS.map(([code, name]) => <option key={code} value={code}>{name}</option>)}
           </select>
         </Field>
         <div className="stack tight align-end">
-          <Check label="Пароль ключа в письме" checked={passphrase} onChange={setPassphrase} />
-          <Check label="Включена" checked={enabled} onChange={setEnabled} />
+          <Check label={t('Пароль ключа в письме')} checked={passphrase} onChange={setPassphrase} />
+          <Check label={t('Включена')} checked={enabled} onChange={setEnabled} />
         </div>
       </div>
     </FormModal>

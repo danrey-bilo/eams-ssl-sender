@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
+import { t } from './i18n/common';
 import { api, Cancelled, connect, errorText, forget, refresh } from './lib/api';
 import { isMobile } from './lib/device';
 import { useHashRoute } from './lib/hooks';
-import type { Me, SecondFactorChallenge } from './lib/types';
+import { setLang, useLang } from './lib/i18n';
+import type { Me, Preferences, SecondFactorChallenge } from './lib/types';
 import { Enrollment, Login, PasswordChange, SecondFactor } from './pages/Auth';
 import { CertificatesPage } from './pages/Certificates';
 import { DeliveryPage } from './pages/Delivery';
@@ -24,20 +26,33 @@ type Screen =
   | { kind: 'password' }
   | { kind: 'app'; me: Me };
 
-const NAV: Array<[key: string, title: string, icon: IconName]> = [
-  ['delivery', 'Рассылка', 'send'],
-  ['certificates', 'Сертификаты', 'cert'],
-  ['users', 'Пользователи', 'users'],
-  ['settings', 'Настройки', 'settings'],
-  ['security', 'Безопасность', 'lock'],
+const NAV: Array<[key: string, icon: IconName]> = [
+  ['delivery', 'send'],
+  ['certificates', 'cert'],
+  ['users', 'users'],
+  ['settings', 'settings'],
+  ['security', 'lock'],
 ];
 
-const TITLES: Record<string, string> = Object.fromEntries([...NAV.map(([k, t]) => [k, t]), ['profile', 'Профиль']]);
+/** Заголовки разделов — на языке интерфейса в момент вызова. */
+const title = (key: string): string => ({
+  delivery: t('Рассылка'),
+  certificates: t('Сертификаты'),
+  users: t('Пользователи'),
+  settings: t('Настройки'),
+  security: t('Безопасность'),
+  profile: t('Профиль'),
+})[key] ?? key;
+
+const PAGES = new Set([...NAV.map(([key]) => key), 'profile']);
 
 /** Старые адреса разделов настроек. */
 const MOVED: Record<string, string> = { mail: '#/settings/mail', keymanager: '#/settings/keymanager' };
 
 export function App() {
+  // Смена языка перерисовывает всё дерево.
+  useLang();
+
   // Ссылки из писем — без сессии и каркаса панели.
   if (location.pathname === '/activate') return <OverlayProvider><LinkPage kind="activate" /></OverlayProvider>;
   if (location.pathname === '/password-reset') return <OverlayProvider><LinkPage kind="reset" /></OverlayProvider>;
@@ -53,6 +68,9 @@ function Panel() {
   const enter = useCallback(async () => {
     try {
       const me = await api.get<Me>('/api/me');
+      // Язык — свой у каждого; без предпочтений остаётся язык браузера.
+      const preferences = await api.get<Preferences>('/api/me/preferences').catch(() => null);
+      setLang(preferences?.effective['ui.locale']);
       if (me.must_enroll_two_factor) return setScreen({ kind: 'enroll' });
       if (me.must_change_password) return setScreen({ kind: 'password' });
       if (!location.hash.startsWith('#/')) history.replaceState(null, '', '#/delivery');
@@ -106,10 +124,11 @@ function Shell({ me, onRenamed, onLogout }: { me: Me; onRenamed: () => void; onL
     if (MOVED[first]) history.replaceState(null, '', MOVED[first]);
   }, [first]);
 
-  const page = MOVED[first] ? 'settings' : first in TITLES ? first : 'delivery';
+  const page = MOVED[first] ? 'settings' : PAGES.has(first) ? first : 'delivery';
   const sub = MOVED[first] ? first : second;
 
-  useEffect(() => { document.title = TITLES[page] + ' · EAMS ssl sender'; }, [page]);
+  const heading = title(page);
+  useEffect(() => { document.title = heading + ' · EAMS ssl sender'; }, [heading]);
 
   const content = (
     <main key={page}>
@@ -123,7 +142,7 @@ function Shell({ me, onRenamed, onLogout }: { me: Me; onRenamed: () => void; onL
   );
 
   const avatar = (
-    <a href="#/profile" className={'avatar' + (page === 'profile' ? ' active' : '')} title={me.email} aria-label="Профиль">
+    <a href="#/profile" className={'avatar' + (page === 'profile' ? ' active' : '')} title={me.email} aria-label={t('Профиль')}>
       {initials(me)}
     </a>
   );
@@ -136,11 +155,11 @@ function Shell({ me, onRenamed, onLogout }: { me: Me; onRenamed: () => void; onL
           {avatar}
         </header>
         {content}
-        <nav className="tabbar" aria-label="Разделы">
-          {NAV.map(([key, title, icon]) => (
+        <nav className="tabbar" aria-label={t('Разделы')}>
+          {NAV.map(([key, icon]) => (
             <a key={key} href={'#/' + key} className={key === page ? 'active' : ''} aria-current={key === page ? 'page' : undefined}>
               <Icon name={icon} />
-              <span>{title}</span>
+              <span>{title(key)}</span>
             </a>
           ))}
         </nav>
@@ -152,11 +171,11 @@ function Shell({ me, onRenamed, onLogout }: { me: Me; onRenamed: () => void; onL
     <div className="shell">
       <header className="top">
         <Brand />
-        <nav className="nav" aria-label="Разделы">
-          {NAV.map(([key, title, icon]) => (
+        <nav className="nav" aria-label={t('Разделы')}>
+          {NAV.map(([key, icon]) => (
             <a key={key} href={'#/' + key} className={key === page ? 'active' : ''} aria-current={key === page ? 'page' : undefined}>
               <Icon name={icon} />
-              {title}
+              {title(key)}
             </a>
           ))}
         </nav>
@@ -165,7 +184,7 @@ function Shell({ me, onRenamed, onLogout }: { me: Me; onRenamed: () => void; onL
             <span className="avatar small">{initials(me)}</span>
             <span>{me.display_name || me.email}</span>
           </a>
-          <button type="button" className="icon" title="Выйти" onClick={onLogout}><Icon name="logout" /></button>
+          <button type="button" className="icon" title={t('Выйти')} onClick={onLogout}><Icon name="logout" /></button>
         </div>
       </header>
       {content}

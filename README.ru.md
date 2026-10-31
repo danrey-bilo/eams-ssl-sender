@@ -11,6 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/danrey-bilo/eams-ssl-sender/releases/latest"><img alt="Последний релиз" src="https://img.shields.io/github/v/release/danrey-bilo/eams-ssl-sender?style=flat-square&color=2563eb&label=релиз"></a>
+  <a href="https://hub.docker.com/r/danreero/eams-ssl-sender"><img alt="Docker Hub" src="https://img.shields.io/docker/v/danreero/eams-ssl-sender?sort=semver&style=flat-square&logo=docker&logoColor=white&label=docker%20hub&color=2496ed"></a>
   <a href="LICENSE.ru.md"><img alt="Лицензия: бесплатно, без копирования кода" src="https://img.shields.io/badge/лицензия-бесплатно%20%C2%B7%20без%20копирования%20кода-0f172a?style=flat-square"></a>
   <img alt="Key Manager Plus 7.1.1+" src="https://img.shields.io/badge/Key%20Manager%20Plus-7.1.1%2B-0ea5e9?style=flat-square">
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512bd4?style=flat-square&logo=dotnet&logoColor=white">
@@ -31,7 +32,8 @@
 - **Подписки:** какие сертификаты (от 1 до 50), кому, какие файлы (`PEM`, `KEY`, `CRT`, `PFX`,
   `JKS`…), когда — при обновлении (уходит только обновлённый), раз в N дней (уходят все), в заданное
   время, в запланированный период. **Отправить сейчас** — в любой момент.
-- **Веб-панель** с входом по паролю и коду из приложения-аутентификатора; работает и с телефона.
+- **Веб-панель** с входом по паролю и коду из приложения-аутентификатора; на украинском, русском или
+  английском — язык каждый выбирает себе сам (**Настройки → Язык**); работает и с телефона.
 - **Почта через ваш SMTP** по SSL/TLS, очередь с повторами; письма на русском, украинском или
   английском.
 - **Docker:** один образ сервиса, PostgreSQL и Cloudflare Tunnel — без открытых портов на сервере.
@@ -70,30 +72,32 @@
 
 ## Установка через Portainer
 
-Архив **`email-ssl-sender-vX.Y.Z.zip`** со страницы [Releases](../../releases) — всё для стека:
+Архив **`email-ssl-sender-vX.Y.Z.zip`** со страницы [Releases](../../releases) — всё для стека. Образ
+стек скачает сам: открытый [`danreero/eams-ssl-sender`](https://hub.docker.com/r/danreero/eams-ssl-sender)
+в Docker Hub.
 
 | Файл | Что это |
 |---|---|
 | `docker-compose.yml` | Стек: база, миграции, сервис, Cloudflare Tunnel |
 | `.env.example` | Переменные: секреты, токен туннеля, первый администратор — с подсказками |
-| `email-ssl-sender-image-vX.Y.Z.tar` | Образ сервиса |
+| `email-ssl-sender-image-vX.Y.Z.tar` | Образ сервиса — только для сервера без интернета (**Images → Import**) |
 | `README.md` | Эти шаги подробно |
 
-1. **Images → Import** → `email-ssl-sender-image-vX.Y.Z.tar`.
-2. Заполните `.env.example`: `SENDER_MASTER_KEK` (`openssl rand -base64 32`), `POSTGRES_PASSWORD` и
+1. Заполните `.env.example`: `SENDER_MASTER_KEK` (`openssl rand -base64 32`), `POSTGRES_PASSWORD` и
    `SENDER_APP_PASSWORD` (`openssl rand -hex 24`, разные), `CLOUDFLARE_TUNNEL_TOKEN`,
    `SENDER_INIT_ADMIN_EMAIL` и `SENDER_INIT_ADMIN_PASSWORD`.
-3. **Stacks → Add stack** → Name `email-ssl-sender` → **Upload** → `docker-compose.yml` →
+2. **Stacks → Add stack** → Name `email-ssl-sender` → **Upload** → `docker-compose.yml` →
    **Load variables from .env file** → **Deploy the stack**.
-4. В Cloudflare у туннеля: **Public Hostname** → `HTTP` `api:8001`. Включите Cloudflare Access
+3. В Cloudflare у туннеля: **Public Hostname** → `HTTP` `api:8001`. Включите Cloudflare Access
    (шаг 5 ниже).
-5. Войдите администратором, подключите приложение-аутентификатор; в переменных стека очистите
+4. Войдите администратором, подключите приложение-аутентификатор; в переменных стека очистите
    `SENDER_INIT_ADMIN_PASSWORD` → **Update the stack**.
 
 Миграции выполняет служба `migrate` при каждом развёртывании — она же заводит первого
 администратора и сбрасывает доступ (`SENDER_RESET_ACCESS_*` — один раз на пару «адрес + пароль»),
 потому что консоли в Portainer нет.
-Обновление: импорт нового образа → новый `SENDER_IMAGE` → **Update the stack**. Подробно —
+Обновление: при `SENDER_IMAGE=danreero/eams-ssl-sender:latest` — **Update the stack** с **Re-pull
+image**; при закреплённой версии — новый `SENDER_IMAGE` → **Update the stack**. Подробно —
 [deploy/portainer/README.md](deploy/portainer/README.md).
 
 > ⚠ Секреты в Portainer хранятся переменными стека: доступ к Portainer равен доступу к ним.
@@ -110,10 +114,11 @@
 unzip email-ssl-sender-cli-v*.zip && cd email-ssl-sender
 ```
 
-**2. Образ.** Из файла главного архива релиза (`email-ssl-sender-vX.Y.Z.zip`):
+**2. Образ.** Открытый образ из Docker Hub (без интернета — `docker load -i
+email-ssl-sender-image-vX.Y.Z.tar` из главного архива релиза):
 
 ```bash
-docker load -i email-ssl-sender-image-vX.Y.Z.tar
+docker pull danreero/eams-ssl-sender:latest
 ```
 
 **3. Секреты.** Скрипт создаёт мастер-ключ шифрования и пароль базы в `secrets/`. Существующие
@@ -325,14 +330,14 @@ Authenticator, Microsoft Authenticator, Aegis, 1Password). Дальше вход
    IdP). Тогда до страницы входа дойдут только сотрудники.
 2. **Отдельный ящик для рассылки** с доступом только по SMTP и надёжным паролем.
 3. **Ключ API Key Manager Plus** — от отдельной служебной учётной записи.
-4. **Закреплённая версия образа** в `.env`: `SENDER_IMAGE=ghcr.io/danrey-bilo/eams-ssl-sender:X.Y.Z`.
+4. **Закреплённая версия образа** в `.env`: `SENDER_IMAGE=danreero/eams-ssl-sender:X.Y.Z`.
 5. **Шлите `KEY`/`PFX` только тем, кому нужен закрытый ключ.** Письмо с ключом — секрет.
 
 ## Обновление
 
 ```bash
 ./scripts/gen-secrets.sh          # создаст недостающие файлы секретов, существующие не тронет
-docker load -i email-ssl-sender-image-vX.Y.Z.tar   # образ из архива нового релиза
+docker compose pull api           # новый образ из Docker Hub (SENDER_IMAGE в .env)
 docker compose run --rm migrate
 docker compose up -d
 ```

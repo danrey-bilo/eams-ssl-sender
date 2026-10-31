@@ -1,9 +1,14 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { publicPost } from '../lib/api';
+import { auth } from '../i18n/auth';
+import { common } from '../i18n/common';
+import { errorText, publicPost } from '../lib/api';
 import { passwordRules } from '../lib/format';
+import { translator } from '../lib/i18n';
 import type { PasswordPolicy } from '../lib/types';
 import { ErrorText, Spinner } from '../ui/bits';
 import { AuthCard } from './Auth';
+
+const t = translator({ ...common, ...auth });
 
 type Kind = 'activate' | 'reset';
 
@@ -44,14 +49,14 @@ export function LinkPage({ kind }: { kind: Kind }) {
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setError('');
-    if (password !== repeat) return setError('Пароли не совпадают.');
+    if (password !== repeat) return setError(t('Пароли не совпадают.'));
     setBusy(true);
     const r = await publicPost(kind === 'activate' ? '/api/activation' : '/api/password-reset', { token, password });
     setBusy(false);
-    if (r.ok) setState('done'); else setError(r.error.message);
+    if (r.ok) setState('done'); else setError(errorText(r.error));
   };
 
-  const title = kind === 'activate' ? 'Добро пожаловать' : 'Новый пароль';
+  const title = kind === 'activate' ? t('Добро пожаловать') : t('Новый пароль');
 
   if (state === 'loading') return <AuthCard title={title}><Spinner /></AuthCard>;
 
@@ -59,8 +64,8 @@ export function LinkPage({ kind }: { kind: Kind }) {
     return (
       <AuthCard title={title}>
         <ErrorText text={kind === 'activate'
-          ? 'Ссылка недействительна или уже использована. Попросите новую у администратора.'
-          : 'Ссылка недействительна или уже использована. Запросите новую.'} />
+          ? t('Ссылка недействительна или уже использована. Попросите новую у администратора.')
+          : t('Ссылка недействительна или уже использована. Запросите новую.')} />
       </AuthCard>
     );
   }
@@ -70,10 +75,10 @@ export function LinkPage({ kind }: { kind: Kind }) {
       <AuthCard title={title}>
         <p className="ok-text">
           {kind === 'activate'
-            ? 'Пароль задан. При первом входе подключите приложение-аутентификатор.'
-            : 'Пароль изменён, прежние сессии закрыты.'}
+            ? t('Пароль задан. При первом входе подключите приложение-аутентификатор.')
+            : t('Пароль изменён, прежние сессии закрыты.')}
         </p>
-        <a className="button primary" href="/">Войти</a>
+        <a className="button primary" href="/">{t('Войти')}</a>
       </AuthCard>
     );
   }
@@ -81,14 +86,14 @@ export function LinkPage({ kind }: { kind: Kind }) {
   return (
     <AuthCard title={title}>
       <form autoComplete="off" onSubmit={submit}>
-        <p className="muted">{who || 'Придумайте новый пароль.'}</p>
-        <input type="password" placeholder="Новый пароль" autoComplete="new-password" required autoFocus
+        <p className="muted">{who || t('Придумайте новый пароль.')}</p>
+        <input type="password" placeholder={t('Новый пароль')} autoComplete="new-password" required autoFocus
           value={password} onChange={e => setPassword(e.target.value)} />
-        <input type="password" placeholder="Ещё раз" autoComplete="new-password" required
+        <input type="password" placeholder={t('Ещё раз')} autoComplete="new-password" required
           value={repeat} onChange={e => setRepeat(e.target.value)} />
         {policy && <p className="muted small">{passwordRules(policy)}</p>}
         <ErrorText text={error} />
-        <button type="submit" className="primary" disabled={busy}>{kind === 'activate' ? 'Задать пароль' : 'Сменить пароль'}</button>
+        <button type="submit" className="primary" disabled={busy}>{kind === 'activate' ? t('Задать пароль') : t('Сменить пароль')}</button>
       </form>
     </AuthCard>
   );

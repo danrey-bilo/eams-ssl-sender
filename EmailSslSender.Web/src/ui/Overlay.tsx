@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
+import { t } from '../i18n/common';
 import { Cancelled, errorText } from '../lib/api';
 import { CopyField } from './bits';
 import { FormModal } from './Modal';
@@ -65,7 +66,7 @@ export function OverlayProvider({ children }: { children: ReactNode }) {
       show(close => <FormModal title={title} note={note} submit={submit} danger={danger} onClose={close} />),
     showLink: (title, note, url) =>
       show(close => (
-        <FormModal title={title} note={note} submit="Готово" cancel={null} onClose={close}>
+        <FormModal title={title} note={note} submit={t('Готово')} cancel={null} onClose={close}>
           <CopyField value={url} />
         </FormModal>
       )),

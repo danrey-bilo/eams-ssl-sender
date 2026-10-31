@@ -1,30 +1,39 @@
 import { useState, type FormEvent } from 'react';
+import { common } from '../i18n/common';
+import { language } from '../i18n/language';
+import { settings as settingsDict } from '../i18n/settings';
 import { api, Cancelled, errorText } from '../lib/api';
 import { fmtDateTime } from '../lib/format';
 import { useLoad } from '../lib/hooks';
+import { lang, translator } from '../lib/i18n';
 import { loadSettings, saveSettings, text, type Settings } from '../lib/settings';
 import type { KeyManagerStatus, MailStatus } from '../lib/types';
 import { Check, ErrorText, Failed, Field, PageHead, Spinner, Status, Tabs, type DotKind } from '../ui/bits';
 import { Icon } from '../ui/Icon';
 import { FormModal } from '../ui/Modal';
 import { useOverlay } from '../ui/Overlay';
+import { LanguageSettings } from './Language';
 
-const SECTIONS: Array<[string, string]> = [['#/settings/mail', 'Почта'], ['#/settings/keymanager', 'Key Manager']];
+const t = translator({ ...common, ...language, ...settingsDict });
+
+const sections = (): Array<[string, string]> => [['#/settings/mail', t('Почта')], ['#/settings/keymanager', 'Key Manager'], ['#/settings/language', t('Язык')]];
 
 export function SettingsPage({ section, myEmail }: { section?: string; myEmail: string }) {
-  const current = section === 'keymanager' ? 'keymanager' : 'mail';
+  const current = section === 'keymanager' || section === 'language' ? section : 'mail';
   return (
     <>
-      <PageHead title="Настройки" sub="Откуда берутся сертификаты и как уходят письма" />
-      <Tabs items={SECTIONS} value={'#/settings/' + current} />
-      {current === 'mail' ? <MailSettings myEmail={myEmail} /> : <KeyManagerSettings />}
+      <PageHead title={t('Настройки')} sub={t('Откуда берутся сертификаты и как уходят письма')} />
+      <Tabs items={sections()} value={'#/settings/' + current} />
+      {current === 'mail' && <MailSettings myEmail={myEmail} />}
+      {current === 'keymanager' && <KeyManagerSettings />}
+      {current === 'language' && <LanguageSettings />}
     </>
   );
 }
 
 // Почта
 
-const SECURITY: Array<[string, string]> = [['tls', 'SSL/TLS'], ['starttls', 'STARTTLS'], ['none', 'Без шифрования']];
+const securityChoices = (): Array<[string, string]> => [['tls', 'SSL/TLS'], ['starttls', 'STARTTLS'], ['none', t('Без шифрования')]];
 
 /** Сервер SMTP — имя: «https://mail.example.com/» сводится к «mail.example.com». */
 const hostName = (value: string) => value.trim().replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').replace(/\/+$/, '');
@@ -37,15 +46,15 @@ function MailSettings({ myEmail }: { myEmail: string }) {
   if (!data) return <Spinner />;
 
   const [mail, settings] = data;
-  const state: [DotKind, string] = mail.configured ? (mail.failed ? ['err', 'Есть неотправленные'] : ['ok', 'Работает']) : ['', 'Не настроена'];
+  const state: [DotKind, string] = mail.configured ? (mail.failed ? ['err', t('Есть неотправленные')] : ['ok', t('Работает')]) : ['', t('Не настроена')];
 
   const sendTest = async () => {
-    if (await show(close => <TestDialog to={myEmail} onClose={close} />)) toast('Сервер принял письмо');
+    if (await show(close => <TestDialog to={myEmail} onClose={close} />)) toast(t('Сервер принял письмо'));
   };
 
   const dropPassword = async () => {
-    if (!await confirm('Снять пароль SMTP?', 'Почта будет уходить без авторизации.', 'Снять', true)) return;
-    if (await run(() => api.put('/api/mail/password', { password: '' }), 'Пароль снят')) reload();
+    if (!await confirm(t('Снять пароль SMTP?'), t('Почта будет уходить без авторизации.'), t('Снять'), true)) return;
+    if (await run(() => api.put('/api/mail/password', { password: '' }), t('Пароль снят'))) reload();
   };
 
   return (
@@ -53,11 +62,11 @@ function MailSettings({ myEmail }: { myEmail: string }) {
       <section className="card status-card">
         <div className="status-line">
           <Status kind={state[0]} strong>{state[1]}</Status>
-          <button onClick={sendTest} disabled={!mail.configured}><Icon name="mail" />Тестовое письмо</button>
+          <button onClick={sendTest} disabled={!mail.configured}><Icon name="mail" />{t('Тестовое письмо')}</button>
         </div>
         <div className="facts">
-          <span>В очереди <b>{mail.pending}</b></span>
-          <span>Не ушло <b>{mail.failed}</b></span>
+          <span>{t('В очереди')} <b>{mail.pending}</b></span>
+          <span>{t('Не ушло')} <b>{mail.failed}</b></span>
         </div>
         {mail.last_error && <p className="note">{mail.last_error}</p>}
       </section>
@@ -96,7 +105,7 @@ function SmtpForm({ mail, settings, onSaved, onDropPassword }: {
       || security !== (text(settings, 'mail.smtp_security') || 'starttls')
       || user.trim() !== text(settings, 'mail.smtp_username').trim();
     if (mail.password_set && moved && user.trim() && !password) {
-      setError('Сервер изменился — введите пароль заново.');
+      setError(t('Сервер изменился — введите пароль заново.'));
       return;
     }
     setBusy(true);
@@ -114,7 +123,7 @@ function SmtpForm({ mail, settings, onSaved, onDropPassword }: {
       if (password) await api.put('/api/mail/password', { password });
       setHost(hostName(host));
       setPassword('');
-      toast('Сохранено');
+      toast(t('Сохранено'));
       onSaved();
     } catch (err) {
       if (!(err instanceof Cancelled)) setError(errorText(err));
@@ -127,35 +136,35 @@ function SmtpForm({ mail, settings, onSaved, onDropPassword }: {
     <form onSubmit={submit}>
       <div className="form-head">
         <h2>SMTP</h2>
-        <Check label="Отправлять письма" checked={enabled} onChange={setEnabled} />
+        <Check label={t('Отправлять письма')} checked={enabled} onChange={setEnabled} />
       </div>
       <div className="row three">
-        <Field label="Сервер"><input type="text" placeholder="smtp.example.com" value={host} onChange={e => setHost(e.target.value)} /></Field>
-        <Field label="Порт"><input type="number" min={1} max={65535} placeholder="465" value={port} onChange={e => setPort(e.target.value)} /></Field>
-        <Field label="Защита">
+        <Field label={t('Сервер')}><input type="text" placeholder="smtp.example.com" value={host} onChange={e => setHost(e.target.value)} /></Field>
+        <Field label={t('Порт')}><input type="number" min={1} max={65535} placeholder="465" value={port} onChange={e => setPort(e.target.value)} /></Field>
+        <Field label={t('Защита')}>
           <select value={security} onChange={e => setSecurity(e.target.value)}>
-            {SECURITY.map(([v, t]) => <option key={v} value={v}>{t}</option>)}
+            {securityChoices().map(([v, title]) => <option key={v} value={v}>{title}</option>)}
           </select>
         </Field>
       </div>
       <div className="row">
-        <Field label="Логин"><input type="text" autoComplete="off" value={user} onChange={e => setUser(e.target.value)} /></Field>
-        <Field label="Пароль">
-          <input type="password" autoComplete="new-password" placeholder={mail.password_set ? '•••••••• задан' : ''}
+        <Field label={t('Логин')}><input type="text" autoComplete="off" value={user} onChange={e => setUser(e.target.value)} /></Field>
+        <Field label={t('Пароль')}>
+          <input type="password" autoComplete="new-password" placeholder={mail.password_set ? t('•••••••• задан') : ''}
             value={password} onChange={e => setPassword(e.target.value)} />
         </Field>
       </div>
       <div className="row">
-        <Field label="Адрес отправителя"><input type="email" placeholder="noreply@example.com" value={from} onChange={e => setFrom(e.target.value)} /></Field>
-        <Field label="Имя отправителя"><input type="text" value={fromName} onChange={e => setFromName(e.target.value)} /></Field>
+        <Field label={t('Адрес отправителя')}><input type="email" placeholder="noreply@example.com" value={from} onChange={e => setFrom(e.target.value)} /></Field>
+        <Field label={t('Имя отправителя')}><input type="text" value={fromName} onChange={e => setFromName(e.target.value)} /></Field>
       </div>
-      <Field label="Адрес панели" hint="Для ссылок в приглашениях и сбросе пароля">
+      <Field label={t('Адрес панели')} hint={t('Для ссылок в приглашениях и сбросе пароля')}>
         <input type="url" placeholder="https://certs.example.com" value={publicUrl} onChange={e => setPublicUrl(e.target.value)} />
       </Field>
       <ErrorText text={error} />
       <div className="actions-row">
-        {mail.password_set && <button type="button" className="danger" onClick={onDropPassword}>Снять пароль</button>}
-        <button type="submit" className="primary" disabled={busy}>Сохранить</button>
+        {mail.password_set && <button type="button" className="danger" onClick={onDropPassword}>{t('Снять пароль')}</button>}
+        <button type="submit" className="primary" disabled={busy}>{t('Сохранить')}</button>
       </div>
     </form>
   );
@@ -164,8 +173,8 @@ function SmtpForm({ mail, settings, onSaved, onDropPassword }: {
 function TestDialog({ to: initial, onClose }: { to: string; onClose: (done: boolean) => void }) {
   const [to, setTo] = useState(initial);
   return (
-    <FormModal title="Тестовое письмо" submit="Отправить" onSubmit={() => api.post('/api/mail/test', { to: to.trim(), locale: 'ru' })} onClose={onClose}>
-      <Field label="Кому"><input type="email" required autoFocus value={to} onChange={e => setTo(e.target.value)} /></Field>
+    <FormModal title={t('Тестовое письмо')} submit={t('Отправить')} onSubmit={() => api.post('/api/mail/test', { to: to.trim(), locale: lang() })} onClose={onClose}>
+      <Field label={t('Кому')}><input type="email" required autoFocus value={to} onChange={e => setTo(e.target.value)} /></Field>
     </FormModal>
   );
 }
@@ -180,25 +189,25 @@ function KeyManagerSettings() {
   if (!data) return <Spinner />;
 
   const [km, settings] = data;
-  const state: [DotKind, string] = !km.configured ? (km.enabled ? ['warn', 'Не настроен'] : ['', 'Выключен'])
-    : km.last_poll_error ? ['err', 'Ошибка'] : km.last_poll_at ? ['ok', 'Работает'] : ['warn', 'Ждёт первого опроса'];
+  const state: [DotKind, string] = !km.configured ? (km.enabled ? ['warn', t('Не настроен')] : ['', t('Выключен')])
+    : km.last_poll_error ? ['err', t('Ошибка')] : km.last_poll_at ? ['ok', t('Работает')] : ['warn', t('Ждёт первого опроса')];
 
   const test = async () => {
     try {
       const r = await api.post<{ certificates: number }>('/api/keymanager/test');
-      toast('Связь есть · сертификатов: ' + r.certificates);
+      toast(t('Связь есть · сертификатов: {n}', { n: r.certificates }));
     } catch (err) {
       if (!(err instanceof Cancelled)) toast(errorText(err), 'err');
     }
   };
 
   const poll = async () => {
-    if (await run(() => api.post('/api/keymanager/poll'), 'Опрос запущен')) setTimeout(reload, 3000);
+    if (await run(() => api.post('/api/keymanager/poll'), t('Опрос запущен'))) setTimeout(reload, 3000);
   };
 
   const dropKey = async () => {
-    if (!await confirm('Снять ключ API?', 'Опрос и рассылка остановятся, пока ключ не задан снова.', 'Снять', true)) return;
-    if (await run(() => api.put('/api/keymanager/api-key', { api_key: '' }), 'Ключ снят')) reload();
+    if (!await confirm(t('Снять ключ API?'), t('Опрос и рассылка остановятся, пока ключ не задан снова.'), t('Снять'), true)) return;
+    if (await run(() => api.put('/api/keymanager/api-key', { api_key: '' }), t('Ключ снят'))) reload();
   };
 
   return (
@@ -207,13 +216,13 @@ function KeyManagerSettings() {
         <div className="status-line">
           <Status kind={state[0]} strong>{state[1]}</Status>
           <div className="inline">
-            <button onClick={test}>Проверить</button>
-            <button onClick={poll} disabled={!km.configured}><Icon name="refresh" />Опросить</button>
+            <button onClick={test}>{t('Проверить')}</button>
+            <button onClick={poll} disabled={!km.configured}><Icon name="refresh" />{t('Опросить')}</button>
           </div>
         </div>
         <div className="facts">
-          <span>Опрос <b>{fmtDateTime(km.last_poll_at)}</b></span>
-          <span>Сертификатов <b>{km.last_poll_count ?? '—'}</b></span>
+          <span>{t('Опрос')} <b>{fmtDateTime(km.last_poll_at)}</b></span>
+          <span>{t('Сертификатов')} <b>{km.last_poll_count ?? '—'}</b></span>
         </div>
         {km.last_poll_error && <p className="note">{km.last_poll_error}</p>}
       </section>
@@ -244,7 +253,7 @@ function ConnectionForm({ km, settings, onSaved, onDropKey }: {
     // Ключ привязан к адресу.
     const moved = url.trim() !== text(settings, 'keymanager.base_url').trim();
     if (km.api_key_set && moved && !apiKey.trim()) {
-      setError('Адрес изменился — введите ключ API заново.');
+      setError(t('Адрес изменился — введите ключ API заново.'));
       return;
     }
     setBusy(true);
@@ -256,7 +265,7 @@ function ConnectionForm({ km, settings, onSaved, onDropKey }: {
       });
       if (apiKey.trim()) await api.put('/api/keymanager/api-key', { api_key: apiKey.trim() });
       setApiKey('');
-      toast('Сохранено');
+      toast(t('Сохранено'));
       // Проверить сразу, не дожидаясь опроса.
       if (enabled) {
         await api.post('/api/keymanager/poll').catch(() => null);
@@ -273,25 +282,25 @@ function ConnectionForm({ km, settings, onSaved, onDropKey }: {
   return (
     <form onSubmit={submit}>
       <div className="form-head">
-        <h2>Подключение</h2>
-        <Check label="Опрашивать" checked={enabled} onChange={setEnabled} />
+        <h2>{t('Подключение')}</h2>
+        <Check label={t('Опрашивать')} checked={enabled} onChange={setEnabled} />
       </div>
       <div className="row three">
-        <Field label="Адрес" hint="Имя сервера из его сертификата, а не IP">
+        <Field label={t('Адрес')} hint={t('Имя сервера из его сертификата, а не IP')}>
           <input type="url" placeholder="https://kmp.example.com:6565" value={url} onChange={e => setUrl(e.target.value)} />
         </Field>
-        <Field label="Опрос, мин">
+        <Field label={t('Опрос, мин')}>
           <input type="number" min={1} max={1440} value={minutes} onChange={e => setMinutes(e.target.value)} />
         </Field>
       </div>
-      <Field label="Ключ API" hint="Key Manager Plus → Settings → General Settings → API Key">
-        <input type="password" autoComplete="off" placeholder={km.api_key_set ? '•••••••• задан' : ''}
+      <Field label={t('Ключ API')} hint="Key Manager Plus → Settings → General Settings → API Key">
+        <input type="password" autoComplete="off" placeholder={km.api_key_set ? t('•••••••• задан') : ''}
           value={apiKey} onChange={e => setApiKey(e.target.value)} />
       </Field>
       <ErrorText text={error} />
       <div className="actions-row">
-        {km.api_key_set && <button type="button" className="danger" onClick={onDropKey}>Снять ключ</button>}
-        <button type="submit" className="primary" disabled={busy}>Сохранить</button>
+        {km.api_key_set && <button type="button" className="danger" onClick={onDropKey}>{t('Снять ключ')}</button>}
+        <button type="submit" className="primary" disabled={busy}>{t('Сохранить')}</button>
       </div>
     </form>
   );

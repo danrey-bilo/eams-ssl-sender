@@ -1,5 +1,6 @@
 # Стек для Portainer (Stacks → Add stack → Upload) или `docker compose up -d`. Подробно — README.md рядом.
-# Значения — в .env (Portainer: «Load variables from .env file»). Обновление — новый SENDER_IMAGE и «Update the stack».
+# Значения — в .env (Portainer: «Load variables from .env file»). Образ — из Docker Hub; обновление — «Update the stack»
+# с «Re-pull image» (или новый SENDER_IMAGE), миграции выполнятся сами.
 
 x-logging: &logging
   driver: json-file
@@ -47,7 +48,7 @@ services:
 
   # Разово: схема, роль sender_app и, если заданы, первый администратор или сброс доступа.
   migrate:
-    image: ${SENDER_IMAGE:-ghcr.io/danrey-bilo/eams-ssl-sender:latest}
+    image: ${SENDER_IMAGE:-danreero/eams-ssl-sender:latest}
     command: ["migrate"]
     restart: "no"
     environment:
@@ -73,7 +74,7 @@ services:
         condition: service_healthy
 
   api:
-    image: ${SENDER_IMAGE:-ghcr.io/danrey-bilo/eams-ssl-sender:latest}
+    image: ${SENDER_IMAGE:-danreero/eams-ssl-sender:latest}
     restart: unless-stopped
     environment:
       ASPNETCORE_ENVIRONMENT: Production

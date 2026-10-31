@@ -88,7 +88,8 @@ builder.Services
         options.Features.DeviceTokens = false;
         options.Features.DownloadTickets = false;
     })
-    .AddSettingsModule(options => options.Features.UserPreferences = false)
+    // Личные предпочтения — ради языка интерфейса у каждого; язык установки — в наборе `sender`.
+    .AddSettingsModule()
     .AddMailModule(options =>
     {
         options.RunMaintenance = true;

@@ -143,3 +143,9 @@ export interface Session {
   last_seen_at: string;
   current: boolean;
 }
+
+/** Личные предпочтения: свои значения и действующие (своё → установки → умолчание). */
+export interface Preferences {
+  overrides: Record<string, unknown>;
+  effective: Record<string, unknown>;
+}

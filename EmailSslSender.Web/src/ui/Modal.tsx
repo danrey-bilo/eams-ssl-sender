@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { t } from '../i18n/common';
 import { Cancelled, errorText } from '../lib/api';
 
 /** Окно с формой на <dialog>: ошибка onSubmit остаётся в окне, Cancelled не показывается. */
@@ -6,9 +7,9 @@ export function FormModal({
   title,
   note,
   children,
-  submit = 'Сохранить',
+  submit = t('Сохранить'),
   danger = false,
-  cancel = 'Отмена',
+  cancel = t('Отмена'),
   wide = false,
   onSubmit,
   onClose,

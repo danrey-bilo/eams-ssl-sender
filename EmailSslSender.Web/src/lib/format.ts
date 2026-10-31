@@ -1,26 +1,37 @@
+import { t } from '../i18n/common';
+import { locale } from './i18n';
 import type { PasswordPolicy } from './types';
 
-const DATE_TIME = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short', timeStyle: 'short' });
-const DATE = new Intl.DateTimeFormat('ru-RU', { dateStyle: 'short' });
+const formats = new Map<string, [dateTime: Intl.DateTimeFormat, date: Intl.DateTimeFormat]>();
 
-export const fmtDateTime = (iso: string | null | undefined) => (iso ? DATE_TIME.format(new Date(iso)) : '—');
+/** Форматы дат языка интерфейса — по одному на язык. */
+function formatsOf(tag: string) {
+  let pair = formats.get(tag);
+  if (!pair) {
+    pair = [new Intl.DateTimeFormat(tag, { dateStyle: 'short', timeStyle: 'short' }), new Intl.DateTimeFormat(tag, { dateStyle: 'short' })];
+    formats.set(tag, pair);
+  }
+  return pair;
+}
 
-export const fmtDate = (ymd: string | null | undefined) => (ymd ? DATE.format(new Date(ymd + 'T00:00:00')) : '—');
+export const fmtDateTime = (iso: string | null | undefined) => (iso ? formatsOf(locale())[0].format(new Date(iso)) : '—');
+
+export const fmtDate = (ymd: string | null | undefined) => (ymd ? formatsOf(locale())[1].format(new Date(ymd + 'T00:00:00')) : '—');
 
 export function passwordRules(p: PasswordPolicy): string {
-  const parts = ['от ' + p.min_length + ' символов'];
-  if (p.require_uppercase) parts.push('заглавная');
-  if (p.require_lowercase) parts.push('строчная');
-  if (p.require_digit) parts.push('цифра');
-  if (p.require_symbol) parts.push('спецсимвол');
+  const parts = [t('от {n} символов', { n: p.min_length })];
+  if (p.require_uppercase) parts.push(t('заглавная'));
+  if (p.require_lowercase) parts.push(t('строчная'));
+  if (p.require_digit) parts.push(t('цифра'));
+  if (p.require_symbol) parts.push(t('спецсимвол'));
   return parts.join(' · ');
 }
 
 /** Браузер и система словами: «Chrome · Windows». */
 export function agentText(agent: string | null): string {
-  if (!agent) return 'Неизвестное устройство';
+  if (!agent) return t('Неизвестное устройство');
   const browser = /Edg\//.test(agent) ? 'Edge' : /Firefox\//.test(agent) ? 'Firefox' : /Chrome\//.test(agent) ? 'Chrome'
-    : /Safari\//.test(agent) ? 'Safari' : /curl/i.test(agent) ? 'curl' : 'Браузер';
+    : /Safari\//.test(agent) ? 'Safari' : /curl/i.test(agent) ? 'curl' : t('Браузер');
   const os = /Windows/.test(agent) ? 'Windows' : /Mac OS/.test(agent) ? 'macOS' : /Android/.test(agent) ? 'Android'
     : /iPhone|iPad/.test(agent) ? 'iOS' : /Linux/.test(agent) ? 'Linux' : '';
   return os ? browser + ' · ' + os : browser;

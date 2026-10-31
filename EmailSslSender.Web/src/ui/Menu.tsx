@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { t } from '../i18n/common';
 import { isMobile } from '../lib/device';
 import { Icon } from './Icon';
 import { useOverlay } from './Overlay';
@@ -23,7 +24,7 @@ export function Menu({ title, items }: { title?: string; items: MenuItem[] }) {
     <button
       type="button"
       className="icon"
-      title="Действия"
+      title={t('Действия')}
       aria-haspopup="dialog"
       onClick={() => show(close => <ActionSheet title={title} actions={actions} onClose={close} />)}
     >
@@ -56,7 +57,7 @@ function Dropdown({ actions }: { actions: Action[] }) {
 
   return (
     <div className="menu" ref={ref}>
-      <button type="button" className="icon" title="Действия" aria-haspopup="menu" aria-expanded={open !== null} onClick={toggle}>
+      <button type="button" className="icon" title={t('Действия')} aria-haspopup="menu" aria-expanded={open !== null} onClick={toggle}>
         <Icon name="more" />
       </button>
       {open && (
@@ -102,7 +103,7 @@ function ActionSheet({ title, actions, onClose }: {
     <dialog
       ref={ref}
       className="sheet"
-      aria-label={title ?? 'Действия'}
+      aria-label={title ?? t('Действия')}
       onCancel={e => { e.preventDefault(); onClose(false); }}
       onClick={e => { if (e.target === e.currentTarget) onClose(false); }}
     >
@@ -115,7 +116,7 @@ function ActionSheet({ title, actions, onClose }: {
             </button>
           ))}
         </div>
-        <button type="button" className="sheet-cancel" onClick={() => onClose(false)}>Отмена</button>
+        <button type="button" className="sheet-cancel" onClick={() => onClose(false)}>{t('Отмена')}</button>
       </div>
     </dialog>
   );

@@ -1,6 +1,8 @@
 // ⚠ Токен доступа — только в памяти; обновления — кука HttpOnly `__Host-sender-refresh`.
 // Отказ `SECOND_FACTOR_REQUIRED` открывает окно кода и повторяет действие.
 
+import { t } from '../i18n/common';
+import { serverText } from '../i18n/errors';
 import type { Tokens } from './types';
 
 export class ApiError extends Error {
@@ -9,7 +11,7 @@ export class ApiError extends Error {
   readonly details: Record<string, unknown> | undefined;
 
   constructor(status: number, code: string | undefined, message: string | undefined, details?: Record<string, unknown>) {
-    super(message || 'Сервер недоступен.');
+    super(message || t('Сервер недоступен.'));
     this.status = status;
     this.code = code;
     this.details = details;
@@ -86,7 +88,7 @@ export async function publicPost<T>(path: string, body: unknown): Promise<{ ok: 
     if (r.ok) return { ok: true, data: data as T };
     return { ok: false, error: new ApiError(r.status, data?.code, data?.message, data?.details) };
   } catch {
-    return { ok: false, error: new ApiError(0, 'NETWORK', 'Сервер недоступен.') };
+    return { ok: false, error: new ApiError(0, 'NETWORK', t('Сервер недоступен.')) };
   }
 }
 
@@ -104,7 +106,7 @@ async function send(method: string, path: string, body?: unknown, retry = true, 
       method, headers, cache: 'no-store', body: body === undefined ? undefined : JSON.stringify(body),
     });
   } catch {
-    throw new ApiError(0, 'NETWORK', 'Сервер недоступен.');
+    throw new ApiError(0, 'NETWORK', t('Сервер недоступен.'));
   }
 
   if (r.ok) return r;
@@ -118,7 +120,7 @@ async function send(method: string, path: string, body?: unknown, retry = true, 
 
   if (r.status === 401 && token && code && SESSION_GONE.includes(code)) {
     forget();
-    onSignedOut('Сессия закончилась. Войдите снова.');
+    onSignedOut(t('Сессия закончилась. Войдите снова.'));
     throw new Cancelled();
   }
 
@@ -178,7 +180,7 @@ export const api = {
 
 /** Текст ошибки; `details.reason` (ответ SMTP, Key Manager) точнее общего. */
 export const errorText = (err: unknown): string => {
-  if (!(err instanceof ApiError)) return 'Что-то пошло не так.';
+  if (!(err instanceof ApiError)) return t('Что-то пошло не так.');
   const reason = err.details?.reason;
-  return typeof reason === 'string' && reason ? reason : err.message;
+  return typeof reason === 'string' && reason ? reason : serverText(err.code, err.message, err.details?.field);
 };

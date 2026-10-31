@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { t } from '../i18n/common';
 import { Icon } from './Icon';
 
 export type DotKind = '' | 'ok' | 'err' | 'warn';
@@ -9,7 +10,7 @@ export function Status({ kind, children, strong }: { kind: DotKind; children: Re
   return <span className={'status' + (strong ? ' strong' : '')}><Dot kind={kind} />{children}</span>;
 }
 
-export const Spinner = () => <div className="spinner" role="status" aria-label="Загрузка" />;
+export const Spinner = () => <div className="spinner" role="status" aria-label={t('Загрузка')} />;
 
 export function Field({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   return (
@@ -44,7 +45,7 @@ export function CodeInput({ value, onChange, autoFocus = true }: { value: string
       autoComplete="one-time-code"
       maxLength={8}
       placeholder="000000"
-      aria-label="Код"
+      aria-label={t('Код')}
       required
       autoFocus={autoFocus}
       value={value}
@@ -70,7 +71,7 @@ export function CopyField({ value }: { value: string }) {
     <div className="copy">
       <input type="text" readOnly value={value} onFocus={e => e.target.select()} />
       <button type="button" onClick={() => copy(value)}>
-        <Icon name={copied ? 'check' : 'copy'} />{copied ? 'Скопировано' : 'Копировать'}
+        <Icon name={copied ? 'check' : 'copy'} />{copied ? t('Скопировано') : t('Копировать')}
       </button>
     </div>
   );
@@ -93,7 +94,7 @@ export function PageHead({ title, sub, children }: { title: string; sub?: ReactN
 /** Переключатель разделов страницы ссылками на хэш — назад/вперёд браузера работают. */
 export function Tabs({ items, value }: { items: Array<[href: string, title: string]>; value: string }) {
   return (
-    <nav className="tabs" aria-label="Разделы">
+    <nav className="tabs" aria-label={t('Разделы')}>
       {items.map(([href, title]) => (
         <a key={href} href={href} className={href === value ? 'active' : ''} aria-current={href === value ? 'page' : undefined}>
           {title}

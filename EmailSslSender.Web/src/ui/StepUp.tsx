@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { t } from '../i18n/common';
 import { api } from '../lib/api';
 import { CodeInput } from './bits';
 import { FormModal } from './Modal';
@@ -9,9 +10,9 @@ export function StepUpDialog({ minutes, onClose }: { minutes?: number; onClose: 
 
   return (
     <FormModal
-      title="Подтвердите кодом"
-      note={'Код из приложения-аутентификатора. ' + (minutes ? `Следующие ${minutes} мин спрашивать не будем.` : '')}
-      submit="Подтвердить"
+      title={t('Подтвердите кодом')}
+      note={t('Код из приложения-аутентификатора.') + (minutes ? ' ' + t('Следующие {minutes} мин спрашивать не будем.', { minutes }) : '')}
+      submit={t('Подтвердить')}
       onSubmit={() => api.stepUp(code)}
       onClose={onClose}
     >

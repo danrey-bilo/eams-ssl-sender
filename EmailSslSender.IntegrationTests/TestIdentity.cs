@@ -64,7 +64,7 @@ public sealed class TestSettings : ISettingsReader
 
     /// <summary>Значения набора <c>sender</c>, как в каждой установке.</summary>
     public static IReadOnlyDictionary<string, object?> ProjectValues { get; } =
-        new Dictionary<string, object?>(StringComparer.Ordinal) { ["auth.step_up_minutes"] = 10 };
+        new Dictionary<string, object?>(StringComparer.Ordinal) { ["auth.step_up_minutes"] = 10, ["ui.locale"] = "ru" };
 
     public ValueTask<T> GetAsync<T>(SettingKey<T> key, CancellationToken cancellationToken = default) =>
         ValueTask.FromResult(

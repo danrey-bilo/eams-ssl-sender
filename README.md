@@ -11,6 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/danrey-bilo/eams-ssl-sender/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/danrey-bilo/eams-ssl-sender?style=flat-square&color=2563eb&label=release"></a>
+  <a href="https://hub.docker.com/r/danreero/eams-ssl-sender"><img alt="Docker Hub" src="https://img.shields.io/docker/v/danreero/eams-ssl-sender?sort=semver&style=flat-square&logo=docker&logoColor=white&label=docker%20hub&color=2496ed"></a>
   <a href="LICENSE"><img alt="License: free to use, no code copying" src="https://img.shields.io/badge/license-free%20to%20use%20%C2%B7%20no%20code%20copying-0f172a?style=flat-square"></a>
   <img alt="Key Manager Plus 7.1.1+" src="https://img.shields.io/badge/Key%20Manager%20Plus-7.1.1%2B-0ea5e9?style=flat-square">
   <img alt=".NET 10" src="https://img.shields.io/badge/.NET-10-512bd4?style=flat-square&logo=dotnet&logoColor=white">
@@ -48,12 +49,13 @@ and send them to every team that installs them. EAMS ssl sender does that for yo
 | **When to send** | When a certificate is renewed (only the renewed one goes out), every N days (all of them), at a set time of day, within a planned start and end date. **Send now** works at any time. |
 | **Files** | Any of the eight Key Manager Plus formats — `PEM`, `CRT`, `CER`, `DER`, `P7B`, `PFX`, `JKS`, `KEY` — plus the key passphrase, packed into one ZIP archive per letter. |
 | **Letters** | In English, Ukrainian or Russian. HTML with a certificate table (name, formats, valid until, days left) plus a plain-text part. No links, no images, no tracking. |
-| **Web panel** | Certificates with expiry highlighting and sorting, download of any format, viewing the private key, users and invitations, security settings. Works on phones too. |
+| **Web panel** | Certificates with expiry highlighting and sorting, download of any format, viewing the private key, users and invitations, security settings. In English, Ukrainian or Russian — every user picks their own. Works on phones too. |
 | **Security** | Password plus authenticator app (TOTP), a fresh code before every sensitive action, AES-256-GCM encryption of secrets, full TLS validation, secrets bound to their server, append-only audit log. |
-| **Deployment** | One Docker image, PostgreSQL and Cloudflare Tunnel — no inbound ports on your server. Portainer-friendly. |
+| **Deployment** | One public Docker image on Docker Hub ([`danreero/eams-ssl-sender`](https://hub.docker.com/r/danreero/eams-ssl-sender)), PostgreSQL and Cloudflare Tunnel — no inbound ports on your server. Portainer-friendly. |
 
-> The web panel is in Russian. Letters to recipients can be in English, Ukrainian or Russian, and
-> the [user guide](#documentation) is available in both English and Russian.
+> The web panel speaks English, Ukrainian and Russian: every user picks their own language in
+> **Settings → Language**. Letters to recipients can be in any of the three, and the
+> [user guide](#documentation) is available in English and Russian.
 
 ## Screenshots
 
@@ -137,24 +139,26 @@ No inbound ports are needed.
 ## Installation with Portainer
 
 The **`email-ssl-sender-vX.Y.Z.zip`** archive from [Releases](../../releases) has everything for
-the stack: `docker-compose.yml`, `.env.example` with hints, the service image
-`email-ssl-sender-image-vX.Y.Z.tar` and a step-by-step README.
+the stack: `docker-compose.yml`, `.env.example` with hints and a step-by-step README. The stack pulls
+the public image [`danreero/eams-ssl-sender`](https://hub.docker.com/r/danreero/eams-ssl-sender)
+from Docker Hub by itself; the `email-ssl-sender-image-vX.Y.Z.tar` in the archive is only for
+servers without internet access (**Images → Import**).
 
-1. **Images → Import** → `email-ssl-sender-image-vX.Y.Z.tar`.
-2. Fill in `.env.example`: `SENDER_MASTER_KEK` (`openssl rand -base64 32`), `POSTGRES_PASSWORD` and
+1. Fill in `.env.example`: `SENDER_MASTER_KEK` (`openssl rand -base64 32`), `POSTGRES_PASSWORD` and
    `SENDER_APP_PASSWORD` (`openssl rand -hex 24`, different ones), `CLOUDFLARE_TUNNEL_TOKEN`,
    `SENDER_INIT_ADMIN_EMAIL` and `SENDER_INIT_ADMIN_PASSWORD`.
-3. **Stacks → Add stack** → name `email-ssl-sender` → **Upload** → `docker-compose.yml` →
+2. **Stacks → Add stack** → name `email-ssl-sender` → **Upload** → `docker-compose.yml` →
    **Load variables from .env file** → **Deploy the stack**.
-4. In Cloudflare, for the tunnel: **Public Hostname** → `HTTP` `api:8001`. Turn on Cloudflare Access
+3. In Cloudflare, for the tunnel: **Public Hostname** → `HTTP` `api:8001`. Turn on Cloudflare Access
    (see below).
-5. Sign in as the administrator and connect an authenticator app; then clear
+4. Sign in as the administrator and connect an authenticator app; then clear
    `SENDER_INIT_ADMIN_PASSWORD` in the stack variables → **Update the stack**.
 
 The `migrate` service applies database migrations on every deployment; it also creates the first
 administrator and can reset access (`SENDER_RESET_ACCESS_*`, once per address + password pair),
-because Portainer has no console. To update: import the new image → set the new `SENDER_IMAGE` →
-**Update the stack**.
+because Portainer has no console. To update: with `SENDER_IMAGE=danreero/eams-ssl-sender:latest`,
+**Update the stack** with **Re-pull image** turned on; with a pinned version, set the new
+`SENDER_IMAGE` → **Update the stack**.
 
 > Secrets in Portainer are stack variables: access to Portainer equals access to them. Keep a copy
 > of `SENDER_MASTER_KEK` somewhere safe and separate.
@@ -170,10 +174,11 @@ it on the server.
 unzip email-ssl-sender-cli-v*.zip && cd email-ssl-sender
 ```
 
-**2. Image.** From the main release archive (`email-ssl-sender-vX.Y.Z.zip`):
+**2. Image.** The public image from Docker Hub (without internet access — `docker load -i
+email-ssl-sender-image-vX.Y.Z.tar` from the main release archive):
 
 ```bash
-docker load -i email-ssl-sender-image-vX.Y.Z.tar
+docker pull danreero/eams-ssl-sender:latest
 ```
 
 **3. Secrets.** The script creates the master encryption key and the database passwords in
@@ -293,7 +298,7 @@ to the people who need the private key.
 
 ```bash
 ./scripts/gen-secrets.sh          # creates missing secret files, never touches existing ones
-docker load -i email-ssl-sender-image-vX.Y.Z.tar   # the image from the new release archive
+docker compose pull api           # the new image from Docker Hub (SENDER_IMAGE in .env)
 docker compose run --rm migrate
 docker compose up -d
 ```

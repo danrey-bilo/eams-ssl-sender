@@ -2,7 +2,7 @@
 #   ./scripts/gen-secrets.sh
 #   ./scripts/set-tunnel-token.sh # токен туннеля — в файл секрета, не в .env
 #   cp .env.example .env
-#   docker load -i email-ssl-sender-image-vX.Y.Z.tar   # образ из архива релиза
+#   docker compose pull api      # образ из Docker Hub; без интернета — docker load из архива релиза
 #   docker compose run --rm migrate
 #   docker compose run --rm api create-superadmin --email admin@example.com
 #   docker compose up -d
@@ -19,8 +19,8 @@ x-logging: &logging
 
 services:
   api:
-    # Образ из архива релиза (`docker load`); версия — SENDER_IMAGE в .env.
-    image: ${SENDER_IMAGE:-ghcr.io/danrey-bilo/eams-ssl-sender:latest}
+    # Образ из Docker Hub; версия — SENDER_IMAGE в .env.
+    image: ${SENDER_IMAGE:-danreero/eams-ssl-sender:latest}
     build:
       context: .
       dockerfile: EmailSslSender.Api/Dockerfile
@@ -70,7 +70,7 @@ services:
 
   # Схема и роль sender_app, разово: docker compose run --rm migrate. Единственная знает пароль владельца.
   migrate:
-    image: ${SENDER_IMAGE:-ghcr.io/danrey-bilo/eams-ssl-sender:latest}
+    image: ${SENDER_IMAGE:-danreero/eams-ssl-sender:latest}
     profiles: ["tools"]
     command: ["migrate"]
     environment:

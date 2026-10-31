@@ -6,12 +6,16 @@
 |---|---|
 | `docker-compose.yml` | Стек: база, миграции, сервис, Cloudflare Tunnel |
 | `.env.example` | Переменные стека с подсказками — секреты, токен туннеля, первый администратор |
-| `email-ssl-sender-image-vX.Y.Z.tar` | Образ сервиса для загрузки в Portainer |
+| `email-ssl-sender-image-vX.Y.Z.tar` | Образ сервиса — только для сервера без интернета |
 
 ## 1. Образ
 
-**Portainer → Images → Import** → выберите `email-ssl-sender-image-vX.Y.Z.tar` → **Upload**.
-Образ появится как `ghcr.io/danrey-bilo/eams-ssl-sender:X.Y.Z`.
+Открытый образ в Docker Hub — [`danreero/eams-ssl-sender`](https://hub.docker.com/r/danreero/eams-ssl-sender):
+стек скачает его сам. `SENDER_IMAGE` в `.env.example` — `danreero/eams-ssl-sender:latest` (всегда
+свежий) или закреплённая версия `danreero/eams-ssl-sender:X.Y.Z`.
+
+Сервер без интернета: **Portainer → Images → Import** → `email-ssl-sender-image-vX.Y.Z.tar` из архива
+релиза → **Upload**; образ появится под тем же именем.
 
 ## 2. Переменные
 
@@ -52,9 +56,12 @@
 
 ## Обновление
 
-1. **Images → Import** — образ новой версии.
-2. В переменных стека — новый `SENDER_IMAGE` (например `ghcr.io/danrey-bilo/eams-ssl-sender:X.Y.Z`).
-3. **Update the stack**. Миграции выполнятся сами (служба `migrate`).
+1. `SENDER_IMAGE=danreero/eams-ssl-sender:latest` — **Stacks → стек → Update the stack** с включённым
+   **Re-pull image**: Portainer скачает свежий образ из Docker Hub.
+2. Закреплённая версия — в переменных стека новый `SENDER_IMAGE` (например
+   `danreero/eams-ssl-sender:X.Y.Z`) → **Update the stack**.
+
+Миграции выполнятся сами (служба `migrate` стартует раньше сервиса).
 
 Перед обновлением снимите копию базы (ниже).
 

@@ -202,7 +202,8 @@ public sealed class SenderHost : WebApplicationFactory<Program>, IAsyncLifetime
 
         await db.Database.ExecuteSqlRawAsync(
             "DELETE FROM system_settings; "
-            + "INSERT INTO system_settings (key, value, updated_at) VALUES ('auth.step_up_minutes', '10', now());",
+            + "INSERT INTO system_settings (key, value, updated_at) VALUES "
+            + "('auth.step_up_minutes', '10', now()), ('ui.locale', '\"ru\"', now());",
             cancellationToken);
     }
 
@@ -224,7 +225,8 @@ public sealed class SenderHost : WebApplicationFactory<Program>, IAsyncLifetime
         var значения = await db.Database
             .SqlQueryRaw<int>(
                 "SELECT count(*)::int AS \"Value\" FROM system_settings "
-                + "WHERE NOT (key = 'auth.step_up_minutes' AND value = '10'::jsonb)")
+                + "WHERE NOT (key = 'auth.step_up_minutes' AND value = '10'::jsonb) "
+                + "AND NOT (key = 'ui.locale' AND value = '\"ru\"'::jsonb)")
             .ToListAsync(cancellationToken);
 
         return значения[0];
